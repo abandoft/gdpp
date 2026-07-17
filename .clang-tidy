@@ -13,4 +13,3 @@ CheckOptions:
     value: 'true'
   - key: readability-identifier-length.IgnoredVariableNames
     value: 'i;j;it'
-

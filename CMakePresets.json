@@ -1,0 +1,74 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 22,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "GDPP_GODOT_API_VERSION": "4.4"
+      }
+    },
+    {
+      "name": "dev",
+      "inherits": "base",
+      "displayName": "Developer build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GDPP_BUILD_TESTS": "ON",
+        "GDPP_BUILD_EXTENSION": "OFF"
+      }
+    },
+    {
+      "name": "plugin",
+      "inherits": "base",
+      "displayName": "Godot compiler plugin",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GDPP_BUILD_TESTS": "ON",
+        "GDPP_BUILD_EXTENSION": "ON",
+        "GODOTCPP_TARGET": "editor"
+      }
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "displayName": "Optimized compiler plugin",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "GDPP_BUILD_TESTS": "ON",
+        "GDPP_BUILD_EXTENSION": "ON",
+        "GODOTCPP_TARGET": "editor"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "plugin", "configurePreset": "plugin" },
+    { "name": "release", "configurePreset": "release" }
+  ],
+  "testPresets": [
+    {
+      "name": "dev",
+      "configurePreset": "dev",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "plugin",
+      "configurePreset": "plugin",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}
