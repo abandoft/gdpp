@@ -17,7 +17,7 @@ target pack。iOS 构建仍要求 Xcode，只能从 macOS 宿主执行。Web tar
 |---|---|---|
 | `windows-x64` | Windows 10 | Android arm64，Android 9 / API 28 |
 | `linux-x64` | Ubuntu 22.04 / glibc 2.35 | Android arm64，Android 9 / API 28 |
-| `mac-arm64` | macOS 10.15 | Android arm64，Android 9 / API 28；iOS arm64，iOS 16 |
+| `mac-arm64` | macOS 11.0 | Android arm64，Android 9 / API 28；iOS arm64，iOS 16 |
 
 `binary/` 同时是本机最终动态库输出目录。制作插件发行包前，受保护的清理脚本会删除
 `addons/gdpp/build/` 和 `binary/gdpp_project.*`，保留 compiler 与 fallback。fallback 是开发期
@@ -121,7 +121,7 @@ Godot 某些版本在导出插件主动阻断后仍可能返回进程退出码 0
 - 自定义 API/double precision：需要独立 SDK，不属于通用发行包。
 - 桌面用户依赖：目标平台完整 C++ 工具链，而不只是孤立的编译器可执行文件。
 - 交叉平台用户依赖：相应 sysroot、SDK 和交叉编译器。
-- 系统基线：Windows 10、macOS 10.15、Ubuntu 22.04/glibc 2.35、Android 9/API 28、iOS 16.0；
+- 系统基线：Windows 10、macOS 11.0（arm64）、Ubuntu 22.04/glibc 2.35、Android 9/API 28、iOS 16.0；
   Web 不声明固定浏览器版本下限，改由 Wasm/GDExtension 能力门禁约束。
 
 ## ABI 与供应链

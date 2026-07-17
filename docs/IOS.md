@@ -6,9 +6,10 @@ Apple Silicon 模拟器 arm64 和 Intel 模拟器 x86_64 三种切片。
 
 ## 用户依赖
 
-- GDPP 编辑器插件本身最低支持 macOS 10.15；
+- GDPP 的 mac-arm64 编辑器插件最低支持 macOS 11.0；Apple Silicon 不存在可运行 macOS 10.15
+  的系统组合；
 - 能提供 iOS 16 SDK 的完整 Xcode、该 Xcode 要求的 macOS 宿主版本，以及通过 `xcode-select`
-  选中的有效 Developer 目录；因此“插件可在 macOS 10.15 加载”不等于“macOS 10.15 可以安装
+  选中的有效 Developer 目录；因此“插件可在 macOS 11.0 加载”不等于“macOS 11.0 可以安装
   当前 Xcode 并执行 iOS 导出”；
 - 与目标 Godot 小版本一致的 `mac-arm64` GDPP 插件 ZIP，其中已包含 iOS target pack；
 - 已安装对应 Godot iOS 导出模板；

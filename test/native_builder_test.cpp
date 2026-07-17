@@ -72,7 +72,7 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
                             "source_paths mapped\n"
                           : "";
     const std::string platform_contract = platform == "windows" ? "platform_minimum Windows_10\n"
-                                          : platform == "macos" ? "platform_minimum macOS_10.15\n"
+                                          : platform == "macos" ? "platform_minimum macOS_11.0\n"
                                           : platform == "linux" ? "platform_minimum Ubuntu_22.04\n"
                                           : platform == "android"
                                               ? "platform_minimum Android_9\nandroid_api_level 28\n"
@@ -468,7 +468,7 @@ TEST_CASE("native builder creates a stable release library with release bindings
                std::string{"libgdpp_project.release.macos.arm64.dylib"});
     REQUIRE(contains(plan.commands.front().arguments, "-DNDEBUG"));
     REQUIRE(contains(plan.commands.front().arguments, "-fvisibility=hidden"));
-    REQUIRE(contains(plan.commands.front().arguments, "-mmacosx-version-min=10.15"));
+    REQUIRE(contains(plan.commands.front().arguments, "-mmacosx-version-min=11.0"));
     REQUIRE(contains(plan.commands.front().arguments, "-ffunction-sections"));
     REQUIRE(contains(plan.commands.front().arguments, "-fdata-sections"));
     REQUIRE(!contains(plan.commands.front().arguments, "-DDEBUG_ENABLED"));
@@ -788,7 +788,7 @@ TEST_CASE("native builder emits a macOS universal compile and link plan") {
     write_input(root / "sdk/sdk.manifest",
                 "GDPP_SDK " + std::to_string(GDPP_NATIVE_SDK_SCHEMA) +
                     "\napi 4.4\nplatform macos\narch universal\n"
-                    "profiles development,debug,release\nplatform_minimum macOS_10.15\n"
+                    "profiles development,debug,release\nplatform_minimum macOS_11.0\n"
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
@@ -818,7 +818,7 @@ TEST_CASE("macOS universal SDK can build a thin host development library") {
     write_input(root / "sdk/sdk.manifest",
                 "GDPP_SDK " + std::to_string(GDPP_NATIVE_SDK_SCHEMA) +
                     "\napi 4.4\nplatform macos\narch universal\n"
-                    "profiles development,debug,release\nplatform_minimum macOS_10.15\n"
+                    "profiles development,debug,release\nplatform_minimum macOS_11.0\n"
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +

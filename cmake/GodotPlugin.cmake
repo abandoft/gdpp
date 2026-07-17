@@ -45,9 +45,13 @@ function(gdpp_add_sdk_binding target_name api_version godot_target output_variab
         list(APPEND configure_arguments
             "-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
     endif()
-    if(WIN32)
+    if(MSVC)
         list(APPEND configure_arguments
-            "-DCMAKE_CXX_FLAGS=/D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00")
+            "-DCMAKE_CXX_FLAGS=/D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00"
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=${CMAKE_MSVC_RUNTIME_LIBRARY}")
+    elseif(WIN32)
+        list(APPEND configure_arguments
+            "-DCMAKE_CXX_FLAGS=-D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00")
     endif()
     if(CMAKE_TOOLCHAIN_FILE)
         list(APPEND configure_arguments -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE})
@@ -143,7 +147,7 @@ endif()
 if(GDPP_PLATFORM STREQUAL "windows")
     set(GDPP_PLATFORM_MINIMUM "Windows_10")
 elseif(GDPP_PLATFORM STREQUAL "macos")
-    set(GDPP_PLATFORM_MINIMUM "macOS_10.15")
+    set(GDPP_PLATFORM_MINIMUM "macOS_11.0")
 elseif(GDPP_PLATFORM STREQUAL "linux")
     set(GDPP_PLATFORM_MINIMUM "Ubuntu_22.04")
 else()

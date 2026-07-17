@@ -3,11 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 # Public runtime baselines are build contracts, not documentation-only labels. A package that
 # silently inherits a newer host SDK target would no longer run on the advertised minimum.
 if(APPLE)
-    if(CMAKE_OSX_DEPLOYMENT_TARGET AND
-            NOT CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "10.15")
-        message(FATAL_ERROR "GDPP macOS artifacts must target macOS 10.15")
-    endif()
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING
         "Minimum supported macOS version" FORCE)
 endif()
 
@@ -35,7 +31,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(GDPP_MIN_WINDOWS_VERSION "10")
-set(GDPP_MIN_MACOS_VERSION "10.15")
+set(GDPP_MIN_MACOS_VERSION "11.0")
 set(GDPP_MIN_LINUX_DISTRIBUTION "Ubuntu 22.04")
 set(GDPP_MIN_ANDROID_VERSION "9")
 set(GDPP_MIN_ANDROID_API_LEVEL "28")
@@ -74,6 +70,12 @@ option(GDPP_ENABLE_OFFICIAL_CORPUS_TESTS "Download and test pinned official Godo
 option(GDPP_SERIALIZE_SDK_BINDING_BUILDS
     "Build complete godot-cpp SDK variants sequentially while retaining each variant's internal parallelism"
     ON)
+
+# Public Windows packages use one compiler and CRT contract.  Accepting MinGW here would create
+# SDK archives that cannot be linked safely into the MSVC-based commercial project pipeline.
+if(WIN32 AND GDPP_BUILD_EXTENSION AND CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT MSVC)
+    message(FATAL_ERROR "GDPP commercial Windows release packages require MSVC")
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND GDPP_BUILD_EXTENSION AND
         CMAKE_BUILD_TYPE STREQUAL "Release")

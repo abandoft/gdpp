@@ -8,7 +8,7 @@
 | 平台 | 必需工具链 | 产物最低系统 |
 |---|---|---|
 | Windows x86_64 | MSVC Build Tools（编译器、链接器、Windows SDK） | Windows 10 |
-| macOS arm64 | Xcode Command Line Tools | macOS 10.15 |
+| macOS arm64 | Xcode Command Line Tools | macOS 11.0 |
 | Linux x86_64 | Ubuntu 22.04 基线兼容的 GCC/Clang 开发环境 | Ubuntu 22.04 / glibc 2.35 |
 | Android arm64-v8a | Android NDK r28+ | Android 9 / API 28 |
 | iOS arm64 | macOS 上的完整 Xcode与对应 GDPP target pack | iOS 16.0 |

@@ -41,7 +41,7 @@ HOSTS = {
     "mac-arm64": HostContract(
         platform="macos",
         architecture="arm64",
-        platform_minimum="macOS_10.15",
+        platform_minimum="macOS_11.0",
         compiler_library="libgdpp_compiler.macos.arm64.dylib",
         fallback_library="libgdpp_fallback.macos.arm64.dylib",
         export_targets=("macos-arm64", "android-arm64", "ios-arm64"),

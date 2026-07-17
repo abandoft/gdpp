@@ -272,7 +272,7 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
         diagnostics.push_back("native SDK architecture mismatch: expected " + options.architecture +
                               ", package contains " + architecture);
     const std::string expected_minimum = options.platform == NativePlatform::windows ? "Windows_10"
-                                         : options.platform == NativePlatform::macos ? "macOS_10.15"
+                                         : options.platform == NativePlatform::macos ? "macOS_11.0"
                                          : options.platform == NativePlatform::linux
                                              ? "Ubuntu_22.04"
                                          : options.platform == NativePlatform::android ? "Android_9"
@@ -437,7 +437,7 @@ void append_macos_architecture_arguments(std::vector<std::string>& arguments,
                                          const NativeBuildOptions& options) {
     if (options.platform != NativePlatform::macos)
         return;
-    arguments.emplace_back("-mmacosx-version-min=10.15");
+    arguments.emplace_back("-mmacosx-version-min=11.0");
     if (options.architecture == "universal") {
         arguments.insert(arguments.end(), {"-arch", "arm64", "-arch", "x86_64"});
     } else if (options.architecture == "arm64" || options.architecture == "x86_64") {
