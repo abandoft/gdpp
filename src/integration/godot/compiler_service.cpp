@@ -122,6 +122,82 @@ bool write_file_atomic(const std::filesystem::path& path, const std::string& con
     return false;
 }
 
+bool has_path_component(const std::filesystem::path& path, std::string_view component) {
+    return std::any_of(path.begin(), path.end(),
+                       [&](const auto& item) { return item == std::filesystem::path{component}; });
+}
+
+bool is_xcframework(const std::filesystem::path& path) {
+    std::error_code error;
+    return path.extension() == ".xcframework" && !std::filesystem::is_symlink(path, error) &&
+           !error && std::filesystem::is_directory(path, error) && !error &&
+           std::filesystem::is_regular_file(path / "Info.plist", error) && !error;
+}
+
+bool commit_xcframework(const std::filesystem::path& pending,
+                        const std::filesystem::path& destination, std::string& diagnostic) {
+    const auto filename = destination.filename().string();
+    if (!is_xcframework(pending) || pending.filename() != destination.filename() ||
+        filename.rfind("libgdpp_project.", 0) != 0 ||
+        destination.parent_path().filename() != "binary" ||
+        !has_path_component(pending, "native-direct") ||
+        !has_path_component(pending, "xcframework-staging")) {
+        diagnostic = "refusing to commit an invalid or unsafe iOS XCFramework artifact";
+        return false;
+    }
+
+    auto backup = destination;
+    backup += ".previous";
+    std::error_code error;
+    bool had_destination = std::filesystem::exists(destination, error);
+    if (error) {
+        diagnostic = "cannot inspect the current iOS artifact: " + error.message();
+        return false;
+    }
+    const bool has_backup = std::filesystem::exists(backup, error);
+    if (error) {
+        diagnostic = "cannot inspect the previous iOS artifact backup: " + error.message();
+        return false;
+    }
+    if (has_backup && !had_destination) {
+        std::filesystem::rename(backup, destination, error);
+        if (error) {
+            diagnostic = "cannot recover the previous iOS artifact after an interrupted commit: " +
+                         error.message();
+            return false;
+        }
+        had_destination = true;
+    } else if (has_backup) {
+        std::filesystem::remove_all(backup, error);
+        if (error) {
+            diagnostic = "cannot clear the obsolete iOS artifact backup: " + error.message();
+            return false;
+        }
+    }
+    if (had_destination) {
+        std::filesystem::rename(destination, backup, error);
+        if (error) {
+            diagnostic =
+                "cannot stage the current iOS artifact for replacement: " + error.message();
+            return false;
+        }
+    }
+    std::filesystem::rename(pending, destination, error);
+    if (error) {
+        const auto commit_error = error.message();
+        if (had_destination) {
+            error.clear();
+            std::filesystem::rename(backup, destination, error);
+        }
+        diagnostic = "cannot commit the new iOS XCFramework: " + commit_error;
+        return false;
+    }
+    std::filesystem::remove_all(backup, error);
+    // A failed cleanup does not invalidate the newly committed XCFramework. The next build will
+    // recognize and remove this backup before attempting another replacement.
+    return true;
+}
+
 NativePlatform native_platform() {
     const std::string platform{GDPP_PLATFORM};
     if (platform == "macos")
@@ -138,6 +214,8 @@ std::string native_platform_name(NativePlatform platform) {
         return "windows";
     if (platform == NativePlatform::android)
         return "android";
+    if (platform == NativePlatform::ios)
+        return "ios";
     if (platform == NativePlatform::web)
         return "web";
     return "linux";
@@ -177,6 +255,8 @@ std::optional<NativePlatform> parse_native_platform(const std::string& value) {
         return NativePlatform::linux;
     if (value == "android")
         return NativePlatform::android;
+    if (value == "ios")
+        return NativePlatform::ios;
     if (value == "web")
         return NativePlatform::web;
     return std::nullopt;
@@ -680,6 +760,7 @@ int64_t execute_native_process(const std::string& executable,
 struct NativeInvocation {
     std::string executable;
     std::vector<std::string> arguments;
+    std::size_t stage{0};
 };
 
 } // namespace
@@ -728,46 +809,52 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands) const
             invocation.arguments.push_back(native_string(arguments[argument]));
         if (invocation.executable.empty())
             return -1;
+        const auto stage = static_cast<int64_t>(item.get("stage", int64_t{0}));
+        if (stage < 0)
+            return -1;
+        invocation.stage = static_cast<std::size_t>(stage);
         invocations.push_back(std::move(invocation));
     }
     if (invocations.empty())
         return 0;
-    if (invocations.size() == 1)
-        return execute_native_process(invocations.front().executable,
-                                      invocations.front().arguments);
 
-    // NativeBuilder emits independent compilation commands followed by one link
-    // command. Compile in parallel, then link only after every object succeeds.
-    const auto compilation_count = invocations.size() - 1;
-    const auto hardware_threads = std::max(1U, std::thread::hardware_concurrency());
-    const auto worker_count =
-        std::min(compilation_count, static_cast<std::size_t>(std::min(hardware_threads, 8U)));
-    std::atomic<std::size_t> next{0};
-    std::atomic<int64_t> first_error{0};
-    std::vector<std::thread> workers;
-    workers.reserve(worker_count);
-    for (std::size_t worker = 0; worker < worker_count; ++worker) {
-        workers.emplace_back([&]() {
-            while (true) {
-                const auto index = next.fetch_add(1);
-                if (index >= compilation_count)
-                    return;
-                const auto& invocation = invocations[index];
-                const auto exit_code =
-                    execute_native_process(invocation.executable, invocation.arguments);
-                if (exit_code != 0) {
-                    int64_t expected = 0;
-                    (void)first_error.compare_exchange_strong(expected, exit_code);
+    std::stable_sort(invocations.begin(), invocations.end(),
+                     [](const auto& left, const auto& right) { return left.stage < right.stage; });
+    for (std::size_t begin = 0; begin < invocations.size();) {
+        std::size_t end = begin + 1;
+        while (end < invocations.size() && invocations[end].stage == invocations[begin].stage)
+            ++end;
+        const auto count = end - begin;
+        const auto hardware_threads = std::max(1U, std::thread::hardware_concurrency());
+        const auto worker_count =
+            std::min(count, static_cast<std::size_t>(std::min(hardware_threads, 8U)));
+        std::atomic<std::size_t> next{begin};
+        std::atomic<int64_t> first_error{0};
+        std::vector<std::thread> workers;
+        workers.reserve(worker_count);
+        for (std::size_t worker = 0; worker < worker_count; ++worker) {
+            workers.emplace_back([&]() {
+                while (first_error.load() == 0) {
+                    const auto index = next.fetch_add(1);
+                    if (index >= end)
+                        return;
+                    const auto& invocation = invocations[index];
+                    const auto exit_code =
+                        execute_native_process(invocation.executable, invocation.arguments);
+                    if (exit_code != 0) {
+                        int64_t expected = 0;
+                        (void)first_error.compare_exchange_strong(expected, exit_code);
+                    }
                 }
-            }
-        });
+            });
+        }
+        for (auto& worker : workers)
+            worker.join();
+        if (first_error.load() != 0)
+            return first_error.load();
+        begin = end;
     }
-    for (auto& worker : workers)
-        worker.join();
-    if (first_error.load() != 0)
-        return first_error.load();
-    const auto& linker = invocations.back();
-    return execute_native_process(linker.executable, linker.arguments);
+    return 0;
 }
 
 godot::Dictionary GDPPCompiler::execute_project_build(const godot::Dictionary& build_plan) const {
@@ -797,9 +884,23 @@ godot::Dictionary GDPPCompiler::execute_project_build(const godot::Dictionary& b
     const godot::String output_library = build_plan.get("output_library", godot::String{});
     auto* settings = godot::ProjectSettings::get_singleton();
     const auto output_path = native_string(settings->globalize_path(output_library));
+    const godot::String pending_output = build_plan.get("pending_output_library", godot::String{});
+    if (!pending_output.is_empty()) {
+        const auto pending_path = native_string(settings->globalize_path(pending_output));
+        std::string commit_diagnostic;
+        if (!commit_xcframework(path_from_utf8(pending_path), path_from_utf8(output_path),
+                                commit_diagnostic)) {
+            diagnostics.push_back(godot::String{commit_diagnostic.c_str()});
+            output["diagnostics"] = diagnostics;
+            return output;
+        }
+    }
     std::error_code file_error;
-    if (output_path.empty() || !std::filesystem::is_regular_file(output_path, file_error) ||
-        file_error) {
+    const auto output_filesystem_path = path_from_utf8(output_path);
+    const bool artifact_exists =
+        std::filesystem::is_regular_file(output_filesystem_path, file_error) ||
+        is_xcframework(output_filesystem_path);
+    if (output_path.empty() || !artifact_exists || file_error) {
         diagnostics.push_back("native build completed without producing the planned library '" +
                               output_library + "'");
         output["diagnostics"] = diagnostics;
@@ -809,7 +910,7 @@ godot::Dictionary GDPPCompiler::execute_project_build(const godot::Dictionary& b
     const auto profile =
         native_string(static_cast<godot::String>(build_plan.get("build_profile", godot::String{})));
     if (profile == "development") {
-        const auto cleanup = gdpp::prune_stale_development_libraries(output_path);
+        const auto cleanup = gdpp::prune_stale_development_libraries(output_filesystem_path);
         output["cleanup_success"] = cleanup.success;
         output["removed_count"] = static_cast<int64_t>(cleanup.removed_count);
         for (const auto& diagnostic : cleanup.diagnostics)
@@ -864,7 +965,7 @@ godot::Dictionary GDPPCompiler::compile_project(
         output["success"] = false;
         godot::PackedStringArray diagnostics;
         diagnostics.push_back("unsupported native platform '" + target_platform +
-                              "'; expected macos, linux, windows, android, or web");
+                              "'; expected macos, linux, windows, android, ios, or web");
         output["diagnostics"] = diagnostics;
         return output;
     }
@@ -993,12 +1094,17 @@ godot::Dictionary GDPPCompiler::compile_project(
             for (const auto& argument : command.arguments)
                 arguments.push_back(godot::String{argument.c_str()});
             item["arguments"] = arguments;
+            item["stage"] = static_cast<int64_t>(command.stage);
             commands.push_back(item);
         }
         output["build_commands"] = commands;
         output["native_up_to_date"] = plan.up_to_date;
         output["output_library"] =
             godot::String::utf8(generic_path_to_utf8(plan.output_library).c_str());
+        if (!plan.pending_output_library.empty()) {
+            output["pending_output_library"] =
+                godot::String::utf8(generic_path_to_utf8(plan.pending_output_library).c_str());
+        }
         output["build_profile"] = build_profile;
         output["target_platform"] = godot::String{platform_value.c_str()};
         output["target_architecture"] = godot::String{architecture.c_str()};

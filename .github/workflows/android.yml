@@ -47,7 +47,7 @@ jobs:
           grep -q '^platform android$' "$sdk/sdk.manifest"
           grep -q '^arch arm64$' "$sdk/sdk.manifest"
           grep -q '^profiles debug,release$' "$sdk/sdk.manifest"
-          grep -q '^android_api_level 24$' "$sdk/sdk.manifest"
+          grep -q '^android_api_level 28$' "$sdk/sdk.manifest"
           test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_debug*.a' | wc -l)" -eq 1
           test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_release*.a' | wc -l)" -eq 1
       - name: Upload target SDK
@@ -119,6 +119,8 @@ jobs:
             2>&1 | tee "$root/export.log"
           apk="$root/GDPPExample.apk"
           test -f "$apk"
+          "$ANDROID_SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$apk" \
+            | grep -q "sdkVersion:'28'"
           unzip -Z1 "$apk" | LC_ALL=C sort > "$root/contents.txt"
           project_library="$(awk '/^lib\/arm64-v8a\/libgdpp_project.*\.so$/{print}' "$root/contents.txt")"
           test "$(printf '%s\n' "$project_library" | sed '/^$/d' | wc -l)" -eq 1

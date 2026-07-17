@@ -10,7 +10,7 @@
 
 namespace gdpp {
 
-enum class NativePlatform { macos, linux, windows, android, web };
+enum class NativePlatform { macos, linux, windows, android, ios, web };
 enum class NativeBuildProfile { development, debug, release };
 enum class NativeWebThreadMode { not_applicable, single_threaded, multi_threaded };
 
@@ -42,6 +42,9 @@ struct NativeBuildCommand {
     std::string executable;
     std::vector<std::string> arguments;
     std::filesystem::path working_directory;
+    // Commands in one stage are independent and may execute in parallel. A later stage starts
+    // only after every command in the preceding stage succeeds.
+    std::size_t stage{0};
 };
 
 struct NativeBuildPlan {
@@ -50,6 +53,9 @@ struct NativeBuildPlan {
     std::vector<NativeBuildCommand> commands;
     std::vector<std::string> diagnostics;
     std::filesystem::path output_library;
+    // Directory artifacts such as an Apple XCFramework are assembled away from the customer
+    // output and committed only after the complete build succeeds.
+    std::filesystem::path pending_output_library;
 };
 
 struct NativeArtifactCleanupResult {

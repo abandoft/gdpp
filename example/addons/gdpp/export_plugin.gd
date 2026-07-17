@@ -71,7 +71,7 @@ func _get_name() -> String:
 
 func _supports_platform(platform: EditorExportPlatform) -> bool:
     return platform.get_os_name().to_lower() in [
-        "macos", "windows", "linux", "android", "web"
+        "macos", "windows", "linux", "android", "ios", "web"
     ]
 
 
@@ -485,7 +485,7 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
     if not _execute_build(development_result, "development"):
         return false
     var development_library := str(development_result.get("output_library", ""))
-    if development_library.is_empty() or not FileAccess.file_exists(development_library):
+    if development_library.is_empty() or not _native_artifact_exists(development_library):
         _fail_export("native development library was not produced: %s" % development_library)
         return false
     var development_classes: Dictionary = development_result.get("script_classes", {})
@@ -498,6 +498,10 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
     var distribution_compiler := cpp_compiler
     if _target_platform == "android":
         distribution_compiler = _android_compiler()
+        if distribution_compiler.is_empty():
+            return false
+    elif _target_platform == "ios":
+        distribution_compiler = _ios_compiler()
         if distribution_compiler.is_empty():
             return false
     elif _target_platform == "web":
@@ -525,7 +529,7 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
         _compiled_scripts[script_path] = true
     _build_id = str(distribution_result.get("build_id", ""))
     _output_library = str(distribution_result.get("output_library", ""))
-    if not FileAccess.file_exists(_output_library):
+    if not _native_artifact_exists(_output_library):
         _fail_export("native distribution library was not produced: %s" % _output_library)
         return false
     if not _validate_native_classes():
@@ -697,7 +701,7 @@ func _restore_autoloads() -> void:
 
 func _platform_from_features(features: PackedStringArray) -> String:
     var matches: Array[String] = []
-    for value in ["macos", "windows", "linux", "android", "web"]:
+    for value in ["macos", "windows", "linux", "android", "ios", "web"]:
         if features.has(value):
             matches.append(value)
     return matches[0] if matches.size() == 1 else ""
@@ -706,6 +710,8 @@ func _platform_from_features(features: PackedStringArray) -> String:
 func _architecture_from_features(features: PackedStringArray) -> String:
     if _target_platform == "web":
         return "wasm32" if features.has("wasm32") else ""
+    if _target_platform == "ios":
+        return "arm64" if features.has("arm64") else ""
     if features.has("universal"):
         return "universal"
     var matches: Array[String] = []
@@ -766,6 +772,31 @@ func _web_compiler() -> String:
         )
         return ""
     return compiler
+
+
+func _ios_compiler() -> String:
+    if OS.get_name() != "macOS":
+        _fail_export("iOS AOT export requires macOS with a complete Xcode installation")
+        return ""
+    var output: Array = []
+    var status := OS.execute("xcrun", ["--find", "clang++"], output, true)
+    if status != 0 or output.is_empty():
+        _fail_export(
+            "Xcode C++ tools were not found; install Xcode and run xcode-select first"
+        )
+        return ""
+    return "xcrun"
+
+
+func _native_artifact_exists(path: String) -> bool:
+    if FileAccess.file_exists(path):
+        return true
+    var absolute := ProjectSettings.globalize_path(path)
+    return (
+        path.get_extension().to_lower() == "xcframework"
+        and DirAccess.dir_exists_absolute(absolute)
+        and FileAccess.file_exists(path.path_join("Info.plist"))
+    )
 
 
 func _runtime_library_entries(library_path: String, feature := "") -> String:
@@ -1440,6 +1471,7 @@ func _inject_strict_export_failure() -> void:
         "linux": "so",
         "windows": "dll",
         "android": "so",
+        "ios": "xcframework",
         "web": "wasm",
     }.get(_target_platform, "invalid")
     var sentinel := "res://addons/gdpp/build/__gdpp_aot_export_failed__.%s" % extension

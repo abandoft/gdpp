@@ -81,6 +81,10 @@ foreach(invalid_android_option IN ITEMS
             "Non-Gradle unsigned Android fixture contains invalid option: ${invalid_android_option}")
     endif()
 endforeach()
+string(FIND "${export_presets}" "gradle_build/min_sdk=\"28\"" android_minimum_offset)
+if(android_minimum_offset EQUAL -1)
+    message(FATAL_ERROR "Android export fixture must enforce API 28 / Android 9")
+endif()
 
 foreach(required_windows_option IN ITEMS
         "name=\"Windows x86_64\""
@@ -127,5 +131,31 @@ foreach(required_web_implementation IN ITEMS
     if(required_offset EQUAL -1)
         message(FATAL_ERROR
             "Web export implementation is missing: ${required_web_implementation}")
+    endif()
+endforeach()
+
+foreach(required_ios_option IN ITEMS
+        "name=\"iOS AOT\""
+        "name=\"iOS GDScript Fallback\""
+        "platform=\"iOS\""
+        "application/export_project_only=true"
+        "application/min_ios_version=\"16.0\""
+        "architectures/arm64=true"
+        "export_path=\"addons/gdpp/build/export/ios/GDPPExample\"")
+    string(FIND "${export_presets}" "${required_ios_option}" required_offset)
+    if(required_offset EQUAL -1)
+        message(FATAL_ERROR "iOS export fixture is missing: ${required_ios_option}")
+    endif()
+endforeach()
+
+foreach(required_ios_implementation IN ITEMS
+        "func _ios_compiler() -> String:"
+        "func _native_artifact_exists(path: String) -> bool:"
+        "\"macos\", \"windows\", \"linux\", \"android\", \"ios\", \"web\""
+        "\"ios\": \"xcframework\"")
+    string(FIND "${export_plugin}" "${required_ios_implementation}" required_offset)
+    if(required_offset EQUAL -1)
+        message(FATAL_ERROR
+            "iOS export implementation is missing: ${required_ios_implementation}")
     endif()
 endforeach()

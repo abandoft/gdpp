@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""Build reproducible GDPP iOS target packs for devices and both Simulator CPUs."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+from pathlib import Path
+import platform
+import shutil
+import subprocess
+
+
+PROFILES = {"debug": "template_debug", "release": "template_release"}
+SLICES = {
+    "device-arm64": ("OS64", "arm64"),
+    "simulator-arm64": ("SIMULATORARM64", "arm64"),
+    "simulator-x86_64": ("SIMULATOR64", "x86_64"),
+}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source-root", type=Path, required=True)
+    parser.add_argument("--build-root", type=Path, required=True)
+    parser.add_argument("--addon-root", type=Path, required=True)
+    parser.add_argument("--godot-version", choices=["4.4", "4.5", "4.6", "4.7"], required=True)
+    parser.add_argument("--deployment-target", default="16.0")
+    parser.add_argument("--schema", type=int, required=True)
+    parser.add_argument("--runtime-abi", type=int, required=True)
+    parser.add_argument("--gdpp-version", required=True)
+    return parser.parse_args()
+
+
+def environment() -> dict[str, str]:
+    result = os.environ.copy()
+    result["PYTHONDONTWRITEBYTECODE"] = "1"
+    return result
+
+
+def run(command: list[str]) -> None:
+    print("+", subprocess.list2cmdline(command), flush=True)
+    subprocess.run(command, check=True, env=environment())
+
+
+def output(command: list[str]) -> str:
+    return subprocess.run(
+        command,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=environment(),
+    ).stdout.strip()
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def require_descendant(path: Path, parent: Path, label: str) -> None:
+    try:
+        path.relative_to(parent)
+    except ValueError as error:
+        raise SystemExit(f"{label} must remain below {parent}: {path}") from error
+
+
+def find_archive(directory: Path, target: str, architecture: str) -> Path:
+    expected = directory / "bin" / f"libgodot-cpp.ios.{target}.{architecture}.a"
+    if expected.is_file():
+        return expected
+    candidates = sorted((directory / "bin").glob(f"*{target}*{architecture}*.a"))
+    if len(candidates) != 1:
+        raise SystemExit(
+            f"expected one iOS {target}/{architecture} godot-cpp archive, found {candidates}"
+        )
+    return candidates[0]
+
+
+def main() -> int:
+    args = parse_args()
+    if platform.system() != "Darwin":
+        raise SystemExit("iOS target packs can only be built on macOS with Xcode")
+
+    source_root = args.source_root.resolve()
+    build_root = args.build_root.resolve()
+    addon_root = args.addon_root.resolve()
+    require_descendant(build_root, source_root / "build", "iOS SDK build root")
+    for tool in ("cmake", "ninja", "xcrun", "xcodebuild"):
+        if shutil.which(tool) is None:
+            raise SystemExit(f"required iOS build tool was not found: {tool}")
+
+    xcode_version = output(["xcodebuild", "-version"]).replace("\n", "_").replace(" ", "-")
+    iphoneos_sdk = output(["xcrun", "--sdk", "iphoneos", "--show-sdk-version"])
+    simulator_sdk = output(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"])
+    if args.deployment_target != "16.0":
+        raise SystemExit("GDPP's commercial iOS baseline is fixed at iOS 16.0")
+    deployment_target = args.deployment_target
+
+    godot_cpp = source_root / "third/godot-cpp"
+    toolchain = godot_cpp / "cmake/ios.toolchain.cmake"
+    runtime_header = source_root / "include/gdpp/runtime/variant_ops.hpp"
+    runtime_source = source_root / "src/runtime/variant_ops.cpp"
+    for required in (godot_cpp / "CMakeLists.txt", toolchain, runtime_header, runtime_source):
+        if not required.is_file():
+            raise SystemExit(f"missing iOS SDK input: {required}")
+
+    target_root = addon_root / "sdk" / args.godot_version / "ios/arm64"
+    stage = build_root / "stage" / args.godot_version / "arm64"
+    if stage.exists():
+        shutil.rmtree(stage)
+    for directory in (
+        stage / "include/gdpp/runtime",
+        stage / "src/runtime",
+        stage / "godot-cpp/gen",
+        stage / "lib/device",
+        stage / "lib/simulator",
+    ):
+        directory.mkdir(parents=True)
+
+    generated_include: Path | None = None
+    for profile_name, godot_target in PROFILES.items():
+        archives: dict[str, Path] = {}
+        for slice_name, (toolchain_platform, architecture) in SLICES.items():
+            directory = build_root / args.godot_version / profile_name / slice_name
+            run(
+                [
+                    "cmake",
+                    "-S",
+                    str(godot_cpp),
+                    "-B",
+                    str(directory),
+                    "-G",
+                    "Ninja",
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
+                    f"-DPLATFORM={toolchain_platform}",
+                    f"-DDEPLOYMENT_TARGET={deployment_target}",
+                    f"-DGODOTCPP_API_VERSION={args.godot_version}",
+                    f"-DGODOTCPP_TARGET={godot_target}",
+                    "-DGODOTCPP_ENABLE_TESTING=OFF",
+                    "-DGODOTCPP_SYSTEM_HEADERS=ON",
+                    f"-DCMAKE_CXX_FLAGS=-ffile-prefix-map={source_root}=/gdpp",
+                ]
+            )
+            run(["cmake", "--build", str(directory), "--target", "godot-cpp", "--parallel"])
+            archive = find_archive(directory, godot_target, architecture)
+            actual_architectures = output(["xcrun", "lipo", "-archs", str(archive)]).split()
+            if actual_architectures != [architecture]:
+                raise SystemExit(
+                    f"unexpected architectures in {archive}: {actual_architectures}"
+                )
+            archives[slice_name] = archive
+            generated_include = directory / "gen/include"
+
+        device_name = f"libgodot-cpp.ios.{godot_target}.arm64.a"
+        shutil.copy2(archives["device-arm64"], stage / "lib/device" / device_name)
+        simulator_name = f"libgodot-cpp.ios.{godot_target}.universal.a"
+        simulator_output = stage / "lib/simulator" / simulator_name
+        run(
+            [
+                "xcrun",
+                "lipo",
+                "-create",
+                str(archives["simulator-arm64"]),
+                str(archives["simulator-x86_64"]),
+                "-output",
+                str(simulator_output),
+            ]
+        )
+        if set(output(["xcrun", "lipo", "-archs", str(simulator_output)]).split()) != {
+            "arm64",
+            "x86_64",
+        }:
+            raise SystemExit(f"Universal Simulator archive is incomplete: {simulator_output}")
+
+    assert generated_include is not None
+    shutil.copytree(godot_cpp / "include", stage / "godot-cpp/include", dirs_exist_ok=True)
+    shutil.copytree(generated_include, stage / "godot-cpp/gen/include", dirs_exist_ok=True)
+    shutil.copy2(godot_cpp / "LICENSE.md", stage / "godot-cpp/LICENSE.md")
+    shutil.copy2(runtime_header, stage / "include/gdpp/runtime/variant_ops.hpp")
+    shutil.copy2(runtime_source, stage / "src/runtime/variant_ops.cpp")
+
+    manifest = (
+        f"GDPP_SDK {args.schema}\n"
+        f"api {args.godot_version}\n"
+        "platform ios\n"
+        "arch arm64\n"
+        "profiles debug,release\n"
+        "platform_minimum iOS_16.0\n"
+        f"gdpp_version {args.gdpp_version}\n"
+        f"runtime_abi {args.runtime_abi}\n"
+        f"runtime_header_sha256 {sha256(runtime_header)}\n"
+        f"runtime_source_sha256 {sha256(runtime_source)}\n"
+        f"compiler {xcode_version}\n"
+        f"iphoneos_sdk {iphoneos_sdk}\n"
+        f"iphonesimulator_sdk {simulator_sdk}\n"
+        f"ios_deployment_target {deployment_target}\n"
+        "ios_slices device-arm64,simulator-arm64,simulator-x86_64\n"
+        "source_paths mapped\n"
+    )
+    (stage / "sdk.manifest").write_text(manifest, encoding="utf-8", newline="\n")
+
+    target_root.parent.mkdir(parents=True, exist_ok=True)
+    if target_root.exists():
+        shutil.rmtree(target_root)
+    shutil.copytree(stage, target_root)
+    size = sum(path.stat().st_size for path in target_root.rglob("*") if path.is_file())
+    print(
+        f"Packaged Godot {args.godot_version} iOS/arm64 SDK: "
+        f"{size / (1024 * 1024):.2f} MiB -> {target_root}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

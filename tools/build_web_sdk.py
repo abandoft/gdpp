@@ -174,6 +174,7 @@ def main() -> int:
         "platform web\n"
         "arch wasm32\n"
         "profiles debug,release\n"
+        "platform_minimum none\n"
         f"web_threads {variant}\n"
         f"gdpp_version {args.gdpp_version}\n"
         f"runtime_abi {args.runtime_abi}\n"

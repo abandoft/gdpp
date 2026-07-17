@@ -19,7 +19,7 @@
 namespace gdpp {
 namespace {
 
-constexpr std::string_view native_build_revision{"11"};
+constexpr std::string_view native_build_revision{"12"};
 
 struct BridgeBuildInputs {
     std::vector<std::filesystem::path> include_directories;
@@ -191,6 +191,8 @@ std::string platform_name(NativePlatform platform) {
         return "windows";
     if (platform == NativePlatform::android)
         return "android";
+    if (platform == NativePlatform::ios)
+        return "ios";
     if (platform == NativePlatform::web)
         return "web";
     return "linux";
@@ -227,6 +229,10 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
     std::string runtime_source_sha256;
     std::string web_threads;
     std::string source_paths;
+    std::string ios_deployment_target;
+    std::string ios_slices;
+    std::string platform_minimum;
+    std::string android_api_level;
     while (input >> key >> value) {
         if (key == "platform")
             platform = value;
@@ -246,6 +252,14 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
             web_threads = value;
         else if (key == "source_paths")
             source_paths = value;
+        else if (key == "ios_deployment_target")
+            ios_deployment_target = value;
+        else if (key == "ios_slices")
+            ios_slices = value;
+        else if (key == "platform_minimum")
+            platform_minimum = value;
+        else if (key == "android_api_level")
+            android_api_level = value;
     }
     if (platform != platform_name(options.platform))
         diagnostics.push_back("native SDK platform mismatch: expected " +
@@ -257,6 +271,25 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
     if (!architecture_compatible)
         diagnostics.push_back("native SDK architecture mismatch: expected " + options.architecture +
                               ", package contains " + architecture);
+    const std::string expected_minimum = options.platform == NativePlatform::windows ? "Windows_10"
+                                         : options.platform == NativePlatform::macos ? "macOS_10.15"
+                                         : options.platform == NativePlatform::linux
+                                             ? "Ubuntu_22.04"
+                                         : options.platform == NativePlatform::android ? "Android_9"
+                                         : options.platform == NativePlatform::ios     ? "iOS_16.0"
+                                                                                       : "none";
+    if (platform_minimum != expected_minimum) {
+        diagnostics.push_back(
+            "native SDK platform minimum mismatch: expected " + expected_minimum +
+            ", package contains " +
+            (platform_minimum.empty() ? std::string{"<missing>"} : platform_minimum));
+    }
+    if (options.platform == NativePlatform::android && android_api_level != "28") {
+        diagnostics.push_back(
+            "native Android SDK API baseline mismatch: expected 28, package "
+            "contains " +
+            (android_api_level.empty() ? std::string{"<missing>"} : android_api_level));
+    }
     if (options.platform == NativePlatform::web) {
         const auto expected_threads = web_thread_mode_name(options.web_thread_mode);
         if (web_threads != expected_threads) {
@@ -268,6 +301,23 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
             diagnostics.emplace_back(
                 "native Web SDK does not guarantee reproducible source-path mapping; "
                 "reinstall the matching Web target pack");
+        }
+    }
+    if (options.platform == NativePlatform::ios) {
+        if (ios_deployment_target != "16.0")
+            diagnostics.emplace_back(
+                "native iOS SDK deployment target must match the commercial iOS 16.0 baseline");
+        const auto slices = "," + ios_slices + ",";
+        for (const auto required : {"device-arm64", "simulator-arm64", "simulator-x86_64"}) {
+            if (slices.find("," + std::string{required} + ",") == std::string::npos) {
+                diagnostics.push_back("native iOS SDK is missing required slice '" +
+                                      std::string{required} + "'");
+            }
+        }
+        if (source_paths != "mapped") {
+            diagnostics.emplace_back(
+                "native iOS SDK does not guarantee reproducible source-path mapping; "
+                "reinstall the matching iOS target pack");
         }
     }
     if (api != godot_version_name(options.target_version))
@@ -315,6 +365,17 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
     verify_runtime_file(options.sdk_root / "src/runtime/variant_ops.cpp", runtime_source_sha256,
                         "runtime source");
     return diagnostics.empty();
+}
+
+std::string manifest_value(const std::filesystem::path& manifest, std::string_view wanted_key) {
+    std::ifstream input{manifest};
+    std::string key;
+    std::string value;
+    while (input >> key >> value) {
+        if (key == wanted_key)
+            return value;
+    }
+    return {};
 }
 
 std::filesystem::path find_binding_library(const std::filesystem::path& directory,
@@ -376,6 +437,7 @@ void append_macos_architecture_arguments(std::vector<std::string>& arguments,
                                          const NativeBuildOptions& options) {
     if (options.platform != NativePlatform::macos)
         return;
+    arguments.emplace_back("-mmacosx-version-min=10.15");
     if (options.architecture == "universal") {
         arguments.insert(arguments.end(), {"-arch", "arm64", "-arch", "x86_64"});
     } else if (options.architecture == "arm64" || options.architecture == "x86_64") {
@@ -389,10 +451,9 @@ void append_android_target_arguments(std::vector<std::string>& arguments,
         return;
     const auto triple =
         options.architecture == "arm64" ? "aarch64-linux-android" : "x86_64-linux-android";
-    // Keep this baseline aligned with the packaged Android godot-cpp SDK. A single fixed
-    // minimum makes object-cache signatures deterministic and remains runnable in projects whose
-    // export preset raises minSdk above it.
-    arguments.push_back("--target=" + std::string{triple} + "24");
+    // Keep this baseline aligned with the packaged Android godot-cpp SDK and the documented
+    // Android 9 minimum. A single fixed value keeps object-cache signatures deterministic.
+    arguments.push_back("--target=" + std::string{triple} + "28");
 }
 
 using ReproduciblePathMapping = std::pair<std::string, std::string>;
@@ -506,6 +567,8 @@ NativeBuildCommand compile_command(const NativeBuildOptions& options,
                      "/DGDEXTENSION",
                      "/DTHREADS_ENABLED",
                      "/DWINDOWS_ENABLED",
+                     "/D_WIN32_WINNT=0x0A00",
+                     "/DWINVER=0x0A00",
                      "/DTYPED_METHOD_BIND",
                      "/D_HAS_EXCEPTIONS=0",
                      "/DNOMINMAX"};
@@ -559,6 +622,68 @@ NativeBuildCommand compile_command(const NativeBuildOptions& options,
         arguments.emplace_back("-o");
         arguments.push_back(path_to_utf8(object));
     }
+    return command;
+}
+
+struct IOSBuildSlice {
+    std::string name;
+    std::string sdk;
+    std::string target_triple;
+    std::filesystem::path binding_library;
+};
+
+NativeBuildCommand ios_compile_command(const NativeBuildOptions& options,
+                                       const IOSBuildSlice& slice,
+                                       const std::filesystem::path& source,
+                                       const std::filesystem::path& object,
+                                       const std::vector<std::filesystem::path>& includes) {
+    NativeBuildCommand command;
+    command.executable = options.compiler_executable;
+    command.working_directory = options.project_output_directory;
+    auto& arguments = command.arguments;
+    arguments = {
+        "--sdk",         slice.sdk,       "clang++",         "-target",       slice.target_triple,
+        "-std=c++17",    "-fPIC",         "-fno-exceptions", "-DGDEXTENSION", "-DTHREADS_ENABLED",
+        "-DIOS_ENABLED", "-DUNIX_ENABLED"};
+    if (options.profile == NativeBuildProfile::debug) {
+        arguments.insert(arguments.end(), {"-O0", "-g", "-DDEBUG_ENABLED"});
+    } else {
+        arguments.insert(arguments.end(), {"-O3", "-DNDEBUG", "-fvisibility=hidden",
+                                           "-ffunction-sections", "-fdata-sections"});
+    }
+    append_reproducible_path_arguments(arguments, options);
+    append_include_arguments(arguments, includes, options.platform);
+    arguments.emplace_back("-c");
+    arguments.push_back(path_to_utf8(source));
+    arguments.emplace_back("-o");
+    arguments.push_back(path_to_utf8(object));
+    return command;
+}
+
+NativeBuildCommand ios_link_command(const NativeBuildOptions& options, const IOSBuildSlice& slice,
+                                    const std::vector<std::filesystem::path>& objects,
+                                    const std::vector<std::filesystem::path>& libraries,
+                                    const std::filesystem::path& output,
+                                    const std::filesystem::path& export_map) {
+    NativeBuildCommand command;
+    command.executable = options.compiler_executable;
+    command.working_directory = options.project_output_directory;
+    command.stage = 1;
+    auto& arguments = command.arguments;
+    arguments = {"--sdk", slice.sdk, "clang++", "-target", slice.target_triple, "-dynamiclib"};
+    for (const auto& object : objects)
+        arguments.push_back(path_to_utf8(object));
+    arguments.push_back(path_to_utf8(slice.binding_library));
+    for (const auto& library : libraries)
+        arguments.push_back(path_to_utf8(library));
+    arguments.push_back("-Wl,-exported_symbols_list," + path_to_utf8(export_map));
+    arguments.emplace_back("-Wl,-install_name,@rpath/libgdpp_project.dylib");
+    if (options.profile == NativeBuildProfile::release) {
+        arguments.emplace_back("-Wl,-dead_strip");
+        arguments.emplace_back("-Wl,-x");
+    }
+    arguments.emplace_back("-o");
+    arguments.push_back(path_to_utf8(output));
     return command;
 }
 
@@ -645,6 +770,7 @@ std::optional<NativeBuildCommand> link_command(const NativeBuildOptions& options
                                                const std::filesystem::path& export_map) {
     NativeBuildCommand command;
     command.working_directory = options.project_output_directory;
+    command.stage = 1;
     auto& arguments = command.arguments;
     if (options.platform == NativePlatform::windows) {
         // cl.exe does not decode UTF-16 response files reliably. Invoke the MSVC
@@ -769,6 +895,8 @@ std::string native_library_name(NativeBuildProfile profile, NativePlatform platf
         return stem + ".dll";
     if (platform == NativePlatform::web)
         return "lib" + stem + ".wasm";
+    if (platform == NativePlatform::ios)
+        return "lib" + stem + ".xcframework";
     return "lib" + stem + (platform == NativePlatform::macos ? ".dylib" : ".so");
 }
 
@@ -892,8 +1020,10 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
         (options.platform == NativePlatform::macos &&
          (options.architecture == "arm64" || options.architecture == "x86_64" ||
           options.architecture == "universal")) ||
+        (options.platform == NativePlatform::ios && options.architecture == "arm64") ||
         (options.platform == NativePlatform::web && options.architecture == "wasm32") ||
-        (options.platform != NativePlatform::macos && options.platform != NativePlatform::web &&
+        (options.platform != NativePlatform::macos && options.platform != NativePlatform::ios &&
+         options.platform != NativePlatform::web &&
          (options.architecture == "arm64" || options.architecture == "x86_64"));
     if (!architecture_supported) {
         result.diagnostics.push_back("unsupported native architecture '" + options.architecture +
@@ -910,6 +1040,13 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
         if (options.web_thread_mode == NativeWebThreadMode::not_applicable) {
             result.diagnostics.emplace_back(
                 "Web target must explicitly select threads or nothreads");
+            return result;
+        }
+    } else if (options.platform == NativePlatform::ios) {
+        if (options.profile == NativeBuildProfile::development) {
+            result.diagnostics.emplace_back(
+                "iOS distribution libraries support only debug or release profiles; "
+                "editor development validation must use the macOS host library");
             return result;
         }
     } else if (options.web_thread_mode != NativeWebThreadMode::not_applicable) {
@@ -961,10 +1098,24 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
                                        : options.profile == NativeBuildProfile::debug
                                            ? "template_debug"
                                            : "template_release";
-    const auto binding_library =
-        find_binding_library(options.sdk_root / "lib", options, binding_target);
-    if (binding_library.empty())
-        result.diagnostics.emplace_back("missing ABI-compatible godot-cpp static library in SDK");
+    std::filesystem::path binding_library;
+    std::filesystem::path ios_device_binding_library;
+    std::filesystem::path ios_simulator_binding_library;
+    if (options.platform == NativePlatform::ios) {
+        ios_device_binding_library =
+            find_binding_library(options.sdk_root / "lib/device", options, binding_target);
+        ios_simulator_binding_library =
+            find_binding_library(options.sdk_root / "lib/simulator", options, binding_target);
+        if (ios_device_binding_library.empty() || ios_simulator_binding_library.empty()) {
+            result.diagnostics.emplace_back(
+                "missing device or Universal Simulator godot-cpp library in iOS SDK");
+        }
+    } else {
+        binding_library = find_binding_library(options.sdk_root / "lib", options, binding_target);
+        if (binding_library.empty())
+            result.diagnostics.emplace_back(
+                "missing ABI-compatible godot-cpp static library in SDK");
+    }
     if (!result.diagnostics.empty())
         return result;
 
@@ -1019,7 +1170,8 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
             result.diagnostics.emplace_back("cannot write ELF project export map");
             return result;
         }
-    } else if (options.platform == NativePlatform::macos) {
+    } else if (options.platform == NativePlatform::macos ||
+               options.platform == NativePlatform::ios) {
         if (!write_file_if_changed(export_map, "_gdpp_project_library_init\n")) {
             result.diagnostics.emplace_back("cannot write Mach-O project export list");
             return result;
@@ -1060,6 +1212,127 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
         if (iterator->is_regular_file() && iterator->path().extension() == ".hpp")
             compile_inputs.push_back(iterator->path());
     }
+
+    if (options.platform == NativePlatform::ios) {
+        const auto deployment_target =
+            manifest_value(options.sdk_root / "sdk.manifest", "ios_deployment_target");
+        if (deployment_target.empty()) {
+            result.diagnostics.emplace_back("native iOS SDK deployment target is unavailable");
+            return result;
+        }
+        const std::vector<IOSBuildSlice> slices{
+            {"device-arm64", "iphoneos", "arm64-apple-ios" + deployment_target,
+             ios_device_binding_library},
+            {"simulator-arm64", "iphonesimulator",
+             "arm64-apple-ios" + deployment_target + "-simulator", ios_simulator_binding_library},
+            {"simulator-x86_64", "iphonesimulator",
+             "x86_64-apple-ios" + deployment_target + "-simulator", ios_simulator_binding_library},
+        };
+
+        result.output_library =
+            binary_directory / native_library_name(options.profile, options.platform,
+                                                   options.architecture, build_id,
+                                                   options.web_thread_mode);
+        const auto staging_directory = native / "xcframework-staging";
+        result.pending_output_library = staging_directory / result.output_library.filename();
+
+        std::vector<std::filesystem::path> slice_libraries;
+        std::vector<bool> slice_relinked;
+        for (const auto& slice : slices) {
+            const auto slice_directory = native / slice.name;
+            const auto slice_objects = slice_directory / "objects";
+            std::filesystem::create_directories(slice_objects, error);
+            if (error) {
+                result.diagnostics.push_back("cannot create iOS slice build directory: " +
+                                             error.message());
+                return result;
+            }
+            std::vector<std::filesystem::path> objects;
+            bool compiled = false;
+            for (const auto& source : sources) {
+                const auto object = slice_objects / (safe_stem(source) + ".o");
+                objects.push_back(object);
+                auto inputs = compile_inputs;
+                inputs.push_back(source);
+                if (*build_configuration_changed || older_than(object, inputs)) {
+                    result.commands.push_back(
+                        ios_compile_command(options, slice, source, object, includes));
+                    compiled = true;
+                }
+            }
+            const auto slice_library = slice_directory / "libgdpp_project.dylib";
+            slice_libraries.push_back(slice_library);
+            auto link_inputs = objects;
+            link_inputs.push_back(slice.binding_library);
+            link_inputs.push_back(export_map);
+            link_inputs.insert(link_inputs.end(), bridge_inputs->link_libraries.begin(),
+                               bridge_inputs->link_libraries.end());
+            const bool relink = compiled || older_than(slice_library, link_inputs);
+            slice_relinked.push_back(relink);
+            if (relink) {
+                result.commands.push_back(ios_link_command(options, slice, objects,
+                                                           bridge_inputs->link_libraries,
+                                                           slice_library, export_map));
+            }
+        }
+
+        const auto simulator_directory = native / "simulator-universal";
+        std::filesystem::create_directories(simulator_directory, error);
+        if (error) {
+            result.diagnostics.push_back("cannot create iOS Simulator build directory: " +
+                                         error.message());
+            return result;
+        }
+        const auto simulator_library = simulator_directory / "libgdpp_project.dylib";
+        const bool relipo = slice_relinked[1] || slice_relinked[2] ||
+                            older_than(simulator_library, {slice_libraries[1], slice_libraries[2]});
+        if (relipo) {
+            NativeBuildCommand command;
+            command.executable = options.compiler_executable;
+            command.working_directory = options.project_output_directory;
+            command.stage = 2;
+            command.arguments = {"lipo",
+                                 "-create",
+                                 path_to_utf8(slice_libraries[1]),
+                                 path_to_utf8(slice_libraries[2]),
+                                 "-output",
+                                 path_to_utf8(simulator_library)};
+            result.commands.push_back(std::move(command));
+        }
+
+        const bool repackage = slice_relinked[0] || relipo ||
+                               older_than(result.output_library / "Info.plist",
+                                          {slice_libraries[0], simulator_library});
+        if (repackage) {
+            std::filesystem::remove_all(result.pending_output_library, error);
+            if (error) {
+                result.diagnostics.push_back("cannot clear stale iOS XCFramework staging output: " +
+                                             error.message());
+                return result;
+            }
+            std::filesystem::create_directories(staging_directory, error);
+            if (error) {
+                result.diagnostics.push_back("cannot create iOS XCFramework staging directory: " +
+                                             error.message());
+                return result;
+            }
+            NativeBuildCommand command;
+            command.executable = options.compiler_executable;
+            command.working_directory = options.project_output_directory;
+            command.stage = 3;
+            command.arguments = {"xcodebuild", "-create-xcframework",
+                                 "-library",   path_to_utf8(slice_libraries[0]),
+                                 "-library",   path_to_utf8(simulator_library),
+                                 "-output",    path_to_utf8(result.pending_output_library)};
+            result.commands.push_back(std::move(command));
+        } else {
+            result.pending_output_library.clear();
+        }
+        result.up_to_date = result.commands.empty();
+        result.success = true;
+        return result;
+    }
+
     std::vector<std::filesystem::path> objects;
     bool compiled = false;
     for (const auto& source : sources) {

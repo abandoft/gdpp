@@ -21,6 +21,12 @@ void write_input(const std::filesystem::path& path, const std::string& value = "
 
 std::filesystem::path make_sdk_fixture(const std::string& name, const std::string& library_name) {
     const auto root = std::filesystem::path{GDPP_TEST_BINARY_DIR} / "test-fixtures" / name;
+    const std::string platform = name.find("windows") != std::string::npos   ? "windows"
+                                 : name.find("android") != std::string::npos ? "android"
+                                 : name.find("linux") != std::string::npos   ? "linux"
+                                 : name.find("web") != std::string::npos     ? "web"
+                                 : name.find("ios") != std::string::npos     ? "ios"
+                                                                             : "macos";
     std::error_code error;
     std::filesystem::remove_all(root, error);
     write_input(root / "project/generated/example.gd.cpp");
@@ -40,12 +46,16 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
     write_input(root / "sdk/godot-cpp/include/godot_cpp/godot.hpp");
     write_input(root / "sdk/godot-cpp/gen/include/godot_cpp/core/version.hpp");
     write_input(root / "sdk/godot-cpp/gen/include/gdextension_interface.h");
-    write_input(root / "sdk/lib" / library_name);
-    const std::string platform = name.find("windows") != std::string::npos   ? "windows"
-                                 : name.find("android") != std::string::npos ? "android"
-                                 : name.find("linux") != std::string::npos   ? "linux"
-                                 : name.find("web") != std::string::npos     ? "web"
-                                                                             : "macos";
+    if (platform == "ios") {
+        write_input(root / "sdk/lib/device" / library_name);
+        auto simulator_library = library_name;
+        const auto arm64 = simulator_library.rfind(".arm64.a");
+        if (arm64 != std::string::npos)
+            simulator_library.replace(arm64, std::string{".arm64.a"}.size(), ".universal.a");
+        write_input(root / "sdk/lib/simulator" / simulator_library);
+    } else {
+        write_input(root / "sdk/lib" / library_name);
+    }
     const std::string architecture = platform == "web"                              ? "wasm32"
                                      : platform == "windows" || platform == "linux" ? "x86_64"
                                                                                     : "arm64";
@@ -56,13 +66,26 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
                                                                           : "threads"} +
                   "\nsource_paths mapped\n"
             : "";
+    const std::string ios_contract =
+        platform == "ios" ? "ios_deployment_target 16.0\n"
+                            "ios_slices device-arm64,simulator-arm64,simulator-x86_64\n"
+                            "source_paths mapped\n"
+                          : "";
+    const std::string platform_contract = platform == "windows" ? "platform_minimum Windows_10\n"
+                                          : platform == "macos" ? "platform_minimum macOS_10.15\n"
+                                          : platform == "linux" ? "platform_minimum Ubuntu_22.04\n"
+                                          : platform == "android"
+                                              ? "platform_minimum Android_9\nandroid_api_level 28\n"
+                                          : platform == "ios" ? "platform_minimum iOS_16.0\n"
+                                                              : "platform_minimum none\n";
     write_input(root / "sdk/sdk.manifest",
                 "GDPP_SDK " + std::to_string(GDPP_NATIVE_SDK_SCHEMA) + "\napi 4.4\nplatform " +
                     platform + "\narch " + architecture +
                     "\nprofiles development,debug,release\nruntime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
-                    GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\n" + web_threads + "compiler fixture\n");
+                    GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\n" + platform_contract + web_threads +
+                    ios_contract + "compiler fixture\n");
     return root;
 }
 
@@ -410,6 +433,8 @@ TEST_CASE("native builder emits MSVC compile and link arguments") {
     REQUIRE(contains(plan.commands.front().arguments, "/DWINDOWS_ENABLED"));
     REQUIRE(contains(plan.commands.front().arguments, "/DTYPED_METHOD_BIND"));
     REQUIRE(contains(plan.commands.front().arguments, "/D_HAS_EXCEPTIONS=0"));
+    REQUIRE(contains(plan.commands.front().arguments, "/D_WIN32_WINNT=0x0A00"));
+    REQUIRE(contains(plan.commands.front().arguments, "/DWINVER=0x0A00"));
     REQUIRE_EQ(plan.commands.back().executable, std::string{"link.exe"});
     REQUIRE_EQ(plan.commands.back().arguments.size(), std::size_t{2});
     REQUIRE(plan.commands.back().arguments.back().front() == '@');
@@ -443,6 +468,7 @@ TEST_CASE("native builder creates a stable release library with release bindings
                std::string{"libgdpp_project.release.macos.arm64.dylib"});
     REQUIRE(contains(plan.commands.front().arguments, "-DNDEBUG"));
     REQUIRE(contains(plan.commands.front().arguments, "-fvisibility=hidden"));
+    REQUIRE(contains(plan.commands.front().arguments, "-mmacosx-version-min=10.15"));
     REQUIRE(contains(plan.commands.front().arguments, "-ffunction-sections"));
     REQUIRE(contains(plan.commands.front().arguments, "-fdata-sections"));
     REQUIRE(!contains(plan.commands.front().arguments, "-DDEBUG_ENABLED"));
@@ -519,7 +545,7 @@ TEST_CASE("native builder emits Android NDK compile and hardened release link ar
 
     REQUIRE(plan.success);
     REQUIRE_EQ(plan.commands.size(), std::size_t{4});
-    REQUIRE(contains(plan.commands.front().arguments, "--target=aarch64-linux-android24"));
+    REQUIRE(contains(plan.commands.front().arguments, "--target=aarch64-linux-android28"));
     REQUIRE(contains(plan.commands.front().arguments, "-DANDROID_ENABLED"));
     REQUIRE(contains(plan.commands.front().arguments, "-DUNIX_ENABLED"));
     REQUIRE(std::any_of(plan.commands.front().arguments.begin(),
@@ -532,7 +558,7 @@ TEST_CASE("native builder emits Android NDK compile and hardened release link ar
                             return argument.find("-ffile-prefix-map=") == 0 &&
                                    argument.find("=/gdpp/sdk") != std::string::npos;
                         }));
-    REQUIRE(contains(plan.commands.back().arguments, "--target=aarch64-linux-android24"));
+    REQUIRE(contains(plan.commands.back().arguments, "--target=aarch64-linux-android28"));
     REQUIRE(contains(plan.commands.back().arguments, "-Wl,--gc-sections"));
     REQUIRE(contains(plan.commands.back().arguments, "-Wl,-s"));
     REQUIRE(contains(plan.commands.back().arguments, "-Wl,-z,relro"));
@@ -540,6 +566,84 @@ TEST_CASE("native builder emits Android NDK compile and hardened release link ar
     REQUIRE(contains(plan.commands.back().arguments, "-Wl,--exclude-libs,ALL"));
     REQUIRE_EQ(plan.output_library.filename().string(),
                std::string{"libgdpp_project.release.android.arm64.so"});
+}
+
+TEST_CASE("native builder emits a transactional device and Universal Simulator XCFramework") {
+    const auto root =
+        make_sdk_fixture("native-builder-ios", "libgodot-cpp.ios.template_release.arm64.a");
+    gdpp::NativeBuildOptions options;
+    options.project_output_directory = root / "project";
+    options.binary_output_directory = root / "addons/gdpp/binary";
+    options.sdk_root = root / "sdk";
+    options.compiler_executable = "xcrun";
+    options.platform = gdpp::NativePlatform::ios;
+    options.architecture = "arm64";
+    options.profile = gdpp::NativeBuildProfile::release;
+
+    const auto plan = gdpp::NativeBuilder{}.plan(options);
+
+    REQUIRE(plan.success);
+    REQUIRE_EQ(plan.commands.size(), std::size_t{14});
+    REQUIRE_EQ(plan.output_library.filename().string(),
+               std::string{"libgdpp_project.release.ios.arm64.xcframework"});
+    REQUIRE_EQ(plan.pending_output_library.filename(), plan.output_library.filename());
+    REQUIRE(plan.pending_output_library.generic_string().find("xcframework-staging") !=
+            std::string::npos);
+    REQUIRE_EQ(plan.commands.front().stage, std::size_t{0});
+    REQUIRE(contains(plan.commands.front().arguments, "iphoneos"));
+    REQUIRE(contains(plan.commands.front().arguments, "arm64-apple-ios16.0"));
+    REQUIRE(contains(plan.commands.front().arguments, "-DIOS_ENABLED"));
+    REQUIRE(contains(plan.commands.front().arguments, "-DUNIX_ENABLED"));
+    REQUIRE(contains(plan.commands.front().arguments, "-DTHREADS_ENABLED"));
+    REQUIRE_EQ(plan.commands.back().stage, std::size_t{3});
+    REQUIRE(contains(plan.commands.back().arguments, "xcodebuild"));
+    REQUIRE(contains(plan.commands.back().arguments, "-create-xcframework"));
+    REQUIRE(std::count_if(plan.commands.begin(), plan.commands.end(),
+                          [](const auto& command) { return command.stage == 0; }) == 9);
+    REQUIRE(std::count_if(plan.commands.begin(), plan.commands.end(),
+                          [](const auto& command) { return command.stage == 1; }) == 3);
+    REQUIRE(std::count_if(plan.commands.begin(), plan.commands.end(), [](const auto& command) {
+                return command.stage == 2 && contains(command.arguments, "lipo");
+            }) == 1);
+    REQUIRE(std::any_of(plan.commands.begin(), plan.commands.end(), [&](const auto& command) {
+        return command.stage == 1 &&
+               contains_path(command.arguments,
+                             root / "sdk/lib/simulator/"
+                                    "libgodot-cpp.ios.template_release.universal.a") &&
+               contains(command.arguments, "x86_64-apple-ios16.0-simulator");
+    }));
+}
+
+TEST_CASE("native builder fails closed for incomplete iOS target contracts") {
+    const auto root = make_sdk_fixture("native-builder-ios-contract",
+                                       "libgodot-cpp.ios.template_release.arm64.a");
+    write_input(root / "sdk/sdk.manifest",
+                "GDPP_SDK " + std::to_string(GDPP_NATIVE_SDK_SCHEMA) +
+                    "\napi 4.4\nplatform ios\narch arm64\nprofiles debug,release\n"
+                    "runtime_abi " +
+                    std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
+                    GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
+                    GDPP_NATIVE_RUNTIME_SOURCE_SHA256 +
+                    "\nplatform_minimum iOS_16.0\nios_deployment_target 16.0\n"
+                    "ios_slices device-arm64\n"
+                    "source_paths mapped\n");
+    gdpp::NativeBuildOptions options;
+    options.project_output_directory = root / "project";
+    options.binary_output_directory = root / "addons/gdpp/binary";
+    options.sdk_root = root / "sdk";
+    options.compiler_executable = "xcrun";
+    options.platform = gdpp::NativePlatform::ios;
+    options.architecture = "arm64";
+    options.profile = gdpp::NativeBuildProfile::release;
+
+    const auto missing_slices = gdpp::NativeBuilder{}.plan(options);
+    REQUIRE(!missing_slices.success);
+    REQUIRE(diagnostic_contains(missing_slices, "simulator-arm64"));
+
+    options.profile = gdpp::NativeBuildProfile::development;
+    const auto development = gdpp::NativeBuilder{}.plan(options);
+    REQUIRE(!development.success);
+    REQUIRE(diagnostic_contains(development, "only debug or release"));
 }
 
 TEST_CASE("native builder emits a single-threaded WebAssembly side module") {
@@ -684,7 +788,8 @@ TEST_CASE("native builder emits a macOS universal compile and link plan") {
     write_input(root / "sdk/sdk.manifest",
                 "GDPP_SDK " + std::to_string(GDPP_NATIVE_SDK_SCHEMA) +
                     "\napi 4.4\nplatform macos\narch universal\n"
-                    "profiles development,debug,release\nruntime_abi " +
+                    "profiles development,debug,release\nplatform_minimum macOS_10.15\n"
+                    "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
                     GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\ncompiler fixture\n");
@@ -713,7 +818,8 @@ TEST_CASE("macOS universal SDK can build a thin host development library") {
     write_input(root / "sdk/sdk.manifest",
                 "GDPP_SDK " + std::to_string(GDPP_NATIVE_SDK_SCHEMA) +
                     "\napi 4.4\nplatform macos\narch universal\n"
-                    "profiles development,debug,release\nruntime_abi " +
+                    "profiles development,debug,release\nplatform_minimum macOS_10.15\n"
+                    "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
                     GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\ncompiler fixture\n");

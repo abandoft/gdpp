@@ -41,6 +41,14 @@ function(gdpp_add_sdk_binding target_name api_version godot_target output_variab
         list(APPEND configure_arguments
             "-DCMAKE_OSX_ARCHITECTURES=${escaped_osx_architectures}")
     endif()
+    if(CMAKE_OSX_DEPLOYMENT_TARGET)
+        list(APPEND configure_arguments
+            "-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    endif()
+    if(WIN32)
+        list(APPEND configure_arguments
+            "-DCMAKE_CXX_FLAGS=/D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00")
+    endif()
     if(CMAKE_TOOLCHAIN_FILE)
         list(APPEND configure_arguments -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE})
     endif()
@@ -132,11 +140,33 @@ if(GDPP_PLATFORM STREQUAL "darwin")
 elseif(GDPP_PLATFORM STREQUAL "emscripten")
     set(GDPP_PLATFORM "web")
 endif()
+if(GDPP_PLATFORM STREQUAL "windows")
+    set(GDPP_PLATFORM_MINIMUM "Windows_10")
+elseif(GDPP_PLATFORM STREQUAL "macos")
+    set(GDPP_PLATFORM_MINIMUM "macOS_10.15")
+elseif(GDPP_PLATFORM STREQUAL "linux")
+    set(GDPP_PLATFORM_MINIMUM "Ubuntu_22.04")
+else()
+    set(GDPP_PLATFORM_MINIMUM "none")
+endif()
 
 string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" GDPP_ARCH)
-if(APPLE AND "arm64" IN_LIST CMAKE_OSX_ARCHITECTURES AND
-        "x86_64" IN_LIST CMAKE_OSX_ARCHITECTURES)
-    set(GDPP_ARCH "universal")
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+    list(LENGTH CMAKE_OSX_ARCHITECTURES GDPP_OSX_ARCHITECTURE_COUNT)
+    if(GDPP_OSX_ARCHITECTURE_COUNT EQUAL 2 AND
+            "arm64" IN_LIST CMAKE_OSX_ARCHITECTURES AND
+            "x86_64" IN_LIST CMAKE_OSX_ARCHITECTURES)
+        set(GDPP_ARCH "universal")
+    elseif(GDPP_OSX_ARCHITECTURE_COUNT EQUAL 1 AND
+            "arm64" IN_LIST CMAKE_OSX_ARCHITECTURES)
+        set(GDPP_ARCH "arm64")
+    elseif(GDPP_OSX_ARCHITECTURE_COUNT EQUAL 1 AND
+            "x86_64" IN_LIST CMAKE_OSX_ARCHITECTURES)
+        set(GDPP_ARCH "x86_64")
+    else()
+        message(FATAL_ERROR
+            "Unsupported macOS architecture set: ${CMAKE_OSX_ARCHITECTURES}")
+    endif()
 elseif(GDPP_ARCH MATCHES "^(aarch64|arm64)$")
     set(GDPP_ARCH "arm64")
 elseif(GDPP_ARCH MATCHES "^(amd64|x86_64)$")
@@ -302,7 +332,7 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
     file(GENERATE
         OUTPUT "${GDPP_SDK_MANIFEST}"
         CONTENT
-            "GDPP_SDK ${GDPP_NATIVE_SDK_SCHEMA}\napi ${GDPP_SDK_VERSION}\nplatform ${GDPP_PLATFORM}\narch ${GDPP_ARCH}\nprofiles development,debug,release\ngdpp_version ${PROJECT_VERSION}\nruntime_abi ${GDPP_NATIVE_RUNTIME_ABI}\nruntime_header_sha256 ${GDPP_NATIVE_RUNTIME_HEADER_SHA256}\nruntime_source_sha256 ${GDPP_NATIVE_RUNTIME_SOURCE_SHA256}\ncompiler ${CMAKE_CXX_COMPILER_ID}\ncompiler_version ${CMAKE_CXX_COMPILER_VERSION}\n"
+            "GDPP_SDK ${GDPP_NATIVE_SDK_SCHEMA}\napi ${GDPP_SDK_VERSION}\nplatform ${GDPP_PLATFORM}\narch ${GDPP_ARCH}\nprofiles development,debug,release\nplatform_minimum ${GDPP_PLATFORM_MINIMUM}\ngdpp_version ${PROJECT_VERSION}\nruntime_abi ${GDPP_NATIVE_RUNTIME_ABI}\nruntime_header_sha256 ${GDPP_NATIVE_RUNTIME_HEADER_SHA256}\nruntime_source_sha256 ${GDPP_NATIVE_RUNTIME_SOURCE_SHA256}\ncompiler ${CMAKE_CXX_COMPILER_ID}\ncompiler_version ${CMAKE_CXX_COMPILER_VERSION}\n"
     )
 
     set(GDPP_SDK_PACKAGE_COMMANDS

@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ndk-root", type=Path, required=True)
     parser.add_argument("--godot-version", required=True)
     parser.add_argument("--architecture", choices=sorted(ANDROID_ABIS), required=True)
-    parser.add_argument("--api-level", type=int, default=24)
+    parser.add_argument("--api-level", type=int, default=28)
     parser.add_argument("--schema", type=int, required=True)
     parser.add_argument("--runtime-abi", type=int, required=True)
     parser.add_argument("--gdpp-version", required=True)
@@ -67,8 +67,8 @@ def main() -> int:
     toolchain = ndk_root / "build/cmake/android.toolchain.cmake"
     if not toolchain.is_file():
         raise SystemExit(f"Android NDK CMake toolchain does not exist: {toolchain}")
-    if args.api_level != 24:
-        raise SystemExit("GDPP Android SDK ABI baseline is fixed at API level 24")
+    if args.api_level != 28:
+        raise SystemExit("GDPP Android SDK ABI baseline is fixed at API level 28 (Android 9)")
 
     godot_cpp = source_root / "third/godot-cpp"
     runtime_header = source_root / "include/gdpp/runtime/variant_ops.hpp"
@@ -153,6 +153,7 @@ def main() -> int:
         "platform android\n"
         f"arch {architecture}\n"
         "profiles debug,release\n"
+        "platform_minimum Android_9\n"
         f"gdpp_version {args.gdpp_version}\n"
         f"runtime_abi {args.runtime_abi}\n"
         f"runtime_header_sha256 {sha256(runtime_header)}\n"

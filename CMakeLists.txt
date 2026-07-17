@@ -1,8 +1,19 @@
 cmake_minimum_required(VERSION 3.22)
 
+# Public runtime baselines are build contracts, not documentation-only labels. A package that
+# silently inherits a newer host SDK target would no longer run on the advertised minimum.
+if(APPLE)
+    if(CMAKE_OSX_DEPLOYMENT_TARGET AND
+            NOT CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "10.15")
+        message(FATAL_ERROR "GDPP macOS artifacts must target macOS 10.15")
+    endif()
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING
+        "Minimum supported macOS version" FORCE)
+endif()
+
 project(
     gdpp
-    VERSION 0.1.0
+    VERSION 1.0.0
     DESCRIPTION "Ahead-of-time compiler for GDScript"
     LANGUAGES CXX
 )
@@ -22,6 +33,16 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+set(GDPP_MIN_WINDOWS_VERSION "10")
+set(GDPP_MIN_MACOS_VERSION "10.15")
+set(GDPP_MIN_LINUX_DISTRIBUTION "Ubuntu 22.04")
+set(GDPP_MIN_ANDROID_VERSION "9")
+set(GDPP_MIN_ANDROID_API_LEVEL "28")
+set(GDPP_MIN_IOS_VERSION "16.0")
+if(WIN32)
+    add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00)
+endif()
 
 # godot-cpp links the MSVC runtime statically by default.  This must be selected before any GDPP
 # target is created: changing it only when godot-cpp is added leaves gdpp_core on /MD and the
@@ -54,6 +75,25 @@ option(GDPP_SERIALIZE_SDK_BINDING_BUILDS
     "Build complete godot-cpp SDK variants sequentially while retaining each variant's internal parallelism"
     ON)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND GDPP_BUILD_EXTENSION AND
+        CMAKE_BUILD_TYPE STREQUAL "Release")
+    execute_process(
+        COMMAND getconf GNU_LIBC_VERSION
+        OUTPUT_VARIABLE GDPP_HOST_GLIBC
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE GDPP_GLIBC_QUERY_STATUS
+    )
+    if(NOT GDPP_GLIBC_QUERY_STATUS EQUAL 0 OR
+            NOT GDPP_HOST_GLIBC MATCHES "glibc ([0-9]+\\.[0-9]+)")
+        message(FATAL_ERROR "Cannot determine glibc for the Ubuntu 22.04 release baseline")
+    endif()
+    if(CMAKE_MATCH_1 VERSION_GREATER "2.35")
+        message(FATAL_ERROR
+            "Release Linux plugins must be built against glibc 2.35 or older; "
+            "use the Ubuntu 22.04 release runner (host reports ${GDPP_HOST_GLIBC})")
+    endif()
+endif()
+
 set(GDPP_MIN_GODOT_VERSION "4.4")
 set(GDPP_SUPPORTED_GODOT_VERSIONS "4.4;4.5;4.6;4.7")
 set(GDPP_PACKAGE_GODOT_VERSIONS "${GDPP_SUPPORTED_GODOT_VERSIONS}" CACHE STRING
@@ -76,7 +116,7 @@ set(GDPP_GODOT_EXECUTABLE "" CACHE FILEPATH "Optional Godot executable used for 
 # The generated C++ and the compiler-only SDK form one native runtime contract.  Keep exact
 # content hashes in the compiler as well as every packaged SDK so an old or partially copied SDK
 # is rejected during preflight instead of failing later with thousands of C++ diagnostics.
-set(GDPP_NATIVE_SDK_SCHEMA 3)
+set(GDPP_NATIVE_SDK_SCHEMA 4)
 set(GDPP_NATIVE_RUNTIME_ABI 2)
 set(GDPP_NATIVE_RUNTIME_HEADER
     "${CMAKE_SOURCE_DIR}/include/gdpp/runtime/variant_ops.hpp")
@@ -142,21 +182,23 @@ set(GDPP_ANDROID_SDK_VERSIONS "" CACHE STRING
     "Godot versions for optional Android target SDK modules")
 set(GDPP_ANDROID_ARCHITECTURES "arm64" CACHE STRING
     "Android target SDK architectures (arm64 and/or x86_64)")
-set(GDPP_ANDROID_API_LEVEL "24" CACHE STRING
-    "Fixed Android native ABI baseline")
+set(GDPP_ANDROID_API_LEVEL "${GDPP_MIN_ANDROID_API_LEVEL}" CACHE STRING
+    "Fixed Android native ABI baseline" FORCE)
 set(GDPP_WEB_SDK_VERSIONS "" CACHE STRING
     "Godot versions for optional Web wasm32 target SDK modules")
 set(GDPP_WEB_VARIANTS "nothreads;threads" CACHE STRING
     "Web target SDK variants (nothreads and/or threads)")
 set(GDPP_WEB_EMCMAKE "emcmake" CACHE FILEPATH
     "Emscripten CMake launcher used to package Web target SDK modules")
+set(GDPP_IOS_SDK_VERSIONS "" CACHE STRING
+    "Godot versions for optional iOS device and Universal Simulator target SDK modules")
 
 if(GDPP_ANDROID_SDK_VERSIONS)
     if(NOT GDPP_ANDROID_NDK_ROOT)
         message(FATAL_ERROR "GDPP_ANDROID_NDK_ROOT is required for Android SDK packaging")
     endif()
-    if(NOT GDPP_ANDROID_API_LEVEL STREQUAL "24")
-        message(FATAL_ERROR "GDPP Android SDK ABI baseline is fixed at API level 24")
+    if(NOT "${GDPP_ANDROID_API_LEVEL}" STREQUAL "${GDPP_MIN_ANDROID_API_LEVEL}")
+        message(FATAL_ERROR "GDPP Android SDK ABI baseline is fixed at API level 28 (Android 9)")
     endif()
     set(GDPP_ANDROID_SDK_TARGETS)
     foreach(GDPP_ANDROID_VERSION IN LISTS GDPP_ANDROID_SDK_VERSIONS)
@@ -236,6 +278,41 @@ if(GDPP_WEB_SDK_VERSIONS)
         endforeach()
     endforeach()
     add_custom_target(gdpp_web_sdk DEPENDS ${GDPP_WEB_SDK_TARGETS})
+endif()
+
+if(GDPP_IOS_SDK_VERSIONS)
+    if(NOT APPLE)
+        message(FATAL_ERROR "iOS SDK packaging requires macOS and Xcode")
+    endif()
+    set(GDPP_IOS_SDK_TARGETS)
+    foreach(GDPP_IOS_VERSION IN LISTS GDPP_IOS_SDK_VERSIONS)
+        if(NOT GDPP_IOS_VERSION IN_LIST GDPP_SUPPORTED_GODOT_VERSIONS)
+            message(FATAL_ERROR "Unsupported iOS SDK Godot version: ${GDPP_IOS_VERSION}")
+        endif()
+        string(REPLACE "." "_" GDPP_IOS_VERSION_SUFFIX "${GDPP_IOS_VERSION}")
+        set(GDPP_IOS_TARGET "gdpp_ios_sdk_${GDPP_IOS_VERSION_SUFFIX}_arm64")
+        add_custom_target(
+            ${GDPP_IOS_TARGET}
+            COMMAND
+                "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/build_ios_sdk.py"
+                --source-root "${CMAKE_SOURCE_DIR}"
+                --build-root "${CMAKE_BINARY_DIR}/ios-sdk"
+                --addon-root "${CMAKE_SOURCE_DIR}/example/addons/gdpp"
+                --godot-version "${GDPP_IOS_VERSION}"
+                --deployment-target "${GDPP_MIN_IOS_VERSION}"
+                --schema "${GDPP_NATIVE_SDK_SCHEMA}"
+                --runtime-abi "${GDPP_NATIVE_RUNTIME_ABI}"
+                --gdpp-version "${PROJECT_VERSION}"
+            DEPENDS
+                "${CMAKE_SOURCE_DIR}/tools/build_ios_sdk.py"
+                "${GDPP_NATIVE_RUNTIME_HEADER}"
+                "${GDPP_NATIVE_RUNTIME_SOURCE}"
+            COMMENT "Packaging Godot ${GDPP_IOS_VERSION} iOS/arm64 SDK"
+            VERBATIM
+        )
+        list(APPEND GDPP_IOS_SDK_TARGETS "${GDPP_IOS_TARGET}")
+    endforeach()
+    add_custom_target(gdpp_ios_sdk DEPENDS ${GDPP_IOS_SDK_TARGETS})
 endif()
 
 set(GDPP_API_DATA_FILES)
