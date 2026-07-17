@@ -42,7 +42,9 @@ jobs:
           GODOT: ${{ steps.godot.outputs.executable }}
         run: |
           set -euo pipefail
-          mkdir -p example/addons/gdpp/build/export
+          mkdir -p \
+            example/addons/gdpp/build/export/aot \
+            example/addons/gdpp/build/export/gds
           "$GODOT" --headless --editor --path example --quit-after 120 \
             2>&1 | tee example/addons/gdpp/build/export/gdpp-warmup.log
           "$GODOT" --headless --editor --path example --import \
@@ -60,7 +62,8 @@ jobs:
           set -euo pipefail
           output=example/addons/gdpp/build/export
           "$GODOT" --headless --editor --path example \
-            --export-release 'Linux x86_64' "$output/aot/gdpp-runtime.x86_64" \
+            --export-release 'Linux x86_64' \
+            "$GITHUB_WORKSPACE/$output/aot/gdpp-runtime.x86_64" \
             2>&1 | tee "$output/gdpp-aot-export.log"
           project=example/addons/gdpp/binary/libgdpp_project.release.linux.x86_64.so
           test -x "$output/aot/gdpp-runtime.x86_64"
@@ -100,7 +103,8 @@ jobs:
           set -euo pipefail
           output=example/addons/gdpp/build/export
           "$GODOT" --headless --editor --path example \
-            --export-release 'Linux GDScript Fallback' "$output/gds/gdpp-runtime-gds.x86_64" \
+            --export-release 'Linux GDScript Fallback' \
+            "$GITHUB_WORKSPACE/$output/gds/gdpp-runtime-gds.x86_64" \
             2>&1 | tee "$output/gdpp-gds-export.log"
           if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|WARNING:|Unable to open' \
               "$output/gdpp-gds-export.log"; then
@@ -130,7 +134,7 @@ jobs:
           set +e
           "$GODOT" --headless --editor --path example \
             --export-pack 'Linux x86_64' \
-            example/addons/gdpp/build/export/gdpp-must-fail.pck \
+            "$GITHUB_WORKSPACE/example/addons/gdpp/build/export/gdpp-must-fail.pck" \
             > example/addons/gdpp/build/export/gdpp-must-fail.log 2>&1
           status=$?
           set -e

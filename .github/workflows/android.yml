@@ -108,7 +108,7 @@ jobs:
           GODOT: ${{ steps.godot.outputs.executable }}
         run: |
           set -euo pipefail
-          root=example/addons/gdpp/build/android
+          root="$GITHUB_WORKSPACE/example/addons/gdpp/build/android"
           mkdir -p "$root/audit"
           "$GODOT" --headless --editor --path example --quit-after 120 \
             2>&1 | tee "$root/warmup.log"
