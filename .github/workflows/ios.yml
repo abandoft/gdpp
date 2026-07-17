@@ -145,9 +145,9 @@ jobs:
           test -n "$project"
           engine_archive="$(find "$root" -path \
             '*/GDPPExample.xcframework/*-simulator/libgodot.a' -print -quit)"
-          project_library="$(find "$root" -path \
-            '*libgdpp_project.release.ios.arm64.xcframework/*-simulator/libgdpp_project.dylib' \
-            -print -quit)"
+          project_pattern='*libgdpp_project.release.ios.arm64.xcframework/'
+          project_pattern+='*-simulator/libgdpp_project.framework/libgdpp_project'
+          project_library="$(find "$root" -path "$project_pattern" -print -quit)"
           test -n "$engine_archive"
           test -n "$project_library"
           engine_archs="$(xcrun lipo -archs "$engine_archive")"
