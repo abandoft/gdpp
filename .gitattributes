@@ -1,0 +1,26 @@
+# Source and package-contract files must have identical bytes on every build host.  In particular,
+# Windows must not rewrite the runtime SDK contract to CRLF and produce hashes that disagree with
+# Android, iOS, Linux, macOS or Web target components.
+* text=auto eol=lf
+
+# Keep common binary assets out of Git's text normalization even when content detection is
+# inconclusive (for example, small test fixtures).
+*.a binary
+*.dll binary
+*.dylib binary
+*.gif binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.lib binary
+*.ogg binary
+*.pck binary
+*.png binary
+*.so binary
+*.ttf binary
+*.wav binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.xcframework binary
+*.zip binary
