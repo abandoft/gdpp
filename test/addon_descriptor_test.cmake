@@ -139,7 +139,6 @@ foreach(required_ios_option IN ITEMS
         "name=\"iOS GDScript Fallback\""
         "platform=\"iOS\""
         "application/export_project_only=true"
-        "application/min_ios_version=\"16.0\""
         "architectures/arm64=true"
         "export_path=\"addons/gdpp/build/export/ios/GDPPExample\"")
     string(FIND "${export_presets}" "${required_ios_option}" required_offset)
@@ -147,6 +146,11 @@ foreach(required_ios_option IN ITEMS
         message(FATAL_ERROR "iOS export fixture is missing: ${required_ios_option}")
     endif()
 endforeach()
+string(FIND "${export_presets}" "application/min_ios_version=" ios_minimum_offset)
+if(NOT ios_minimum_offset EQUAL -1)
+    message(FATAL_ERROR
+        "iOS export fixture must not override the export template minimum version")
+endif()
 
 foreach(required_ios_implementation IN ITEMS
         "func _ios_compiler() -> String:"
