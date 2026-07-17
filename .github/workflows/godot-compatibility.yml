@@ -3,6 +3,19 @@ name: Godot compatibility
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      target:
+        description: Compatibility target to run
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - official-corpus
+          - 4.4.1
+          - 4.5.2
+          - 4.6.3
+          - 4.7
 
 permissions:
   contents: read
@@ -13,12 +26,13 @@ concurrency:
 
 jobs:
   engine:
+    if: ${{ github.event_name == 'pull_request' || inputs.target != 'official-corpus' }}
     name: Godot / ${{ matrix.version }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        version: [4.4, 4.5.2, 4.6.3, 4.7]
+        version: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.target != 'all' && format('["{0}"]', inputs.target) || '["4.4.1","4.5.2","4.6.3","4.7"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -158,6 +172,7 @@ jobs:
           retention-days: 14
 
   official-corpus:
+    if: ${{ github.event_name == 'pull_request' || inputs.target == 'all' || inputs.target == 'official-corpus' }}
     name: Official project corpus
     runs-on: ubuntu-24.04
     timeout-minutes: 30

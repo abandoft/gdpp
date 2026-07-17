@@ -21,12 +21,17 @@
 - `Quality / Source and repository`；
 - 三个 `Core / <os>`；
 - 三个 `Plugin / <os>`；
-- `Godot / 4.4`、`Godot / 4.5.2`、`Godot / 4.6.3`、`Godot / 4.7`；
+- `Godot / 4.4.1`、`Godot / 4.5.2`、`Godot / 4.6.3`、`Godot / 4.7`；
 - `Official project corpus`；
 - 四个 `Android SDK / Godot <version> / arm64`；
 - `Android APK / Godot 4.5.2 / arm64`；
 - 八个 `Web SDK / Godot <version> / <nothreads|threads>`；
 - `Web browser / Godot 4.5.2 / nothreads` 与 `threads`。
+
+手动运行 `godot-compatibility.yml` 时可选择 `all`、单个精确 Godot 维护版本或
+`official-corpus`。PR 始终展开完整矩阵；定向重试只缩短故障诊断反馈时间，不能替代分支保护
+要求的全量结果。4.4 分支固定使用最新维护版 4.4.1，插件描述符和目标 ABI 的最低版本仍为
+4.4。
 
 发布工作流不会替代上述合并门禁，但会在 PR 和手动运行中从干净 checkout 重新执行 Release
 构建、测试与打包。PR 永远不创建 GitHub Release；手动运行只有同时启用 `publish` 并提供以
