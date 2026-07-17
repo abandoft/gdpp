@@ -116,15 +116,21 @@ jobs:
         run: |
           set -euo pipefail
           test "$(. /etc/os-release && printf '%s' "$VERSION_ID")" = 22.04
-          if find example/addons/gdpp/binary -type f -name '*.so' \
+          maximum_glibc="$(
+            find example/addons/gdpp/binary -type f -name '*.so' \
               -exec readelf --version-info {} + \
-              | grep -Eo 'GLIBC_[0-9]+\.[0-9]+' | sort -Vu \
-              | awk -F_ '$2 > 2.35 { exit 1 }'; then
-            :
-          else
-            echo 'Linux package requires glibc newer than the Ubuntu 22.04 baseline.'
+              | grep -Eo 'GLIBC_[0-9]+\.[0-9]+' \
+              | sed 's/^GLIBC_//' \
+              | sort -Vu \
+              | tail -n 1
+          )"
+          test -n "$maximum_glibc"
+          if [[ "$(printf '%s\n%s\n' 2.35 "$maximum_glibc" | sort -Vu | tail -n 1)" \
+              != 2.35 ]]; then
+            echo "Linux package requires GLIBC_$maximum_glibc, newer than GLIBC_2.35."
             exit 1
           fi
+          echo "Maximum required GLIBC version: $maximum_glibc"
       - name: Remove project products and stage host component
         shell: bash
         run: |
