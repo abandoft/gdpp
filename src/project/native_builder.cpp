@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string_view>
@@ -458,6 +459,20 @@ void append_android_target_arguments(std::vector<std::string>& arguments,
 
 using ReproduciblePathMapping = std::pair<std::string, std::string>;
 
+std::optional<std::string> read_environment_variable(const char* name) {
+#if defined(_MSC_VER)
+    char* raw_value = nullptr;
+    std::size_t value_size = 0;
+    if (_dupenv_s(&raw_value, &value_size, name) != 0 || raw_value == nullptr)
+        return std::nullopt;
+    const std::unique_ptr<char, decltype(&std::free)> value{raw_value, &std::free};
+    return std::string{value.get(), value_size == 0 ? 0 : value_size - 1};
+#else
+    const auto* value = std::getenv(name);
+    return value == nullptr ? std::nullopt : std::optional<std::string>{value};
+#endif
+}
+
 void add_reproducible_path_mapping(std::vector<ReproduciblePathMapping>& mappings,
                                    const std::filesystem::path& source, std::string replacement) {
     if (source.empty())
@@ -484,8 +499,8 @@ std::optional<std::filesystem::path> resolve_compiler_path(std::string_view exec
         auto resolved = std::filesystem::weakly_canonical(value, error);
         return error ? std::nullopt : std::optional<std::filesystem::path>{resolved};
     }
-    const auto* path_environment = std::getenv("PATH");
-    if (path_environment == nullptr)
+    const auto path_environment = read_environment_variable("PATH");
+    if (!path_environment)
         return std::nullopt;
 #if defined(_WIN32)
     constexpr char path_separator = ';';
@@ -494,7 +509,7 @@ std::optional<std::filesystem::path> resolve_compiler_path(std::string_view exec
     constexpr char path_separator = ':';
     const std::vector<std::string> suffixes{""};
 #endif
-    std::istringstream paths{path_environment};
+    std::istringstream paths{*path_environment};
     std::string directory;
     while (std::getline(paths, directory, path_separator)) {
         for (const auto& suffix : suffixes) {
@@ -522,8 +537,8 @@ std::vector<ReproduciblePathMapping> reproducible_path_mappings(const NativeBuil
              {std::pair{"EM_CACHE", "/gdpp/toolchain/cache"},
               std::pair{"EMSDK", "/gdpp/toolchain/emsdk"},
               std::pair{"EMSCRIPTEN_ROOT", "/gdpp/toolchain/emscripten"}}) {
-            if (const auto* value = std::getenv(name); value != nullptr && *value != '\0')
-                add_reproducible_path_mapping(mappings, value, replacement);
+            if (const auto value = read_environment_variable(name); value && !value->empty())
+                add_reproducible_path_mapping(mappings, *value, replacement);
         }
         if (const auto compiler = resolve_compiler_path(options.compiler_executable)) {
             add_reproducible_path_mapping(mappings, compiler->parent_path(),
