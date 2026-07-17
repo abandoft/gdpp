@@ -16,23 +16,62 @@ GDScript 源码
     -> 项目原生动态库
 ```
 
-## 组件
+## 代码组织与依赖边界
 
-- `include/gdpp`：稳定公共接口；不复制私有实现目录层级。
-- `src/compiler`：编译流水线门面与诊断实现。
-- `src/frontend`：词法、语法、整数常量表达式求值，以及集中登记最新版注解名称、目标位置、
-  参数范围和行为类别的 `LanguageFeatureRegistry`。
-- `src/semantic`：类型系统、语义分析、项目脚本符号、`IntrinsicRegistry` 与版本化 Godot API
-  表；intrinsic 的签名、返回类型和 lowering 身份不再由多个阶段各自用字符串判断。
-- `src/ir`：类型化 HIR、显式 CFG/MIR lowering、两级验证与优化。
-- `src/codegen`：GDExtension C++ 后端。
-- `src/project`：项目编排、SHA-256 清单和直接原生构建计划。
-- `include/gdpp/path_utf8.hpp`：UTF-8 文本协议与原生文件系统路径的唯一转换边界；Windows
+`include/gdpp` 与 `src` 使用同一套模块名称。跨 target 使用的接口进入 `include/gdpp/<module>`，
+仅供单个适配层使用的头文件保留在对应 `src` 子目录；除生成的 `version.hpp` 外，不允许重新增加
+平铺头文件。
+
+```text
+include/gdpp/                 src/
+├── core/                    ├── core/
+├── frontend/                ├── frontend/
+├── semantic/                ├── semantic/
+├── ir/                      ├── ir/
+├── codegen/                 ├── codegen/
+├── compiler/                ├── compiler/
+├── project/                 ├── project/
+├── runtime/                 ├── runtime/
+└── support/                 ├── support/
+                              ├── integration/godot/
+                              └── cli/
+```
+
+主编译链的依赖只能单向流动：
+
+```text
+core → frontend → semantic → ir → codegen → compiler → project
+support（独立基础工具） ───────────────────────────────────→ project
+
+runtime（生成代码 ABI，独立） → integration/godot、用户项目动态库
+compiler/project             → integration/godot、cli
+```
+
+`support` 是无业务状态的基础工具根，不得反向依赖编译链；`runtime` 只依赖 godot-cpp，不得依赖
+编译器实现。`integration/godot` 与 `cli` 是宿主适配层，不允许把 Godot 类型泄漏进 `gdpp_core`。
+`tools/check_architecture.py` 在本地测试和质量流水线中检查目录集合、平铺文件和跨层 include，防止
+后续功能迭代破坏这些边界。
+
+| 模块 | 职责 | 主要内容 |
+|---|---|---|
+| `core` | 无业务依赖的编译器基础模型 | 源文件/范围、诊断、目标 Godot 版本 |
+| `frontend` | 源码到强类型 AST | token、lexer、parser、语言特性注册、常量表达式求值 |
+| `semantic` | 类型与符号解析 | 类型系统、语义分析、项目脚本符号、intrinsic、Godot API 能力表 |
+| `ir` | 与语法解耦的中间表示 | 类型化 HIR、显式 CFG/MIR、lowering、验证和优化 |
+| `codegen` | 原生代码后端 | 仅消费验证后的 MIR 并生成 GDExtension C++ |
+| `compiler` | 单文件编译门面 | 串联阶段、失败事务和分阶段性能指标 |
+| `project` | 商业项目级编排 | 依赖发现、精确增量失效、第三方契约、原生构建计划 |
+| `runtime` | 生成代码 ABI | `Variant` 运算、动态调用、迭代、await 与 Autoload 支持 |
+| `support` | 可复用且无业务状态的工具 | UTF-8 路径边界、SHA-256 |
+| `integration/godot` | Godot 私有适配 | compiler GDExtension 服务、注册入口和导出 fallback |
+| `cli` | 命令行宿主 | 参数解析、文件 I/O 和终端诊断输出 |
+
+## 关键组件
+
+- `include/gdpp/support/path_utf8.hpp`：UTF-8 文本协议与原生文件系统路径的唯一转换边界；Windows
   内部保留 UTF-16 `path`，禁止用 ANSI `string()` 序列化 Godot 路径、清单或进程参数。
 - `src/runtime`：生成代码使用的动态 `Variant` 兼容层，集中实现动态运算、受检方法调用、
   命名属性、键/下标读写、三阶段迭代协议，以及只保存 `ObjectID` 的原生 Autoload 启动注册表。
-- `src/godot`：compiler GDExtension 服务、注册入口与 fallback，不属于编译器核心 target。
-- `src/cli`：命令行前端。
 - `ProjectCompiler`：确定性脚本发现、项目继承图与拓扑排序、区分实现哈希和公开 ABI 哈希的
   v3 SHA-256 清单、事务式多脚本生成、重名/缺失父类/循环检查与陈旧翻译单元清理。
 - `ExtensionBridge`：解析项目内第三方 `gdpp_bridge.json`，校验 runtime/native 模式、成员契约、
