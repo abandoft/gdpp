@@ -22,11 +22,9 @@ class ProjectFileSelector final {
     ProjectFileSelector(std::filesystem::path project_root, std::filesystem::path compiler_output);
 
     [[nodiscard]] PathDisposition
-    classify(const std::filesystem::path& project_relative_path) const noexcept;
-    [[nodiscard]] bool
-    should_descend(const std::filesystem::path& project_relative_path) const noexcept;
-    [[nodiscard]] bool
-    should_compile(const std::filesystem::path& project_relative_path) const noexcept;
+    classify(const std::filesystem::path& project_relative_path) const;
+    [[nodiscard]] bool should_descend(const std::filesystem::path& project_relative_path) const;
+    [[nodiscard]] bool should_compile(const std::filesystem::path& project_relative_path) const;
 
   private:
     std::filesystem::path output_relative_;

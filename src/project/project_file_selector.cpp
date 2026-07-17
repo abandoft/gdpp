@@ -1,12 +1,14 @@
 #include "project_file_selector.hpp"
 
+#include "gdpp/support/path_utf8.hpp"
+
 #include <iterator>
 #include <string_view>
 
 namespace gdpp::project {
 namespace {
 
-bool starts_with(const std::filesystem::path& path, const std::filesystem::path& prefix) noexcept {
+bool starts_with(const std::filesystem::path& path, const std::filesystem::path& prefix) {
     auto path_part = path.begin();
     auto prefix_part = prefix.begin();
     while (prefix_part != prefix.end()) {
@@ -18,9 +20,9 @@ bool starts_with(const std::filesystem::path& path, const std::filesystem::path&
     return prefix_part == prefix.end();
 }
 
-bool is_platform_metadata(const std::filesystem::path& path) noexcept {
+bool is_platform_metadata(const std::filesystem::path& path) {
     for (const auto& component : path) {
-        const auto name = component.filename().string();
+        const auto name = path_to_utf8(component.filename());
         // Finder resource forks are regular files whose apparent suffix can still be .gd,
         // .tscn or .gdextension.  __MACOSX is the equivalent container produced by ZIP tools.
         // Neither is project content and both are commonly introduced when a customer project
@@ -40,7 +42,7 @@ ProjectFileSelector::ProjectFileSelector(std::filesystem::path project_root,
                            .lexically_normal()) {}
 
 PathDisposition
-ProjectFileSelector::classify(const std::filesystem::path& project_relative_path) const noexcept {
+ProjectFileSelector::classify(const std::filesystem::path& project_relative_path) const {
     const auto normalized = project_relative_path.lexically_normal();
     if (is_platform_metadata(normalized))
         return PathDisposition::platform_metadata;
@@ -61,13 +63,11 @@ ProjectFileSelector::classify(const std::filesystem::path& project_relative_path
     return PathDisposition::project_content;
 }
 
-bool ProjectFileSelector::should_descend(
-    const std::filesystem::path& project_relative_path) const noexcept {
+bool ProjectFileSelector::should_descend(const std::filesystem::path& project_relative_path) const {
     return classify(project_relative_path) == PathDisposition::project_content;
 }
 
-bool ProjectFileSelector::should_compile(
-    const std::filesystem::path& project_relative_path) const noexcept {
+bool ProjectFileSelector::should_compile(const std::filesystem::path& project_relative_path) const {
     return classify(project_relative_path) == PathDisposition::project_content;
 }
 
