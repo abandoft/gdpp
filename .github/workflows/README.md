@@ -33,12 +33,13 @@
 要求的全量结果。4.4 分支固定使用最新维护版 4.4.1，插件描述符和目标 ABI 的最低版本仍为
 4.4。
 
-发布工作流不会替代上述合并门禁，但会在 PR 和手动运行中从干净 checkout 重新执行 Release
-构建、测试与打包。PR 永远不创建 GitHub Release；手动运行只有同时启用 `publish` 并提供以
-`v` 开头的 `release_tag` 时才执行发布。所有工作流顶层保持 `contents: read`，仅发布作业临时
-提升为 `contents: write`。工作流输出只能写入根 `build/` 或示例项目约定的
-`example/addons/gdpp/build/`，上传制品设置有限保留期；正式 Release 制品例外，由 GitHub
-Release 生命周期管理。
+发布工作流不会替代上述合并门禁，但会在 PR 和手动运行中从干净 checkout 重新执行一次
+Release 构建、Release 测试与打包。Debug 插件与原生集成由 `native-integration.yml` 独立验证，
+发布作业不再重复构建一套最终不会交付的 Debug SDK。PR 永远不创建 GitHub Release；手动运行
+只有同时启用 `publish` 并提供以 `v` 开头的 `release_tag` 时才执行发布。所有工作流顶层保持
+`contents: read`，仅发布作业临时提升为 `contents: write`。工作流输出只能写入根 `build/` 或
+示例项目约定的 `example/addons/gdpp/build/`，上传制品设置有限保留期；正式 Release 制品例外，
+由 GitHub Release 生命周期管理。
 
 ## 失败归属
 
