@@ -23,8 +23,19 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
+      - name: Initialize the MSVC x64 toolchain
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - name: Configure compiler
-        run: cmake --preset dev
+        shell: bash
+        run: |
+          arguments=(--preset dev)
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            arguments+=("-DCMAKE_CXX_COMPILER=cl.exe")
+          fi
+          cmake "${arguments[@]}"
       - name: Build compiler and unit tests
         run: cmake --build --preset dev --parallel
       - name: Run compiler tests

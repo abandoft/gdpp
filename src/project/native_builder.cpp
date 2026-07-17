@@ -10,12 +10,12 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
-#include <memory>
 #include <optional>
 #include <sstream>
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace gdpp {
 namespace {
@@ -461,12 +461,13 @@ using ReproduciblePathMapping = std::pair<std::string, std::string>;
 
 std::optional<std::string> read_environment_variable(const char* name) {
 #if defined(_MSC_VER)
-    char* raw_value = nullptr;
     std::size_t value_size = 0;
-    if (_dupenv_s(&raw_value, &value_size, name) != 0 || raw_value == nullptr)
+    if (getenv_s(&value_size, nullptr, 0, name) != 0 || value_size == 0)
         return std::nullopt;
-    const std::unique_ptr<char, decltype(&std::free)> value{raw_value, &std::free};
-    return std::string{value.get(), value_size == 0 ? 0 : value_size - 1};
+    std::vector<char> value(value_size);
+    if (getenv_s(&value_size, value.data(), value.size(), name) != 0 || value_size == 0)
+        return std::nullopt;
+    return std::string{value.data(), value_size - 1};
 #else
     const auto* value = std::getenv(name);
     return value == nullptr ? std::nullopt : std::optional<std::string>{value};

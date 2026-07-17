@@ -7,6 +7,7 @@ int main() {
     std::size_t failures = 0;
     for (const auto& test_case : gdpp::test::registry()) {
         try {
+            std::cout << "[run ] " << test_case.name << std::endl;
             test_case.body();
             std::cout << "[pass] " << test_case.name << '\n';
         } catch (const std::exception& error) {
