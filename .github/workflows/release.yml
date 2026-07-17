@@ -473,7 +473,7 @@ jobs:
           --output build/release-notes.md
       - name: Create checksums
         working-directory: build/release
-        run: LC_ALL=C sha256sum *.zip > SHA256SUMS
+        run: LC_ALL=C sha256sum -- *.zip > SHA256SUMS
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ inputs.release_version }}

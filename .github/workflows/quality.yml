@@ -70,14 +70,19 @@ jobs:
       - name: Reject mutable external Action references
         shell: bash
         run: |
-          mutable="$(rg -n --pcre2 \
-            'uses:\s+(?!\./)[^\s@]+@(?![0-9a-f]{40}(?:\s+#.*)?$)\S+' \
-            .github --glob '*.yml' --glob '*.yaml' || true)"
-          if [[ -n "$mutable" ]]; then
-            echo 'External Actions must be pinned to full commit SHAs.'
-            printf '%s\n' "$mutable"
-            exit 1
-          fi
+          set -euo pipefail
+          validation_status=0
+          while IFS= read -r entry; do
+            reference="${entry#*@}"
+            reference="${reference%% *}"
+            if [[ ! "$reference" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Mutable external Action reference: $entry"
+              validation_status=1
+            fi
+          done < <(grep -RInE \
+            'uses:[[:space:]]+[^./][^@[:space:]]+@' \
+            .github --include='*.yml' --include='*.yaml')
+          test "$validation_status" -eq 0
       - name: Validate module layout and dependency direction
         run: python3 tools/check_architecture.py
       - name: Validate GitHub Actions semantics
