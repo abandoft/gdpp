@@ -157,7 +157,9 @@ GDPP 自身使用 CMake、Python 和 godot-cpp 生成器，以保证开发构建
 
 公开构建 profile 是强类型的 `development`、`debug`、`release`。只有 ABI 适配层把它们映射
 到 godot-cpp 上游 target；文件名、SDK manifest、Godot 编译服务参数和对象缓存目录不得暴露
-`template_*`。
+`template_*`。目标 profile 同时决定优化契约：`debug` 绑定固定使用 Debug，`release` 绑定固定
+使用 Release，不能继承 GDPP compiler 插件本身的父构建类型。这样 Debug 编译器也不会把
+未优化的 godot-cpp 库链接进客户 Release 游戏。
 
 ## 不变量
 
@@ -177,6 +179,8 @@ GDPP 自身使用 CMake、Python 和 godot-cpp 生成器，以保证开发构建
   放大为大型项目上的编译器内存耗尽。
 - GDPP 自身的全量发行构建一次只调度一个完整 godot-cpp SDK 变体，变体内部继续并行；不能将
   Godot 版本数、profile 数和主机构建并行度相乘后同时争用内存、进程句柄与 Ninja 数据库。
+- SDK 的 debug/release godot-cpp 静态库必须分别来自 Debug/Release 原生构建；CTest 直接审计
+  每个版本的独立 CMake 缓存，父构建类型不得污染目标 profile。
 - 所有项目中间产物位于 `res://addons/gdpp/build/`。
 - 项目最终动态库位于 `res://addons/gdpp/binary/`，与中间对象和转译源码分离。
 - 项目动态库使用内容构建 ID 命名，变化构建不会覆盖仍被编辑器加载的旧库；成功链接后只清理

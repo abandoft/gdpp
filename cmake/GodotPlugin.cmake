@@ -15,8 +15,21 @@ add_subdirectory(
 include(ExternalProject)
 function(gdpp_add_sdk_binding target_name api_version godot_target output_variable)
     set(build_directory "${CMAKE_BINARY_DIR}/sdk/${target_name}")
+
+    # The Godot target profile and the native optimizer profile are one contract.  A Debug
+    # compiler plugin still has to package an optimized template_release binding; otherwise every
+    # generated game crosses an -O0 godot-cpp ABI boundary and the hottest Variant/container paths
+    # become slower than GDScript.  Conversely, template_debug must retain debuggable bindings even
+    # when this parent build produces a commercial Release package.
+    if(godot_target STREQUAL "template_release")
+        set(binding_build_type Release)
+    elseif(godot_target STREQUAL "template_debug")
+        set(binding_build_type Debug)
+    else()
+        set(binding_build_type "${CMAKE_BUILD_TYPE}")
+    endif()
     set(configure_arguments
-        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -DCMAKE_BUILD_TYPE=${binding_build_type}
         -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
         -DGODOTCPP_API_VERSION=${api_version}
         -DGODOTCPP_TARGET=${godot_target}

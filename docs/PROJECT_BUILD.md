@@ -42,6 +42,10 @@ addons/gdpp/sdk/
 和 ABI 库。Android/Web 交叉目标按平台、架构及线程模式作为独立 target pack 叠加，不强迫
 桌面用户下载全部目标静态库。
 
+SDK profile 不沿用构建 GDPP 编译器插件时的优化级别。`debug` 静态库始终以 Debug 构建，
+`release` 静态库始终以 Release 构建；因此开发者使用 Debug compiler 插件执行 Release 导出时，
+项目动态库及其 godot-cpp ABI 依赖仍是完整优化版本。
+
 构建后的插件布局为：
 
 ```text
