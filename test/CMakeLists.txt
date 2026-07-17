@@ -23,6 +23,11 @@ gdpp_set_project_warnings(gdpp_tests)
 add_test(NAME gdpp.unit COMMAND gdpp_tests)
 
 add_test(
+    NAME gdpp.architecture
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/check_architecture.py"
+)
+
+add_test(
     NAME gdpp.addon.clean
     COMMAND "${CMAKE_COMMAND}"
             -DGDPP_TEST_SOURCE_DIR=${PROJECT_SOURCE_DIR}

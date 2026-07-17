@@ -44,6 +44,8 @@ jobs:
         run: |
           ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].sort.each { |path| workflow = YAML.load_file(path); actual = workflow.fetch("permissions").fetch("contents"); raise "#{path}: top-level contents must be read, got #{actual}" unless actual == "read"; if path.end_with?("/release.yml"); publish = workflow.fetch("jobs").fetch("publish").fetch("permissions").fetch("contents"); raise "#{path}: publish job contents must be write, got #{publish}" unless publish == "write"; end; puts path }'
           test ! -e .github/workflows/ci.yml
+      - name: Validate module layout and dependency direction
+        run: python3 tools/check_architecture.py
       - name: Validate GitHub Actions semantics
         shell: bash
         run: |

@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Enforce GDPP's module layout and compile-time dependency direction."""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+PUBLIC_ROOT = ROOT / "include" / "gdpp"
+SOURCE_ROOT = ROOT / "src"
+
+PUBLIC_MODULES = {
+    "codegen",
+    "compiler",
+    "core",
+    "frontend",
+    "ir",
+    "project",
+    "runtime",
+    "semantic",
+    "support",
+}
+SOURCE_MODULES = PUBLIC_MODULES | {"cli", "integration"}
+
+# A module may depend only on itself and layers to its left in the compiler pipeline. Project and
+# host integration are orchestration layers, while the generated-code runtime remains isolated
+# from the compiler implementation.
+ALLOWED_DEPENDENCIES = {
+    "core": {"core"},
+    "support": {"support"},
+    "frontend": {"core", "frontend"},
+    "semantic": {"core", "frontend", "semantic"},
+    "ir": {"core", "frontend", "semantic", "ir"},
+    "codegen": {"core", "semantic", "ir", "codegen"},
+    "compiler": {"core", "frontend", "semantic", "ir", "codegen", "compiler"},
+    "project": {
+        "core",
+        "frontend",
+        "semantic",
+        "ir",
+        "codegen",
+        "compiler",
+        "project",
+        "support",
+    },
+    "runtime": {"runtime"},
+    "integration": PUBLIC_MODULES,
+    "cli": PUBLIC_MODULES,
+    "test": PUBLIC_MODULES,
+}
+
+INCLUDE_PATTERN = re.compile(r'^\s*#\s*include\s+[<"]gdpp/([^>"]+)[>"]')
+
+
+def source_module(path: Path) -> str | None:
+    relative = path.relative_to(ROOT)
+    if relative.parts[0] == "include" and relative.parts[1] == "gdpp":
+        return relative.parts[2] if len(relative.parts) > 3 else None
+    if relative.parts[0] == "src":
+        return relative.parts[1] if len(relative.parts) > 2 else None
+    if relative.parts[0] == "test":
+        return "test"
+    return None
+
+
+def validate_layout(errors: list[str]) -> None:
+    public_directories = {path.name for path in PUBLIC_ROOT.iterdir() if path.is_dir()}
+    if public_directories != PUBLIC_MODULES:
+        errors.append(
+            "include/gdpp module set differs: "
+            f"expected {sorted(PUBLIC_MODULES)}, got {sorted(public_directories)}"
+        )
+
+    flat_headers = sorted(
+        path.relative_to(ROOT).as_posix()
+        for path in PUBLIC_ROOT.iterdir()
+        if path.is_file() and path.name != "version.hpp.in"
+    )
+    if flat_headers:
+        errors.append("public headers must belong to a module: " + ", ".join(flat_headers))
+
+    source_directories = {path.name for path in SOURCE_ROOT.iterdir() if path.is_dir()}
+    if source_directories != SOURCE_MODULES:
+        errors.append(
+            "src module set differs: "
+            f"expected {sorted(SOURCE_MODULES)}, got {sorted(source_directories)}"
+        )
+
+    flat_sources = sorted(
+        path.relative_to(ROOT).as_posix() for path in SOURCE_ROOT.iterdir() if path.is_file()
+    )
+    if flat_sources:
+        errors.append("source files must belong to a module: " + ", ".join(flat_sources))
+
+
+def validate_dependencies(errors: list[str]) -> None:
+    candidates = []
+    for root in (PUBLIC_ROOT, SOURCE_ROOT, ROOT / "test"):
+        candidates.extend(path for path in root.rglob("*") if path.suffix in {".cpp", ".hpp"})
+
+    for path in sorted(candidates):
+        owner = source_module(path)
+        if owner is None or owner not in ALLOWED_DEPENDENCIES:
+            errors.append(f"cannot determine module owner for {path.relative_to(ROOT)}")
+            continue
+        allowed = ALLOWED_DEPENDENCIES[owner]
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            match = INCLUDE_PATTERN.match(line)
+            if match is None:
+                continue
+            include_path = match.group(1)
+            if include_path == "version.hpp" or include_path.startswith("godot_api_data_"):
+                continue
+            if "/" not in include_path:
+                errors.append(
+                    f"{path.relative_to(ROOT)}:{line_number}: flat GDPP include {include_path}"
+                )
+                continue
+            dependency = include_path.split("/", 1)[0]
+            if dependency not in PUBLIC_MODULES:
+                errors.append(
+                    f"{path.relative_to(ROOT)}:{line_number}: unknown module {dependency}"
+                )
+            elif dependency not in allowed:
+                errors.append(
+                    f"{path.relative_to(ROOT)}:{line_number}: {owner} must not depend on "
+                    f"{dependency}"
+                )
+
+
+def main() -> int:
+    errors: list[str] = []
+    validate_layout(errors)
+    validate_dependencies(errors)
+    if errors:
+        print("GDPP architecture validation failed:", file=sys.stderr)
+        for error in errors:
+            print(f"  - {error}", file=sys.stderr)
+        return 1
+    print("GDPP module layout and dependency direction are valid.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
