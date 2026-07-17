@@ -1,0 +1,13 @@
+[configuration]
+
+entry_symbol = "gdpp_library_init"
+compatibility_minimum = "4.4"
+reloadable = true
+
+[libraries]
+
+macos.editor.arm64 = "res://addons/gdpp/binary/libgdpp_compiler.macos.arm64.dylib"
+macos.editor.x86_64 = "res://addons/gdpp/binary/libgdpp_compiler.macos.universal.dylib"
+linux.editor.x86_64 = "res://addons/gdpp/binary/libgdpp_compiler.linux.x86_64.so"
+linux.editor.arm64 = "res://addons/gdpp/binary/libgdpp_compiler.linux.arm64.so"
+windows.editor.x86_64 = "res://addons/gdpp/binary/gdpp_compiler.windows.x86_64.dll"

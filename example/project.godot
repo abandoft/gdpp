@@ -1,0 +1,29 @@
+; GDPP development and release-packaging project.
+; Build a plugin preset first, then open this project directly in Godot.
+
+config_version=5
+
+[application]
+
+config/name="GDPP Example"
+run/main_scene="res://main.tscn"
+config/icon="res://icon.svg"
+
+[autoload]
+
+ExampleState="*res://autoload_state.gd"
+
+[display]
+
+window/size/viewport_width=960
+window/size/viewport_height=540
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/gdpp/plugin.cfg")
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
