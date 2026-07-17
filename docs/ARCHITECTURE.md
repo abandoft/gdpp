@@ -81,7 +81,9 @@ compiler/project             → integration/godot、cli
   头文件依赖提供同一事实来源；不同目录的同名脚本不会复用原生身份。
 - `NativeBuilder`：生成 AppleClang/Clang/GCC/MSVC 编译与链接命令，验证 SDK 平台和架构，
   API 与 development/debug/release profile，并按 profile 隔离、复用仍然有效的对象文件；
-  构建策略修订和编译器绝对路径进入缓存配置签名。
+  构建策略修订和编译器绝对路径进入缓存配置签名。iOS 后端以四级阶段图构建真机 arm64、
+  模拟器 arm64/x86_64，合并 Universal Simulator dylib 后生成动态 XCFramework，并在完整成功后
+  事务式替换客户产物。
 - `GDPPCompiler::execute_project_build`：Godot 侧原生构建事务入口，统一执行计划、检查链接退出码、
   验证预期动态库并在成功后执行范围清理；菜单、导出和集成测试不再各自组合易遗漏的收尾步骤。
 - `tools/generate_godot_api.py`：开发构建期间把 4.4～4.7 官方 API 转换为带版本命名空间的
