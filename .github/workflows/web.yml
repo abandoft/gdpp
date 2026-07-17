@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: mymindstorm/setup-emsdk@v14
+      - uses: emscripten-core/setup-emsdk@v16
         with:
           version: ${{ matrix.emscripten }}
           actions-cache-folder: build/ci/emsdk-cache
@@ -103,7 +103,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: mymindstorm/setup-emsdk@v14
+      - uses: emscripten-core/setup-emsdk@v16
         with:
           version: 4.0.0
           actions-cache-folder: build/ci/emsdk-cache
