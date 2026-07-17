@@ -190,7 +190,7 @@ jobs:
             > "$root/server.log" 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
-          for attempt in {1..30}; do
+          for _ in {1..30}; do
             if curl --fail --silent --head \
                 "http://127.0.0.1:${{ matrix.port }}/GDPPExample.html" \
                 > "$root/headers.txt"; then
