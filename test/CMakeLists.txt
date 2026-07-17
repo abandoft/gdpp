@@ -28,6 +28,15 @@ add_test(
 )
 
 add_test(
+    NAME gdpp.release.packaging
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/release_packaging_test.py"
+        "${PROJECT_SOURCE_DIR}"
+        "${PROJECT_BINARY_DIR}/test-release-packaging"
+)
+
+add_test(
     NAME gdpp.addon.clean
     COMMAND "${CMAKE_COMMAND}"
             -DGDPP_TEST_SOURCE_DIR=${PROJECT_SOURCE_DIR}
