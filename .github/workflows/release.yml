@@ -1,11 +1,11 @@
-name: Release packages
+name: Delivery gate and release
 
 on:
   pull_request:
   workflow_dispatch:
     inputs:
       publish:
-        description: Create the GitHub Release after all 12 package checks pass
+        description: Create the GitHub Release after the complete delivery gate passes
         required: true
         type: boolean
         default: false
@@ -20,14 +20,93 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   GDPP_COMPILER_GODOT_API: 4.4
 
 jobs:
+  preflight:
+    name: Gate / Release metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+      - name: Validate immutable release inputs
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH: ${{ github.event_name == 'workflow_dispatch' && inputs.publish || false }}
+          REQUESTED_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
+        run: |
+          set -euo pipefail
+          plugin_version="$(sed -n 's/^version="\([^"]*\)"$/\1/p' \
+            example/addons/gdpp/plugin.cfg)"
+          test "$plugin_version" = "$(printf '%s' "$plugin_version" | tr -d '[:space:]')"
+          [[ "$plugin_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          version="${REQUESTED_VERSION:-$plugin_version}"
+          test "$version" = "$plugin_version"
+          mkdir -p build/release-preflight
+          python3 tools/extract_changelog.py \
+            --changelog CHANGELOG.md \
+            --version "$version" \
+            --output build/release-preflight/notes.md
+          test -s build/release-preflight/notes.md
+          if [[ "$PUBLISH" == true ]]; then
+            test "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH"
+            if git ls-remote --exit-code --tags origin "refs/tags/$version" >/dev/null 2>&1; then
+              echo "Tag $version already exists; releases are immutable."
+              exit 1
+            fi
+            if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$version" >/dev/null 2>&1; then
+              echo "Release $version already exists; releases are immutable."
+              exit 1
+            fi
+          fi
+
+  quality-gate:
+    name: Gate / Quality
+    needs: preflight
+    uses: ./.github/workflows/quality.yml
+
+  core-gate:
+    name: Gate / Compiler core
+    needs: preflight
+    uses: ./.github/workflows/core.yml
+
+  native-gate:
+    name: Gate / Native integration
+    needs: preflight
+    uses: ./.github/workflows/native-integration.yml
+
+  godot-gate:
+    name: Gate / Godot compatibility
+    needs: preflight
+    uses: ./.github/workflows/godot-compatibility.yml
+    with:
+      target: all
+
+  android-gate:
+    name: Gate / Android
+    needs: preflight
+    uses: ./.github/workflows/android.yml
+
+  web-gate:
+    name: Gate / Web
+    needs: preflight
+    uses: ./.github/workflows/web.yml
+
+  ios-gate:
+    name: Gate / iOS
+    needs: preflight
+    uses: ./.github/workflows/ios.yml
+
   host-components:
     name: Host / ${{ matrix.host }} / Godot ${{ matrix.godot }} SDK
+    needs: [quality-gate, core-gate, native-gate, godot-gate, android-gate, web-gate, ios-gate]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -52,12 +131,12 @@ jobs:
             sdk_arch: x86_64
             platform_minimum: Windows_10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
       - name: Initialize the MSVC x64 toolchain
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
       - name: Configure one-version commercial host component
@@ -142,7 +221,7 @@ jobs:
           cmake -E make_directory "$destination"
           cmake -E copy_directory example/addons/gdpp "$destination"
           test ! -e "$destination/build"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gdpp-host-${{ matrix.host }}-godot-${{ matrix.godot }}
           path: build/host-component
@@ -151,6 +230,7 @@ jobs:
 
   android-components:
     name: Target / Android arm64 / Godot ${{ matrix.godot }}
+    needs: [quality-gate, core-gate, native-gate, godot-gate, android-gate, web-gate, ios-gate]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -158,10 +238,10 @@ jobs:
       matrix:
         godot: [4.4, 4.5, 4.6, 4.7]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
-      - uses: android-actions/setup-android@v4
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
       - name: Install pinned Android NDK
         run: sdkmanager "ndk;28.1.13356709"
       - name: Build Android 9 arm64 target component
@@ -179,7 +259,7 @@ jobs:
           destination="build/android-component/addons/gdpp/sdk/${{ matrix.godot }}/android"
           mkdir -p "$destination"
           cp -R "$sdk" "$destination/"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gdpp-target-android-arm64-godot-${{ matrix.godot }}
           path: build/android-component
@@ -188,6 +268,7 @@ jobs:
 
   ios-components:
     name: Target / iOS arm64 / Godot ${{ matrix.godot }}
+    needs: [quality-gate, core-gate, native-gate, godot-gate, android-gate, web-gate, ios-gate]
     runs-on: macos-15
     timeout-minutes: 60
     strategy:
@@ -195,7 +276,7 @@ jobs:
       matrix:
         godot: [4.4, 4.5, 4.6, 4.7]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
       - name: Build iOS 16 device and Universal Simulator target component
@@ -213,7 +294,7 @@ jobs:
           destination="build/ios-component/addons/gdpp/sdk/${{ matrix.godot }}/ios"
           mkdir -p "$destination"
           cp -R "$sdk" "$destination/"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gdpp-target-ios-arm64-godot-${{ matrix.godot }}
           path: build/ios-component
@@ -224,22 +305,23 @@ jobs:
     name: ZIP / ${{ matrix.host }} / Godot ${{ matrix.godot }}
     needs: [host-components, android-components, ios-components]
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         godot: [4.4, 4.5, 4.6, 4.7]
         host: [mac-arm64, linux-x64, windows-x64]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: gdpp-host-${{ matrix.host }}-godot-${{ matrix.godot }}
           path: build/components/host
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: gdpp-target-android-arm64-godot-${{ matrix.godot }}
           path: build/components/android
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         if: matrix.host == 'mac-arm64'
         with:
           name: gdpp-target-ios-arm64-godot-${{ matrix.godot }}
@@ -285,23 +367,68 @@ jobs:
             echo 'Release ZIP contains a forbidden target or generated product.'
             exit 1
           fi
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gdpp-release-${{ matrix.host }}-godot-${{ matrix.godot }}
           path: build/release/*.zip
           if-no-files-found: error
           retention-days: 14
 
+  readiness:
+    name: Release readiness / All gates passed
+    if: always()
+    needs:
+      - quality-gate
+      - core-gate
+      - native-gate
+      - godot-gate
+      - android-gate
+      - web-gate
+      - ios-gate
+      - host-components
+      - android-components
+      - ios-components
+      - packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Enforce the complete delivery gate
+        shell: bash
+        env:
+          QUALITY: ${{ needs.quality-gate.result }}
+          CORE: ${{ needs.core-gate.result }}
+          NATIVE: ${{ needs.native-gate.result }}
+          GODOT: ${{ needs.godot-gate.result }}
+          ANDROID: ${{ needs.android-gate.result }}
+          WEB: ${{ needs.web-gate.result }}
+          IOS: ${{ needs.ios-gate.result }}
+          HOST_COMPONENTS: ${{ needs.host-components.result }}
+          ANDROID_COMPONENTS: ${{ needs.android-components.result }}
+          IOS_COMPONENTS: ${{ needs.ios-components.result }}
+          PACKAGES: ${{ needs.packages.result }}
+        run: |
+          set -euo pipefail
+          for result in \
+            "$QUALITY" "$CORE" "$NATIVE" "$GODOT" "$ANDROID" "$WEB" "$IOS" \
+            "$HOST_COMPONENTS" "$ANDROID_COMPONENTS" "$IOS_COMPONENTS" "$PACKAGES"; do
+            test "$result" = success
+          done
+          printf '### Complete delivery gate passed\n\nAll tests and 12 packages passed.\n' \
+            >> "$GITHUB_STEP_SUMMARY"
+
   publish:
     name: Publish / GitHub Release
-    if: github.event_name == 'workflow_dispatch' && inputs.publish
-    needs: packages
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && needs.readiness.result == 'success'
+    needs: readiness
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: gdpp-release-*
           path: build/release
@@ -309,6 +436,8 @@ jobs:
       - name: Validate unprefixed version and 12-archive matrix
         shell: bash
         env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
           set -euo pipefail
@@ -316,6 +445,18 @@ jobs:
           plugin_version="$(sed -n 's/^version="\([^"]*\)"$/\1/p' \
             example/addons/gdpp/plugin.cfg)"
           test "$RELEASE_VERSION" = "$plugin_version"
+          git fetch --no-tags origin "refs/heads/$DEFAULT_BRANCH"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)"
+          if git ls-remote --exit-code --tags origin \
+              "refs/tags/$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo "Tag $RELEASE_VERSION appeared while the release was running."
+            exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_VERSION" \
+              >/dev/null 2>&1; then
+            echo "Release $RELEASE_VERSION appeared while the release was running."
+            exit 1
+          fi
           for godot in 4.4 4.5 4.6 4.7; do
             for host in mac-arm64 linux-x64 windows-x64; do
               test -f "build/release/gdpp-$godot-$host.zip"
@@ -332,8 +473,8 @@ jobs:
           --output build/release-notes.md
       - name: Create checksums
         working-directory: build/release
-        run: sha256sum *.zip > SHA256SUMS
-      - uses: softprops/action-gh-release@v2
+        run: LC_ALL=C sha256sum *.zip > SHA256SUMS
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ inputs.release_version }}
           name: ${{ inputs.release_version }}
@@ -343,3 +484,32 @@ jobs:
           files: |
             build/release/*.zip
             build/release/SHA256SUMS
+      - name: Verify the published release contract
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          set -euo pipefail
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_VERSION")"
+          test "$(jq -r '.tag_name' <<< "$release")" = "$RELEASE_VERSION"
+          test "$(jq -r '.name' <<< "$release")" = "$RELEASE_VERSION"
+          test "$(jq -r '.draft' <<< "$release")" = false
+          test "$(jq -r '.prerelease' <<< "$release")" = false
+          test "$(jq '[.assets[] | select(.state == "uploaded" and .size > 0)] | length' \
+            <<< "$release")" -eq 13
+          test "$(jq '.assets | length' <<< "$release")" -eq 13
+          test "$(jq '[.assets[] | select(.name | endswith(".zip"))] | length' \
+            <<< "$release")" -eq 12
+          for godot in 4.4 4.5 4.6 4.7; do
+            for host in mac-arm64 linux-x64 windows-x64; do
+              test "$(jq --arg name "gdpp-$godot-$host.zip" \
+                '[.assets[] | select(.name == $name)] | length' <<< "$release")" -eq 1
+            done
+          done
+          test "$(jq '[.assets[] | select(.name == "SHA256SUMS")] | length' \
+            <<< "$release")" -eq 1
+          test "$(git ls-remote origin "refs/tags/$RELEASE_VERSION" | awk '{print $1}')" \
+            = "$GITHUB_SHA"
+          printf 'Published %s: %s\n' "$RELEASE_VERSION" \
+            "$(jq -r '.html_url' <<< "$release")" >> "$GITHUB_STEP_SUMMARY"

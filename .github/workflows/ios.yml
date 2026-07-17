@@ -1,14 +1,14 @@
 name: iOS target and Xcode integration
 
 on:
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ios-${{ github.ref }}
+  group: ios-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -21,7 +21,7 @@ jobs:
       matrix:
         godot: [4.4, 4.5, 4.6, 4.7]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
       - name: Configure iOS target SDK builder
@@ -57,7 +57,7 @@ jobs:
           fi
           test -z "$(find third/godot-cpp -type d -name __pycache__ -print -quit)"
           test -z "$(find third/godot-cpp -type f -name '*.pyc' -print -quit)"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gdpp-ios-godot-${{ matrix.godot }}
           path: example/addons/gdpp/sdk/${{ matrix.godot }}/ios/arm64
@@ -70,10 +70,10 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: gdpp-ios-godot-4.6
           path: example/addons/gdpp/sdk/4.6/ios/arm64
@@ -150,7 +150,7 @@ jobs:
           grep -q '\*\* BUILD SUCCEEDED \*\*' "$root/xcodebuild.log"
       - name: Upload iOS integration evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gdpp-ios-xcode-godot-4.6.2
           path: example/addons/gdpp/build/ios

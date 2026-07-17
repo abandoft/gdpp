@@ -1,14 +1,14 @@
 name: Web target and browser runtime
 
 on:
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: web-${{ github.ref }}
+  group: web-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -34,10 +34,10 @@ jobs:
           - godot: 4.7
             emscripten: 4.0.0
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
-      - uses: emscripten-core/setup-emsdk@v16
+      - uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
           version: ${{ matrix.emscripten }}
           actions-cache-folder: build/ci/emsdk-cache
@@ -75,7 +75,7 @@ jobs:
           fi
           test -z "$(find third/godot-cpp -type d -name __pycache__ -print -quit)"
           test -z "$(find third/godot-cpp -type f -name '*.pyc' -print -quit)"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gdpp-web-godot-${{ matrix.godot }}-${{ matrix.variant }}
           path: example/addons/gdpp/sdk/${{ matrix.godot }}/web/wasm32/${{ matrix.variant }}
@@ -100,10 +100,10 @@ jobs:
             output: web-threads
             port: 8061
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
-      - uses: emscripten-core/setup-emsdk@v16
+      - uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
           version: 4.0.0
           actions-cache-folder: build/ci/emsdk-cache
@@ -112,7 +112,7 @@ jobs:
         with:
           version: 4.5.2
           templates: web
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: gdpp-web-godot-4.5-${{ matrix.variant }}
           path: example/addons/gdpp/sdk/4.5/web/wasm32/${{ matrix.variant }}
@@ -221,7 +221,7 @@ jobs:
           fi
       - name: Upload Web evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gdpp-web-runtime-godot-4.5.2-${{ matrix.variant }}
           path: example/addons/gdpp/build/${{ matrix.output }}
