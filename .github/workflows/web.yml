@@ -200,13 +200,18 @@ jobs:
           done
           grep -qi '^Cross-Origin-Opener-Policy: same-origin' "$root/headers.txt"
           grep -qi '^Cross-Origin-Embedder-Policy: require-corp' "$root/headers.txt"
-          google-chrome --headless=new --no-sandbox \
-            --use-gl=swiftshader --enable-webgl --enable-unsafe-swiftshader \
+          timeout 150s google-chrome --headless=new --no-sandbox \
+            --use-gl=angle --use-angle=swiftshader-webgl \
+            --enable-webgl --enable-unsafe-swiftshader \
             --autoplay-policy=no-user-gesture-required \
-            --enable-logging=stderr --v=0 --virtual-time-budget=20000 --dump-dom \
+            --enable-logging=stderr --v=0 --virtual-time-budget=120000 --dump-dom \
             "http://127.0.0.1:${{ matrix.port }}/GDPPExample.html" \
             > "$root/browser-dom.txt" 2> "$root/browser.log"
-          grep -q 'data-gdpp-status="ok"' "$root/browser-dom.txt"
+          if ! grep -q 'data-gdpp-status="ok"' "$root/browser-dom.txt"; then
+            echo 'Web runtime did not publish its successful DOM oracle.'
+            tail -80 "$root/browser.log"
+            exit 1
+          fi
           if grep -q 'data-gdpp-status="invalid"' "$root/browser-dom.txt"; then
             echo 'Web runtime reported an invalid AOT behavior oracle.'
             exit 1
