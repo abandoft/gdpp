@@ -1,0 +1,15 @@
+if(NOT DEFINED GDPP_PROJECT_DIRECTORY OR GDPP_PROJECT_DIRECTORY STREQUAL "")
+    message(FATAL_ERROR "GDPP_PROJECT_DIRECTORY is required")
+endif()
+
+set(GDPP_EXTENSION_REGISTRY
+    "${GDPP_PROJECT_DIRECTORY}/.godot/extension_list.cfg")
+if(NOT DEFINED GDPP_COMPILER_DESCRIPTOR OR GDPP_COMPILER_DESCRIPTOR STREQUAL "")
+    set(GDPP_COMPILER_DESCRIPTOR "res://addons/gdpp/gdpp.gdextension")
+endif()
+file(MAKE_DIRECTORY "${GDPP_PROJECT_DIRECTORY}/.godot")
+file(WRITE "${GDPP_EXTENSION_REGISTRY}" "${GDPP_COMPILER_DESCRIPTOR}\n")
+if(GDPP_INCLUDE_PROJECT_EXTENSION)
+    file(APPEND "${GDPP_EXTENSION_REGISTRY}"
+        "res://addons/gdpp/build/project/gdpp_project.gdextension\n")
+endif()

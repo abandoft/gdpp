@@ -1,0 +1,428 @@
+#include "support/test.hpp"
+
+#include "gdpp/diagnostic.hpp"
+#include "gdpp/lexer.hpp"
+#include "gdpp/parser.hpp"
+#include "gdpp/source.hpp"
+
+TEST_CASE("parser builds declarations and structured function body") {
+    const gdpp::SourceFile source{"player.gd", "extends Node\n"
+                                               "class_name Player\n"
+                                               "signal damaged(amount: int)\n"
+                                               "var health: int = 100\n"
+                                               "func take_damage(amount: int) -> void:\n"
+                                               "    health -= amount\n"
+                                               "    if health < 0:\n"
+                                               "        health = 0\n"};
+    gdpp::DiagnosticBag diagnostics;
+    gdpp::Lexer lexer{source, diagnostics};
+    const auto tokens = lexer.scan();
+    gdpp::Parser parser{tokens, diagnostics};
+    const auto script = parser.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(*script.base_type, std::string{"Node"});
+    REQUIRE_EQ(*script.class_name, std::string{"Player"});
+    REQUIRE_EQ(script.signals.size(), std::size_t{1});
+    REQUIRE_EQ(script.variables.size(), std::size_t{1});
+    REQUIRE_EQ(script.functions.size(), std::size_t{1});
+    REQUIRE_EQ(script.functions.front().body.size(), std::size_t{2});
+    REQUIRE_EQ(script.functions.front().body.back().kind(), gdpp::ast::StatementKind::if_statement);
+}
+
+TEST_CASE("parser accepts latest script annotations directives and single-line suites") {
+    const gdpp::SourceFile source{
+        "latest.gd", "@tool\n"
+                     "@icon(\"res://icon.svg\")\n"
+                     "@abstract\n"
+                     "class_name LatestScript extends Node\n"
+                     "@warning_ignore_start(\"unused_signal\")\n"
+                     "signal changed()\n"
+                     "@warning_ignore_restore(\"unused_signal\")\n"
+                     "func classify(value: int) -> String: return \"yes\" if value else \"no\"\n"
+                     "func reset() -> void: pass; return\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE(script.tool);
+    REQUIRE_EQ(script.annotations.size(), std::size_t{3});
+    REQUIRE_EQ(*script.class_name, std::string{"LatestScript"});
+    REQUIRE_EQ(*script.base_type, std::string{"Node"});
+    REQUIRE_EQ(script.signals.size(), std::size_t{1});
+    REQUIRE_EQ(script.functions.front().body.size(), std::size_t{1});
+    REQUIRE_EQ(script.functions.back().body.size(), std::size_t{2});
+}
+
+TEST_CASE("parser builds internal classes and multiline lambda expressions") {
+    const gdpp::SourceFile source{"modern.gd", "class Payload:\n"
+                                               "    var value: int\n"
+                                               "    func _init(initial: int) -> void:\n"
+                                               "        value = initial\n"
+                                               "func attach(changed: Signal) -> void:\n"
+                                               "    changed.connect(\n"
+                                               "        func(next: int) -> void:\n"
+                                               "            print(next))\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.classes.size(), std::size_t{1});
+    REQUIRE_EQ(script.classes.front().name, std::string{"Payload"});
+    REQUIRE_EQ(script.classes.front().variables.size(), std::size_t{1});
+    REQUIRE_EQ(script.classes.front().functions.size(), std::size_t{1});
+    const auto& call = *script.functions.front().body.front().expression();
+    REQUIRE_EQ(call.kind(), gdpp::ast::ExpressionKind::call);
+    REQUIRE_EQ(call.operand_count(), std::size_t{2});
+    REQUIRE_EQ(call.operand(1)->kind(), gdpp::ast::ExpressionKind::lambda);
+    REQUIRE(call.operand(1)->lambda() != nullptr);
+    REQUIRE_EQ(call.operand(1)->lambda()->parameters.front().name, std::string{"next"});
+    REQUIRE_EQ(call.operand(1)->lambda()->body.size(), std::size_t{1});
+}
+
+TEST_CASE("parser builds assert statements with optional messages") {
+    const gdpp::SourceFile source{"assert.gd", "func validate(value: int) -> int:\n"
+                                               "    assert(value > 0)\n"
+                                               "    assert(value < 100, \"value is too large\")\n"
+                                               "    return value\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.functions.front().body.at(0).kind(),
+               gdpp::ast::StatementKind::assert_statement);
+    REQUIRE(script.functions.front().body.at(0).condition() != nullptr);
+    REQUIRE(script.functions.front().body.at(0).expression() == nullptr);
+    REQUIRE_EQ(script.functions.front().body.at(1).kind(),
+               gdpp::ast::StatementKind::assert_statement);
+    REQUIRE_EQ(script.functions.front().body.at(1).expression()->literal_kind(),
+               gdpp::ast::LiteralKind::string);
+}
+
+TEST_CASE("parser builds top-level signal await statements") {
+    const gdpp::SourceFile source{"await.gd", "func wait_for(timer: Timer) -> void:\n"
+                                              "    await timer.timeout\n"
+                                              "    pass\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.functions.front().body.front().kind(),
+               gdpp::ast::StatementKind::await_statement);
+    REQUIRE_EQ(script.functions.front().body.front().expression()->kind(),
+               gdpp::ast::ExpressionKind::member);
+}
+
+TEST_CASE("parser preserves collection literals inferred types for loops and elif") {
+    const gdpp::SourceFile source{"collections.gd", "func visit() -> void:\n"
+                                                    "    var values := [1, 2, 3]\n"
+                                                    "    var labels := {\"one\": 1}\n"
+                                                    "    for value in values:\n"
+                                                    "        if value == 1:\n"
+                                                    "            print(labels[\"one\"])\n"
+                                                    "        elif value == 2:\n"
+                                                    "            pass\n"};
+    gdpp::DiagnosticBag diagnostics;
+    gdpp::Lexer lexer{source, diagnostics};
+    const auto tokens = lexer.scan();
+    gdpp::Parser parser{tokens, diagnostics};
+    const auto script = parser.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.functions.size(), std::size_t{1});
+    REQUIRE(script.functions.front().body.front().infer_type());
+    REQUIRE_EQ(script.functions.front().body.front().expression()->kind(),
+               gdpp::ast::ExpressionKind::array_literal);
+    REQUIRE_EQ(script.functions.front().body.at(1).expression()->kind(),
+               gdpp::ast::ExpressionKind::dictionary_literal);
+    REQUIRE_EQ(script.functions.front().body.at(2).kind(), gdpp::ast::StatementKind::for_statement);
+    REQUIRE_EQ(script.functions.front().body.at(2).body().front().else_body().front().kind(),
+               gdpp::ast::StatementKind::if_statement);
+}
+
+TEST_CASE("parser attaches export annotations to fields across line layouts") {
+    const gdpp::SourceFile source{"exports.gd", "@export var title: String = \"Player\"\n"
+                                                "@export_range(-10.0, 10.0, 0.5, \"or_greater\")\n"
+                                                "var speed: float = 1.0\n"};
+    gdpp::DiagnosticBag diagnostics;
+    gdpp::Lexer lexer{source, diagnostics};
+    const auto tokens = lexer.scan();
+    gdpp::Parser parser{tokens, diagnostics};
+    const auto script = parser.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.variables.size(), std::size_t{2});
+    REQUIRE_EQ(script.variables.front().annotations.front().name, std::string{"export"});
+    REQUIRE_EQ(script.variables.back().annotations.front().name, std::string{"export_range"});
+    REQUIRE_EQ(script.variables.back().annotations.front().arguments.size(), std::size_t{4});
+    REQUIRE_EQ(script.variables.back().annotations.front().arguments.front()->kind(),
+               gdpp::ast::ExpressionKind::unary);
+}
+
+TEST_CASE("parser preserves onready fields and typed iterators") {
+    const gdpp::SourceFile source{"modern_fields.gd",
+                                  "@onready var label: Label = $Label\n"
+                                  "func collect(values: Dictionary[String, int]) -> void:\n"
+                                  "    for key: String in values:\n"
+                                  "        pass\n"};
+    gdpp::DiagnosticBag diagnostics;
+    gdpp::Lexer lexer{source, diagnostics};
+    const auto tokens = lexer.scan();
+    gdpp::Parser parser{tokens, diagnostics};
+    const auto script = parser.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE(script.variables.front().onready);
+    REQUIRE_EQ(*script.functions.front().parameters.front().type,
+               std::string{"Dictionary[String, int]"});
+    REQUIRE_EQ(*script.functions.front().body.front().type(), std::string{"String"});
+}
+
+TEST_CASE("parser distinguishes static fields from static functions") {
+    const gdpp::SourceFile source{"static_members.gd",
+                                  "static var cache: Dictionary[String, int] = {}\n"
+                                  "static func clear() -> void:\n"
+                                  "    cache.clear()\n"};
+    gdpp::DiagnosticBag diagnostics;
+    gdpp::Lexer lexer{source, diagnostics};
+    const auto tokens = lexer.scan();
+    gdpp::Parser parser{tokens, diagnostics};
+    const auto script = parser.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE(script.variables.front().is_static);
+    REQUIRE(script.functions.front().is_static);
+}
+
+TEST_CASE("parser validates warning annotations without changing statements") {
+    const gdpp::SourceFile source{"warnings.gd", "func divide(value: int) -> int:\n"
+                                                 "    @warning_ignore(\"integer_division\")\n"
+                                                 "    var result := value / 2\n"
+                                                 "    return result\n"};
+    gdpp::DiagnosticBag diagnostics;
+    gdpp::Lexer lexer{source, diagnostics};
+    const auto tokens = lexer.scan();
+    gdpp::Parser parser{tokens, diagnostics};
+    const auto script = parser.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.functions.front().body.size(), std::size_t{2});
+    REQUIRE_EQ(script.functions.front().body.front().kind(), gdpp::ast::StatementKind::variable);
+}
+
+TEST_CASE("parser builds named and anonymous enum declarations") {
+    const gdpp::SourceFile source{"enums.gd",
+                                  "enum State { IDLE, WALK = 4, RUN = WALK * 2, }\n"
+                                  "enum { DEFAULT_LIVES = 3, MAX_LIVES = DEFAULT_LIVES + 2 }\n"};
+    gdpp::DiagnosticBag diagnostics;
+    gdpp::Lexer lexer{source, diagnostics};
+    const auto tokens = lexer.scan();
+    gdpp::Parser parser{tokens, diagnostics};
+    const auto script = parser.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.enums.size(), std::size_t{2});
+    REQUIRE_EQ(*script.enums.front().name, std::string{"State"});
+    REQUIRE_EQ(script.enums.front().entries.size(), std::size_t{3});
+    REQUIRE_EQ(script.enums.front().entries.back().value->kind(),
+               gdpp::ast::ExpressionKind::binary);
+    REQUIRE(!script.enums.back().name.has_value());
+}
+
+TEST_CASE("parser preserves qualified and nested type names in every annotation position") {
+    const gdpp::SourceFile source{"qualified-types.gd",
+                                  "var mode: Shared.State\n"
+                                  "func roundtrip(values: Array[Shared.State]) -> Shared.State:\n"
+                                  "    return Shared.State.IDLE\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(*script.variables.front().type, std::string{"Shared.State"});
+    REQUIRE_EQ(*script.functions.front().parameters.front().type,
+               std::string{"Array[Shared.State]"});
+    REQUIRE_EQ(*script.functions.front().return_type, std::string{"Shared.State"});
+}
+
+TEST_CASE("parser builds match alternatives bindings guards and wildcard branches") {
+    const gdpp::SourceFile source{"match.gd", "func classify(value: int) -> String:\n"
+                                              "    match value:\n"
+                                              "        0, 1:\n"
+                                              "            return \"small\"\n"
+                                              "        var captured when captured > 7:\n"
+                                              "            return \"large\"\n"
+                                              "        _:\n"
+                                              "            return \"other\"\n"};
+    gdpp::DiagnosticBag diagnostics;
+    gdpp::Lexer lexer{source, diagnostics};
+    const auto tokens = lexer.scan();
+    gdpp::Parser parser{tokens, diagnostics};
+    const auto script = parser.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    const auto& match = script.functions.front().body.front();
+    REQUIRE_EQ(match.kind(), gdpp::ast::StatementKind::match_statement);
+    REQUIRE_EQ(match.match_branches().size(), std::size_t{3});
+    REQUIRE_EQ(match.match_branches().front().patterns.size(), std::size_t{2});
+    REQUIRE_EQ(match.match_branches().at(1).patterns.front().kind(),
+               gdpp::ast::MatchPatternKind::binding);
+    REQUIRE(match.match_branches().at(1).guard != nullptr);
+    REQUIRE_EQ(match.match_branches().back().patterns.front().kind(),
+               gdpp::ast::MatchPatternKind::wildcard);
+}
+
+TEST_CASE("parser attaches Godot 4 property getter and setter blocks") {
+    const gdpp::SourceFile source{"property.gd", "@export var health: int = 100:\n"
+                                                 "    set(value):\n"
+                                                 "        health = value\n"
+                                                 "    get:\n"
+                                                 "        return health\n"};
+    gdpp::DiagnosticBag diagnostics;
+    gdpp::Lexer lexer{source, diagnostics};
+    const auto tokens = lexer.scan();
+    gdpp::Parser parser{tokens, diagnostics};
+    const auto script = parser.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE(script.variables.front().getter.has_value());
+    REQUIRE(script.variables.front().setter.has_value());
+    REQUIRE_EQ(script.variables.front().setter->parameter, std::string{"value"});
+    REQUIRE_EQ(script.variables.front().getter->body.front().kind(),
+               gdpp::ast::StatementKind::return_statement);
+    REQUIRE_EQ(script.variables.front().setter->body.front().kind(),
+               gdpp::ast::StatementKind::assignment);
+}
+
+TEST_CASE("parser preserves bound property accessor methods in both layouts") {
+    const gdpp::SourceFile source{"bound_property.gd",
+                                  "var label: get = read_label, set = write_label\n"
+                                  "var count: int = 1:\n"
+                                  "    set = write_count,\n"
+                                  "    get = read_count\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.variables.size(), std::size_t{2});
+    REQUIRE_EQ(script.variables.front().getter->method, std::string{"read_label"});
+    REQUIRE_EQ(script.variables.front().setter->method, std::string{"write_label"});
+    REQUIRE(script.variables.front().getter->body.empty());
+    REQUIRE_EQ(script.variables.back().getter->method, std::string{"read_count"});
+    REQUIRE_EQ(script.variables.back().setter->method, std::string{"write_count"});
+}
+
+TEST_CASE("parser builds casts conditional expressions power and node references") {
+    const gdpp::SourceFile source{"modern.gd",
+                                  "func choose(enabled: bool) -> Node3D:\n"
+                                  "    var node := $Root/Child as Node3D\n"
+                                  "    var power := 2 ** 3 ** 2\n"
+                                  "    return node if enabled else %Fallback as Node3D\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    const auto& node = *script.functions.front().body.at(0).expression();
+    REQUIRE_EQ(node.kind(), gdpp::ast::ExpressionKind::binary);
+    REQUIRE_EQ(node.value(), std::string{"as"});
+    REQUIRE_EQ(node.operand(0)->kind(), gdpp::ast::ExpressionKind::node_reference);
+    const auto& power = *script.functions.front().body.at(1).expression();
+    REQUIRE_EQ(power.value(), std::string{"**"});
+    REQUIRE_EQ(power.operand(1)->value(), std::string{"**"});
+    REQUIRE_EQ(script.functions.front().body.at(2).expression()->kind(),
+               gdpp::ast::ExpressionKind::conditional);
+}
+
+TEST_CASE("parser applies GDScript not and is-not precedence") {
+    const gdpp::SourceFile source{
+        "not_precedence.gd", "func check(node: Node) -> bool:\n"
+                             "    return not node.name == \"Player\" and node is not Node2D\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    const auto& conjunction = *script.functions.front().body.front().expression();
+    REQUIRE_EQ(conjunction.value(), std::string{"and"});
+    REQUIRE_EQ(conjunction.operand(0)->kind(), gdpp::ast::ExpressionKind::unary);
+    REQUIRE_EQ(conjunction.operand(0)->operand(0)->value(), std::string{"=="});
+    REQUIRE_EQ(conjunction.operand(1)->value(), std::string{"is not"});
+}
+
+TEST_CASE("parser preserves not-in membership and compact modulo") {
+    const gdpp::SourceFile source{"membership.gd",
+                                  "func check(value: Variant, items: Array) -> bool:\n"
+                                  "    var index := randi()%items.size()\n"
+                                  "    return value not in items and index >= 0\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.functions.front().body.front().expression()->value(), std::string{"%"});
+    const auto& conjunction = *script.functions.front().body.back().expression();
+    REQUIRE_EQ(conjunction.value(), std::string{"and"});
+    REQUIRE_EQ(conjunction.operand(0)->value(), std::string{"not in"});
+}
+
+TEST_CASE("parser recovery always advances past unexpected indentation") {
+    const gdpp::SourceFile source{"recovery.gd", "var first := 1\n"
+                                                 "    + 2\n"
+                                                 "var second := 3\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(diagnostics.has_errors());
+    REQUIRE_EQ(script.variables.size(), std::size_t{2});
+    REQUIRE_EQ(script.variables.back().name, std::string{"second"});
+}
+
+TEST_CASE("parser accepts commercial script headers semicolons and inline lambdas") {
+    const gdpp::SourceFile source{"commercial.gd",
+                                  "@tool\n"
+                                  "class_name CommercialResource extends Resource\n"
+                                  "var count = 1;\n"
+                                  "func choose(delay := .2):\n"
+                                  "    var values = [1, 2]\n"
+                                  "    return values.filter(func(value): return value > 1);\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE(script.tool);
+    REQUIRE_EQ(script.class_name, std::optional<std::string>{"CommercialResource"});
+    REQUIRE_EQ(script.base_type, std::optional<std::string>{"Resource"});
+    REQUIRE_EQ(script.variables.size(), std::size_t{1});
+    REQUIRE_EQ(script.functions.size(), std::size_t{1});
+    REQUIRE(script.functions.front().parameters.front().infer_type);
+    REQUIRE(script.functions.front().body.back().expression()->operand(1)->lambda() != nullptr);
+    REQUIRE_EQ(script.functions.front().body.back().expression()->operand(1)->lambda()->body.size(),
+               std::size_t{1});
+}
+
+TEST_CASE("parser accepts inline match and conditional suites") {
+    const gdpp::SourceFile source{"inline_suites.gd", "func describe(value: int):\n"
+                                                      "    match value:\n"
+                                                      "        1: return \"one\"\n"
+                                                      "        _: return \"other\"\n"
+                                                      "func clamp_positive(value: int):\n"
+                                                      "    if value > 0: return value\n"
+                                                      "    else: return 0\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.functions.size(), std::size_t{2});
+    REQUIRE_EQ(script.functions.front().body.front().match_branches().size(), std::size_t{2});
+    REQUIRE_EQ(script.functions.back().body.front().body().size(), std::size_t{1});
+    REQUIRE_EQ(script.functions.back().body.front().else_body().size(), std::size_t{1});
+}

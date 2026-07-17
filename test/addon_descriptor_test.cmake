@@ -1,0 +1,121 @@
+set(runtime_descriptor "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/gdpp_project.gdextension")
+if(EXISTS "${runtime_descriptor}")
+    message(FATAL_ERROR
+        "The runtime descriptor must be generated into the export, not scanned beside the compiler")
+endif()
+
+set(compiler_descriptor
+    "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/gdpp.gdextension")
+file(READ "${compiler_descriptor}" compiler_content)
+set(compiler_entries "macos.editor.arm64" "macos.editor.x86_64")
+set(compiler_libraries
+    "libgdpp_compiler.macos.arm64.dylib"
+    "libgdpp_compiler.macos.universal.dylib")
+foreach(entry library IN ZIP_LISTS compiler_entries compiler_libraries)
+    string(FIND "${compiler_content}"
+        "${entry} = \"res://addons/gdpp/binary/${library}\"" offset)
+    if(offset EQUAL -1)
+        message(FATAL_ERROR
+            "Compiler descriptor does not map ${entry} to ${library}")
+    endif()
+endforeach()
+string(REGEX MATCH "macos\\.[^=\n]*universal[^=\n]* =" invalid_compiler_feature
+    "${compiler_content}")
+if(invalid_compiler_feature)
+    message(FATAL_ERROR
+        "Compiler descriptor uses 'universal' as a Godot feature tag: "
+        "${invalid_compiler_feature}")
+endif()
+
+file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/export_plugin.gd" export_plugin)
+string(FIND "${export_plugin}" "add_shared_object(\n        library_path" duplicate_registration)
+if(NOT duplicate_registration EQUAL -1)
+    message(FATAL_ERROR
+        "Successful exports must not register a library already discovered through GDExtension")
+endif()
+string(FIND "${export_plugin}"
+    "_prepare_compiler_descriptor() or not _prepare_stable_descriptor()"
+    duplicate_descriptor_scan)
+if(NOT duplicate_descriptor_scan EQUAL -1)
+    message(FATAL_ERROR
+        "Compiler and runtime descriptors must not both discover the project library")
+endif()
+foreach(required_runtime_export IN ITEMS
+        "if not _prepare_compiler_descriptor():"
+        "add_file(STABLE_DESCRIPTOR, _runtime_descriptor.to_utf8_buffer(), false)"
+        "add_file(EXTENSION_REGISTRY, _export_extension_registry.to_utf8_buffer(), false)"
+        "func _clear_godot_export_cache() -> bool:"
+        "func _restore_compiler_descriptor() -> void:")
+    string(FIND "${export_plugin}" "${required_runtime_export}" runtime_export_offset)
+    if(runtime_export_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Single-descriptor export transaction is missing: ${required_runtime_export}")
+    endif()
+endforeach()
+file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/plugin.gd" editor_plugin)
+string(FIND "${editor_plugin}"
+    "if not DirAccess.dir_exists_absolute(ndk_parent):" safe_ndk_probe)
+if(safe_ndk_probe EQUAL -1)
+    message(FATAL_ERROR
+        "Optional Android NDK discovery must not query a missing directory")
+endif()
+file(READ "${GDPP_TEST_SOURCE_DIR}/example/export_presets.cfg" export_presets)
+foreach(invalid_android_option IN ITEMS
+        "gradle_build/compress_native_libraries=true"
+        "gradle_build/min_sdk=\"24\""
+        "gradle_build/target_sdk=\"35\""
+        "package/signed=true")
+    string(FIND "${export_presets}" "${invalid_android_option}" invalid_offset)
+    if(NOT invalid_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Non-Gradle unsigned Android fixture contains invalid option: ${invalid_android_option}")
+    endif()
+endforeach()
+
+foreach(required_windows_option IN ITEMS
+        "name=\"Windows x86_64\""
+        "name=\"Windows GDScript Fallback\""
+        "platform=\"Windows Desktop\""
+        "export_path=\"addons/gdpp/build/export/GDPPExample.exe\""
+        "export_path=\"addons/gdpp/build/export/GDPPFallback.exe\"")
+    string(FIND "${export_presets}" "${required_windows_option}" required_offset)
+    if(required_offset EQUAL -1)
+        message(FATAL_ERROR "Windows export fixture is missing: ${required_windows_option}")
+    endif()
+endforeach()
+
+foreach(required_macos_option IN ITEMS
+        "name=\"macOS Universal\""
+        "name=\"macOS GDScript Fallback\""
+        "export_path=\"addons/gdpp/build/export/GDPPFallback.app\"")
+    string(FIND "${export_presets}" "${required_macos_option}" required_offset)
+    if(required_offset EQUAL -1)
+        message(FATAL_ERROR "macOS export fixture is missing: ${required_macos_option}")
+    endif()
+endforeach()
+
+foreach(required_web_option IN ITEMS
+        "name=\"Web AOT\""
+        "name=\"Web AOT Threads\""
+        "name=\"Web GDScript Fallback\""
+        "platform=\"Web\""
+        "variant/extensions_support=true"
+        "variant/thread_support=true"
+        "export_path=\"addons/gdpp/build/export/web/GDPPExample.html\"")
+    string(FIND "${export_presets}" "${required_web_option}" required_offset)
+    if(required_offset EQUAL -1)
+        message(FATAL_ERROR "Web export fixture is missing: ${required_web_option}")
+    endif()
+endforeach()
+
+foreach(required_web_implementation IN ITEMS
+        "func _web_variant_from_features"
+        "variant/extensions_support"
+        "EMSCRIPTEN_CXX_SETTING"
+        "\"threads\" if _target_platform == \"web\"")
+    string(FIND "${export_plugin}" "${required_web_implementation}" required_offset)
+    if(required_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Web export implementation is missing: ${required_web_implementation}")
+    endif()
+endforeach()

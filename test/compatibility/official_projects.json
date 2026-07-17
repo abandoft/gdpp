@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "repository": {
+    "name": "godotengine/godot-demo-projects",
+    "url": "https://github.com/godotengine/godot-demo-projects.git",
+    "commit": "540ef657b792237cf981fa8783f1896715cd699c",
+    "license_file": "LICENSE.md",
+    "license": "MIT"
+  },
+  "projects": [
+    {
+      "path": "3d/platformer",
+      "minimum_isolated_successes": 5,
+      "require_project_native_success": true
+    },
+    {
+      "path": "3d/voxel",
+      "minimum_isolated_successes": 9,
+      "require_project_native_success": true
+    },
+    {
+      "path": "audio/rhythm_game",
+      "minimum_isolated_successes": 5,
+      "require_project_native_success": true
+    },
+    {
+      "path": "2d/role_playing_game",
+      "minimum_isolated_successes": 3,
+      "require_project_native_success": true
+    }
+  ]
+}
