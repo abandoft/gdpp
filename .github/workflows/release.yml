@@ -267,9 +267,7 @@ jobs:
             --output build/release \
             --host ${{ matrix.host }} \
             --godot-version ${{ matrix.godot }}
-          version="$(sed -n 's/^version="\([^"]*\)"$/\1/p' \
-            build/components/host/addons/gdpp/plugin.cfg)"
-          archive="build/release/gdpp-$version-godot-${{ matrix.godot }}-${{ matrix.host }}.zip"
+          archive="build/release/gdpp-${{ matrix.godot }}-${{ matrix.host }}.zip"
           test -f "$archive"
           unzip -Z1 "$archive" > build/archive-contents.txt
           test "$(grep -Ec '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/sdk\.manifest$' \
@@ -320,7 +318,7 @@ jobs:
           test "$RELEASE_VERSION" = "$plugin_version"
           for godot in 4.4 4.5 4.6 4.7; do
             for host in mac-arm64 linux-x64 windows-x64; do
-              test -f "build/release/gdpp-$RELEASE_VERSION-godot-$godot-$host.zip"
+              test -f "build/release/gdpp-$godot-$host.zip"
             done
           done
           test "$(find build/release -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 12

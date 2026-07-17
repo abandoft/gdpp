@@ -36,7 +36,7 @@ addons/gdpp/sdk/
 ```
 
 正式发布按三个宿主与四个 SDK 版本组成 12 个 ZIP，命名为
-`gdpp-<GDPP版本>-godot-<Godot版本>-<宿主>.zip`，宿主固定为 `mac-arm64`、`linux-x64`、
+`gdpp-<Godot版本>-<宿主>.zip`，宿主固定为 `mac-arm64`、`linux-x64`、
 `windows-x64`。构建时通过 `-DGDPP_PACKAGE_GODOT_VERSIONS=4.5` 只生成一个宿主 SDK；compiler
 插件仍固定使用 Godot 4.4 ABI 和同一套最新版 GDScript 前端，内置的 4.4～4.7 目标 API 能力表
 不会因此裁剪。Android target pack 随三个宿主包交付，iOS target pack 只随 macOS 包交付；

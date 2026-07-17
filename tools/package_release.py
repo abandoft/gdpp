@@ -245,7 +245,7 @@ def copy_path(source: Path, destination: Path) -> None:
 def stage_package(
     addon: Path, output: Path, host_name: str, host: HostContract, godot_version: str, version: str
 ) -> tuple[Path, str]:
-    package_name = f"gdpp-{version}-godot-{godot_version}-{host_name}"
+    package_name = f"gdpp-{godot_version}-{host_name}"
     stage_root = output / ".staging" / package_name
     if stage_root.exists():
         shutil.rmtree(stage_root)

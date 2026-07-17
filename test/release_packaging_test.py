@@ -144,7 +144,7 @@ class ReleasePackagingTest(unittest.TestCase):
                     archives.add(archive.name)
                     self.assertEqual(
                         archive.name,
-                        f"gdpp-1.0.0-godot-{godot_version}-{host_name}.zip",
+                        f"gdpp-{godot_version}-{host_name}.zip",
                     )
                     self.assertTrue(
                         any(
