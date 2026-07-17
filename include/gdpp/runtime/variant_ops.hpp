@@ -1,0 +1,183 @@
+#pragma once
+
+#include <godot_cpp/classes/class_db_singleton.hpp>
+#include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/callable.hpp>
+#include <godot_cpp/variant/signal.hpp>
+#include <godot_cpp/variant/string.hpp>
+#include <godot_cpp/variant/string_name.hpp>
+#include <godot_cpp/variant/variant.hpp>
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <type_traits>
+#include <utility>
+
+namespace godot {
+class Object;
+}
+
+namespace gdpp::runtime {
+
+[[nodiscard]] godot::Variant binary(godot::Variant::Operator operation, const godot::Variant& left,
+                                    const godot::Variant& right);
+[[nodiscard]] godot::Variant unary(godot::Variant::Operator operation,
+                                   const godot::Variant& operand);
+[[nodiscard]] bool is_instance_valid(const godot::Variant& value) noexcept;
+[[nodiscard]] godot::Array make_range(std::int64_t stop);
+[[nodiscard]] godot::Array make_range(std::int64_t start, std::int64_t stop);
+[[nodiscard]] godot::Array make_range(std::int64_t start, std::int64_t stop, std::int64_t step);
+[[nodiscard]] std::int64_t length(const godot::Variant& value);
+[[nodiscard]] godot::Variant load_resource(const godot::String& path);
+[[nodiscard]] bool is_editor_hint() noexcept;
+void register_autoload(const godot::StringName& name, godot::Object* instance);
+[[nodiscard]] godot::Object* find_autoload(const godot::StringName& name);
+[[nodiscard]] godot::Object* find_engine_singleton(const godot::StringName& name);
+[[nodiscard]] godot::Variant script_identity(godot::Object* object);
+[[nodiscard]] godot::Variant instantiate_external_class(const godot::StringName& name);
+
+template <typename... Arguments>
+[[nodiscard]] godot::Variant call_external_static(const godot::StringName& class_name,
+                                                  const godot::StringName& method,
+                                                  Arguments&&... arguments) {
+    auto* class_db = godot::ClassDBSingleton::get_singleton();
+    if (!class_db || !class_db->class_exists(class_name) ||
+        !class_db->class_has_method(class_name, method)) {
+        return {};
+    }
+    return class_db->class_call_static(class_name, method, std::forward<Arguments>(arguments)...);
+}
+
+[[nodiscard]] bool is_external_instance(const godot::Variant& value,
+                                        const godot::StringName& class_name);
+[[nodiscard]] godot::Callable external_callable(const godot::Variant& value,
+                                                const godot::StringName& method);
+[[nodiscard]] godot::Signal external_signal(const godot::Variant& value,
+                                            const godot::StringName& signal);
+
+using AwaitContinuation = std::function<void(const godot::Array&)>;
+[[nodiscard]] bool await_signal(const godot::Variant& signal, godot::Object* owner,
+                                AwaitContinuation continuation);
+[[nodiscard]] godot::Variant await_result(const godot::Array& arguments);
+
+// Native method bindings cannot represent a GDScript default expression that depends on
+// the receiving instance.  A private marker preserves the distinction between an omitted
+// argument and an explicitly supplied null value until the generated method body evaluates
+// the original expression.
+[[nodiscard]] godot::Variant default_argument();
+[[nodiscard]] bool is_default_argument(const godot::Variant& value);
+
+using CallableContinuation = std::function<godot::Variant(const godot::Array&)>;
+[[nodiscard]] godot::Callable make_callable(godot::Object* owner, std::size_t required_arguments,
+                                            std::size_t maximum_arguments,
+                                            CallableContinuation continuation);
+
+// Local lambdas remain ordinary Godot Callables when they escape, but a call made while the
+// generated C++ retains the concrete adapter type can invoke the closure directly. This removes
+// CallableCustom dispatch and heap-backed argument packing from typed hot paths without changing
+// first-class Callable behavior.
+template <std::size_t Size> class LocalCallableArguments final {
+  public:
+    explicit LocalCallableArguments(std::array<godot::Variant, Size> values)
+        : values_(std::move(values)) {}
+
+    [[nodiscard]] std::int64_t size() const noexcept { return static_cast<std::int64_t>(Size); }
+    [[nodiscard]] const godot::Variant& operator[](std::size_t index) const noexcept {
+        return values_[index];
+    }
+
+  private:
+    std::array<godot::Variant, Size> values_;
+};
+
+template <typename Callback> class LocalCallable final : public godot::Callable {
+  public:
+    LocalCallable(godot::Object* owner, std::size_t required_arguments,
+                  std::size_t maximum_arguments, Callback callback)
+        : godot::Callable(make_callable(owner, required_arguments, maximum_arguments,
+                                        [bridge = callback](const godot::Array& arguments) mutable {
+                                            return bridge(arguments);
+                                        })),
+          callback_(std::move(callback)) {}
+
+    LocalCallable(const LocalCallable& other)
+        : godot::Callable(other), callback_(other.callback_), direct_(other.direct_) {}
+    LocalCallable(LocalCallable&& other) noexcept
+        : godot::Callable(std::move(other)), callback_(std::move(other.callback_)),
+          direct_(other.direct_) {}
+
+    LocalCallable& operator=(const LocalCallable& other) {
+        godot::Callable::operator=(other);
+        // C++17 closure types are not generally assignable. The copied Godot Callable already
+        // owns the correct continuation, so assigned adapters conservatively use that ABI path.
+        direct_ = false;
+        return *this;
+    }
+    LocalCallable& operator=(LocalCallable&& other) noexcept {
+        godot::Callable::operator=(std::move(other));
+        direct_ = false;
+        return *this;
+    }
+    LocalCallable& operator=(const godot::Callable& other) {
+        godot::Callable::operator=(other);
+        direct_ = false;
+        return *this;
+    }
+    LocalCallable& operator=(godot::Callable&& other) noexcept {
+        godot::Callable::operator=(std::move(other));
+        direct_ = false;
+        return *this;
+    }
+
+    template <typename... Arguments>
+    [[nodiscard]] godot::Variant call(const Arguments&... arguments) const {
+        if (!direct_)
+            return godot::Callable::call(arguments...);
+        LocalCallableArguments<sizeof...(Arguments)> values(
+            std::array<godot::Variant, sizeof...(Arguments)>{godot::Variant(arguments)...});
+        return callback_(values);
+    }
+
+  private:
+    mutable Callback callback_;
+    bool direct_{true};
+};
+
+template <typename Callback>
+[[nodiscard]] auto make_local_callable(godot::Object* owner, std::size_t required_arguments,
+                                       std::size_t maximum_arguments, Callback&& callback) {
+    using StoredCallback = std::decay_t<Callback>;
+    return LocalCallable<StoredCallback>(owner, required_arguments, maximum_arguments,
+                                         std::forward<Callback>(callback));
+}
+
+[[nodiscard]] godot::Variant call_dynamic_impl(godot::Variant& target,
+                                               const godot::StringName& method,
+                                               const godot::Variant** arguments,
+                                               std::size_t argument_count);
+
+template <typename... Arguments>
+[[nodiscard]] godot::Variant call_dynamic(godot::Variant& target, const godot::StringName& method,
+                                          Arguments&&... arguments) {
+    std::array<godot::Variant, sizeof...(Arguments)> values{
+        godot::Variant(std::forward<Arguments>(arguments))...};
+    std::array<const godot::Variant*, sizeof...(Arguments)> pointers{};
+    for (std::size_t index = 0; index < values.size(); ++index)
+        pointers[index] = &values[index];
+    return call_dynamic_impl(target, method, pointers.data(), pointers.size());
+}
+
+[[nodiscard]] godot::Variant get_named(const godot::Variant& target, const godot::StringName& name);
+void set_named(godot::Variant& target, const godot::StringName& name, const godot::Variant& value);
+
+[[nodiscard]] godot::Variant get_key(const godot::Variant& target, const godot::Variant& key);
+void set_key(godot::Variant& target, const godot::Variant& key, const godot::Variant& value);
+
+[[nodiscard]] bool iter_init(const godot::Variant& iterable, godot::Variant& iterator);
+[[nodiscard]] bool iter_next(const godot::Variant& iterable, godot::Variant& iterator);
+[[nodiscard]] godot::Variant iter_get(const godot::Variant& iterable,
+                                      const godot::Variant& iterator);
+
+} // namespace gdpp::runtime
