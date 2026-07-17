@@ -5,14 +5,15 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Create the GitHub Release after all package checks pass
+        description: Create the GitHub Release after all 12 package checks pass
         required: true
         type: boolean
         default: false
-      release_tag:
-        description: Existing or new v-prefixed tag used only when publish is enabled
-        required: false
+      release_version:
+        description: Release version without a v prefix (for example, 1.0.0)
+        required: true
         type: string
+        default: 1.0.0
 
 permissions:
   contents: read
@@ -21,220 +22,313 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-jobs:
-  binaries:
-    name: Package / ${{ matrix.artifact }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            artifact: linux-x86_64
-          - os: macos-15
-            artifact: macos-universal
-          - os: windows-2025
-            artifact: windows-x86_64
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: recursive
-      - if: runner.os == 'macOS'
-        run: cmake --preset release '-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64'
-      - if: runner.os != 'macOS'
-        run: cmake --preset release
-      - run: cmake --build --preset release --parallel
-      - run: ctest --preset release
-      - name: Validate macOS Universal 2 contract
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          for binary in \
-            example/addons/gdpp/binary/libgdpp_compiler.macos.universal.dylib \
-            example/addons/gdpp/binary/libgdpp_fallback.macos.universal.dylib; do
-            architectures="$(lipo -archs "$binary")"
-            grep -qw arm64 <<<"$architectures"
-            grep -qw x86_64 <<<"$architectures"
-          done
-          for architecture in arm64 x86_64; do
-            compiler=example/addons/gdpp/binary/libgdpp_compiler.macos.universal.dylib
-            fallback=example/addons/gdpp/binary/libgdpp_fallback.macos.universal.dylib
-            test "$(nm -arch "$architecture" -gU "$compiler" | awk 'NF {print $NF}' | wc -l)" -eq 1
-            nm -arch "$architecture" -gU "$compiler" | awk 'NF {print $NF}' | \
-              grep -qx _gdpp_library_init
-            test "$(nm -arch "$architecture" -gU "$fallback" | awk 'NF {print $NF}' | wc -l)" -eq 1
-            nm -arch "$architecture" -gU "$fallback" | awk 'NF {print $NF}' | \
-              grep -qx _gdpp_export_fallback_library_init
-          done
-          for descriptor in example/addons/gdpp/gdpp.gdextension; do
-            if grep -E '^[^#]*macos\.[^=]*universal[^=]*=' "$descriptor"; then
-              echo "Descriptor uses invalid universal runtime feature: $descriptor"
-              exit 1
-            fi
-          done
-      - name: Remove non-universal macOS variants
-        if: runner.os == 'macOS'
-        run: >-
-          cmake -E rm -f
-          example/addons/gdpp/binary/libgdpp_compiler.macos.arm64.dylib
-          example/addons/gdpp/binary/libgdpp_compiler.macos.x86_64.dylib
-          example/addons/gdpp/binary/libgdpp_fallback.macos.arm64.dylib
-          example/addons/gdpp/binary/libgdpp_fallback.macos.x86_64.dylib
-      - name: Remove example project native products
-        run: >-
-          cmake
-          -DGDPP_ADDON_DIRECTORY=${{ github.workspace }}/example/addons/gdpp
-          -P cmake/CleanAddonBuild.cmake
-      - name: Validate compiler-only package
-        shell: bash
-        run: |
-          package="example/addons/gdpp"
-          test -f "$package/sdk/4.4/sdk.manifest"
-          test -f "$package/sdk/4.5/sdk.manifest"
-          test -f "$package/sdk/4.6/sdk.manifest"
-          test -f "$package/sdk/4.7/sdk.manifest"
-          test -n "$(find "$package/sdk/4.4/lib" -type f -name '*template_release*' -print -quit)"
-          test -n "$(find "$package/sdk/4.5/lib" -type f -name '*template_release*' -print -quit)"
-          test -n "$(find "$package/sdk/4.6/lib" -type f -name '*template_release*' -print -quit)"
-          test -n "$(find "$package/sdk/4.7/lib" -type f -name '*template_release*' -print -quit)"
-          test -n "$(find "$package/sdk/4.4/lib" -type f -name '*template_debug*' -print -quit)"
-          test -n "$(find "$package/sdk/4.5/lib" -type f -name '*template_debug*' -print -quit)"
-          test -n "$(find "$package/sdk/4.6/lib" -type f -name '*template_debug*' -print -quit)"
-          test -n "$(find "$package/sdk/4.7/lib" -type f -name '*template_debug*' -print -quit)"
-          test -f "$package/THIRD_PARTY_NOTICES.md"
-          test ! -e "$package/build"
-          if test -n "$(find "$package" \( -name '._*' -o -name '.DS_Store' -o \
-              -name '__MACOSX' \) -print -quit)"; then
-            echo "Package contains cross-platform filesystem metadata that Godot may parse as resources"
-            exit 1
-          fi
-          if test -n "$(find "$package" -type f \( -name '*.py' -o \
-              -name 'CMakeLists.txt' \) -print -quit)" || \
-             test -n "$(find "$package/binary" -type f -name 'libgdpp_project*' -print -quit)"; then
-            echo "Package contains a forbidden user-side build dependency or runtime compiler binary"
-            exit 1
-          fi
-      - uses: actions/upload-artifact@v7
-        with:
-          name: gdpp-${{ matrix.artifact }}
-          path: example/addons/gdpp
-          if-no-files-found: error
+env:
+  GDPP_COMPILER_GODOT_API: 4.4
 
-  android-target-packs:
-    name: Package / Android arm64 / Godot ${{ matrix.godot }}
+jobs:
+  host-components:
+    name: Host / ${{ matrix.host }} / Godot ${{ matrix.godot }} SDK
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         godot: [4.4, 4.5, 4.6, 4.7]
+        host: [mac-arm64, linux-x64, windows-x64]
+        include:
+          - host: mac-arm64
+            os: macos-15
+            sdk_platform: macos
+            sdk_arch: arm64
+            platform_minimum: macOS_10.15
+          - host: linux-x64
+            os: ubuntu-22.04
+            sdk_platform: linux
+            sdk_arch: x86_64
+            platform_minimum: Ubuntu_22.04
+          - host: windows-x64
+            os: windows-2025
+            sdk_platform: windows
+            sdk_arch: x86_64
+            platform_minimum: Windows_10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Configure one-version commercial host component
+        shell: bash
+        run: |
+          set -euo pipefail
+          arguments=(
+            --preset release
+            "-DGDPP_GODOT_API_VERSION=$GDPP_COMPILER_GODOT_API"
+            "-DGDPP_PACKAGE_GODOT_VERSIONS=${{ matrix.godot }}"
+          )
+          if [[ "${{ matrix.host }}" == mac-arm64 ]]; then
+            test "$(uname -m)" = arm64
+            arguments+=("-DCMAKE_OSX_ARCHITECTURES=arm64")
+          fi
+          cmake "${arguments[@]}"
+      - name: Build compiler and selected host SDK
+        run: cmake --build --preset release --parallel
+      - name: Run release tests
+        run: ctest --preset release
+      - name: Validate host SDK and compiler ABI contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=example/addons/gdpp
+          sdk="$package/sdk/${{ matrix.godot }}"
+          grep -q '^api ${{ matrix.godot }}$' "$sdk/sdk.manifest"
+          grep -q '^platform ${{ matrix.sdk_platform }}$' "$sdk/sdk.manifest"
+          grep -q '^arch ${{ matrix.sdk_arch }}$' "$sdk/sdk.manifest"
+          grep -q '^platform_minimum ${{ matrix.platform_minimum }}$' "$sdk/sdk.manifest"
+          version="$(sed -n 's/^version="\([^"]*\)"$/\1/p' "$package/plugin.cfg")"
+          test -n "$version"
+          grep -q "^gdpp_version $version$" "$sdk/sdk.manifest"
+          test "$(find "$package/sdk" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
+          test -n "$(find "$sdk/lib" -maxdepth 1 -type f -name '*editor*' -print -quit)"
+          test -n "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_debug*' -print -quit)"
+          test -n "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_release*' -print -quit)"
+          grep -q '^compatibility_minimum = "4.4"$' "$package/gdpp.gdextension"
+      - name: Validate macOS arm64 and 10.15 minimum
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for binary in \
+            example/addons/gdpp/binary/libgdpp_compiler.macos.arm64.dylib \
+            example/addons/gdpp/binary/libgdpp_fallback.macos.arm64.dylib; do
+            test "$(lipo -archs "$binary")" = arm64
+            otool -arch arm64 -l "$binary" | grep -A3 LC_BUILD_VERSION \
+              | grep -q 'minos 10.15'
+          done
+      - name: Validate Ubuntu 22.04 glibc minimum
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(. /etc/os-release && printf '%s' "$VERSION_ID")" = 22.04
+          if find example/addons/gdpp/binary -type f -name '*.so' \
+              -exec readelf --version-info {} + \
+              | grep -Eo 'GLIBC_[0-9]+\.[0-9]+' | sort -Vu \
+              | awk -F_ '$2 > 2.35 { exit 1 }'; then
+            :
+          else
+            echo 'Linux package requires glibc newer than the Ubuntu 22.04 baseline.'
+            exit 1
+          fi
+      - name: Remove project products and stage host component
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake \
+            -DGDPP_ADDON_DIRECTORY="$GITHUB_WORKSPACE/example/addons/gdpp" \
+            -P cmake/CleanAddonBuild.cmake
+          destination=build/host-component/addons/gdpp
+          cmake -E make_directory "$destination"
+          cmake -E copy_directory example/addons/gdpp "$destination"
+          test ! -e "$destination/build"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gdpp-host-${{ matrix.host }}-godot-${{ matrix.godot }}
+          path: build/host-component
+          if-no-files-found: error
+          retention-days: 7
+
+  android-components:
+    name: Target / Android arm64 / Godot ${{ matrix.godot }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        godot: [4.4, 4.5, 4.6, 4.7]
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: android-actions/setup-android@v4
-      - run: sdkmanager "ndk;28.1.13356709"
-      - name: Build Android arm64 target pack
+      - name: Install pinned Android NDK
+        run: sdkmanager "ndk;28.1.13356709"
+      - name: Build Android 9 arm64 target component
         shell: bash
         run: |
+          set -euo pipefail
           cmake --preset dev \
             -DGDPP_ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/28.1.13356709" \
             -DGDPP_ANDROID_SDK_VERSIONS=${{ matrix.godot }} \
             -DGDPP_ANDROID_ARCHITECTURES=arm64
           cmake --build --preset dev --target gdpp_android_sdk --parallel
-          destination="build/android-pack/addons/gdpp/sdk/${{ matrix.godot }}/android"
+          sdk="example/addons/gdpp/sdk/${{ matrix.godot }}/android/arm64"
+          grep -q '^platform_minimum Android_9$' "$sdk/sdk.manifest"
+          grep -q '^android_api_level 28$' "$sdk/sdk.manifest"
+          destination="build/android-component/addons/gdpp/sdk/${{ matrix.godot }}/android"
           mkdir -p "$destination"
-          cp -R "example/addons/gdpp/sdk/${{ matrix.godot }}/android/arm64" "$destination/"
+          cp -R "$sdk" "$destination/"
       - uses: actions/upload-artifact@v7
         with:
-          name: gdpp-android-arm64-godot-${{ matrix.godot }}
-          path: build/android-pack
+          name: gdpp-target-android-arm64-godot-${{ matrix.godot }}
+          path: build/android-component
           if-no-files-found: error
+          retention-days: 7
 
-  web-target-packs:
-    name: Package / Web / Godot ${{ matrix.godot }} / ${{ matrix.variant }}
-    timeout-minutes: 45
+  ios-components:
+    name: Target / iOS arm64 / Godot ${{ matrix.godot }}
+    runs-on: macos-15
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         godot: [4.4, 4.5, 4.6, 4.7]
-        variant: [nothreads, threads]
-        include:
-          - godot: 4.4
-            emscripten: 3.1.62
-          - godot: 4.5
-            emscripten: 4.0.0
-          - godot: 4.6
-            emscripten: 4.0.0
-          - godot: 4.7
-            emscripten: 4.0.0
-    runs-on: ubuntu-24.04
-    env:
-      EM_CACHE: ${{ github.workspace }}/build/emscripten-cache
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: emscripten-core/setup-emsdk@v16
-        with:
-          version: ${{ matrix.emscripten }}
-          actions-cache-folder: build/ci/emsdk-cache
-      - name: Build Web target pack
+      - name: Build iOS 16 device and Universal Simulator target component
         shell: bash
         run: |
-          cmake --preset dev \
-            -DGDPP_WEB_SDK_VERSIONS=${{ matrix.godot }} \
-            -DGDPP_WEB_VARIANTS=${{ matrix.variant }} \
-            -DGDPP_WEB_EMCMAKE="$(command -v emcmake)"
-          cmake --build --preset dev --target gdpp_web_sdk --parallel
-          sdk="example/addons/gdpp/sdk/${{ matrix.godot }}/web/wasm32/${{ matrix.variant }}"
-          grep -q '^api ${{ matrix.godot }}$' "$sdk/sdk.manifest"
-          grep -q '^web_threads ${{ matrix.variant }}$' "$sdk/sdk.manifest"
-          grep -q '^source_paths mapped$' "$sdk/sdk.manifest"
-          if find "$sdk/lib" -maxdepth 1 -type f -name '*.a' -exec strings {} + \
-              | grep -F "$GITHUB_WORKSPACE" >/dev/null; then
-            echo 'Web target pack leaks the checkout path.'
-            exit 1
-          fi
-          test -z "$(find third/godot-cpp -type d -name __pycache__ -print -quit)"
-          test -z "$(find third/godot-cpp -type f -name '*.pyc' -print -quit)"
-          destination="build/web-pack/addons/gdpp/sdk/${{ matrix.godot }}/web/wasm32"
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          cmake --preset dev -DGDPP_IOS_SDK_VERSIONS=${{ matrix.godot }}
+          cmake --build --preset dev --target gdpp_ios_sdk --parallel
+          sdk="example/addons/gdpp/sdk/${{ matrix.godot }}/ios/arm64"
+          grep -q '^platform_minimum iOS_16.0$' "$sdk/sdk.manifest"
+          grep -q '^ios_deployment_target 16.0$' "$sdk/sdk.manifest"
+          grep -q '^ios_slices device-arm64,simulator-arm64,simulator-x86_64$' \
+            "$sdk/sdk.manifest"
+          destination="build/ios-component/addons/gdpp/sdk/${{ matrix.godot }}/ios"
           mkdir -p "$destination"
-          cp -R \
-            "example/addons/gdpp/sdk/${{ matrix.godot }}/web/wasm32/${{ matrix.variant }}" \
-            "$destination/"
+          cp -R "$sdk" "$destination/"
       - uses: actions/upload-artifact@v7
         with:
-          name: gdpp-web-godot-${{ matrix.godot }}-${{ matrix.variant }}
-          path: build/web-pack
+          name: gdpp-target-ios-arm64-godot-${{ matrix.godot }}
+          path: build/ios-component
           if-no-files-found: error
+          retention-days: 7
+
+  packages:
+    name: ZIP / ${{ matrix.host }} / Godot ${{ matrix.godot }}
+    needs: [host-components, android-components, ios-components]
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        godot: [4.4, 4.5, 4.6, 4.7]
+        host: [mac-arm64, linux-x64, windows-x64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: gdpp-host-${{ matrix.host }}-godot-${{ matrix.godot }}
+          path: build/components/host
+      - uses: actions/download-artifact@v8
+        with:
+          name: gdpp-target-android-arm64-godot-${{ matrix.godot }}
+          path: build/components/android
+      - uses: actions/download-artifact@v8
+        if: matrix.host == 'mac-arm64'
+        with:
+          name: gdpp-target-ios-arm64-godot-${{ matrix.godot }}
+          path: build/components/ios
+      - name: Merge exact-version mobile target components
+        shell: bash
+        run: |
+          set -euo pipefail
+          addon=build/components/host/addons/gdpp
+          sdk="$addon/sdk/${{ matrix.godot }}"
+          cp -R \
+            "build/components/android/addons/gdpp/sdk/${{ matrix.godot }}/android" \
+            "$sdk/"
+          if [[ "${{ matrix.host }}" == mac-arm64 ]]; then
+            cp -R \
+              "build/components/ios/addons/gdpp/sdk/${{ matrix.godot }}/ios" \
+              "$sdk/"
+          fi
+      - name: Assemble and audit deterministic plugin ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/package_release.py \
+            --addon build/components/host/addons/gdpp \
+            --output build/release \
+            --host ${{ matrix.host }} \
+            --godot-version ${{ matrix.godot }}
+          version="$(sed -n 's/^version="\([^"]*\)"$/\1/p' \
+            build/components/host/addons/gdpp/plugin.cfg)"
+          archive="build/release/gdpp-$version-godot-${{ matrix.godot }}-${{ matrix.host }}.zip"
+          test -f "$archive"
+          unzip -Z1 "$archive" > build/archive-contents.txt
+          test "$(grep -Ec '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/sdk\.manifest$' \
+            build/archive-contents.txt)" -eq 1
+          grep -q '^addons/gdpp/sdk/${{ matrix.godot }}/android/arm64/sdk.manifest$' \
+            build/archive-contents.txt
+          if [[ "${{ matrix.host }}" == mac-arm64 ]]; then
+            grep -q '^addons/gdpp/sdk/${{ matrix.godot }}/ios/arm64/sdk.manifest$' \
+              build/archive-contents.txt
+          elif grep -q '/ios/' build/archive-contents.txt; then
+            echo 'A non-macOS package contains the iOS target component.'
+            exit 1
+          fi
+          if grep -Eq '/web/|/build/|gdpp_project|\.DS_Store$|/\._' build/archive-contents.txt; then
+            echo 'Release ZIP contains a forbidden target or generated product.'
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gdpp-release-${{ matrix.host }}-godot-${{ matrix.godot }}
+          path: build/release/*.zip
+          if-no-files-found: error
+          retention-days: 14
 
   publish:
     name: Publish / GitHub Release
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      inputs.publish &&
-      startsWith(inputs.release_tag, 'v')
-    needs: [binaries, android-target-packs, web-target-packs]
-    runs-on: ubuntu-24.04
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: packages
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
-          path: build/artifacts
-      - name: Create platform archives
+          pattern: gdpp-release-*
+          path: build/release
+          merge-multiple: true
+      - name: Validate unprefixed version and 12-archive matrix
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
-          for directory in build/artifacts/*; do
-            archive="${directory##*/}.tar.gz"
-            tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
-              -C "$directory" -czf "build/$archive" .
+          set -euo pipefail
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          plugin_version="$(sed -n 's/^version="\([^"]*\)"$/\1/p' \
+            example/addons/gdpp/plugin.cfg)"
+          test "$RELEASE_VERSION" = "$plugin_version"
+          for godot in 4.4 4.5 4.6 4.7; do
+            for host in mac-arm64 linux-x64 windows-x64; do
+              test -f "build/release/gdpp-$RELEASE_VERSION-godot-$godot-$host.zip"
+            done
           done
-          sha256sum build/*.tar.gz > build/SHA256SUMS
+          test "$(find build/release -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 12
+      - name: Read release notes from CHANGELOG.md
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: >-
+          python3 tools/extract_changelog.py
+          --changelog CHANGELOG.md
+          --version "$RELEASE_VERSION"
+          --output build/release-notes.md
+      - name: Create checksums
+        working-directory: build/release
+        run: sha256sum *.zip > SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag }}
+          tag_name: ${{ inputs.release_version }}
+          name: GDPP ${{ inputs.release_version }}
+          body_path: build/release-notes.md
+          generate_release_notes: false
+          fail_on_unmatched_files: true
           files: |
-            build/*.tar.gz
-            build/SHA256SUMS
-          generate_release_notes: true
+            build/release/*.zip
+            build/release/SHA256SUMS

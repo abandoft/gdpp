@@ -5,17 +5,18 @@
 正式用户只需 Godot 与目标平台 C++ 工具链。插件不会调用 CMake、Python、Ninja、SCons，
 也不会在用户机器上生成或编译 godot-cpp。
 
-| 平台 | 必需工具链 |
-|---|---|
-| Windows | MSVC Build Tools（编译器、链接器、Windows SDK） |
-| macOS | Xcode Command Line Tools |
-| Linux | GCC 或与发行包 ABI 匹配的 Clang/GCC 开发环境 |
-| Android arm64-v8a | Android NDK r28+（当前认证 API 24 基线） |
-| iOS | Xcode 与对应 Apple SDK |
-| Web | Emscripten |
+| 平台 | 必需工具链 | 产物最低系统 |
+|---|---|---|
+| Windows x86_64 | MSVC Build Tools（编译器、链接器、Windows SDK） | Windows 10 |
+| macOS arm64 | Xcode Command Line Tools | macOS 10.15 |
+| Linux x86_64 | Ubuntu 22.04 基线兼容的 GCC/Clang 开发环境 | Ubuntu 22.04 / glibc 2.35 |
+| Android arm64-v8a | Android NDK r28+ | Android 9 / API 28 |
+| iOS arm64 | macOS 上的完整 Xcode与对应 GDPP target pack | iOS 16.0 |
+| Web wasm32 | Emscripten | 无固定浏览器版本下限 |
 
-Android arm64-v8a 与 Web wasm32 已接入自动导出；Android x86_64 和 iOS 仍属于平台矩阵
-里程碑。Web 需要匹配 Godot 小版本和线程模式的 target pack，详见 [Web 支持](WEB.md)。
+Android arm64-v8a、iOS 和 Web wasm32 已接入自动导出；Android x86_64 仍属于平台矩阵里程碑。
+Web 需要匹配 Godot 小版本和线程模式的 target pack，详见 [Web 支持](WEB.md)；iOS 需要包含
+真机与 Universal Simulator 依赖的 target pack，详见 [iOS 支持](IOS.md)。
 
 ## 示例与发行项目
 
@@ -24,23 +25,26 @@ Android arm64-v8a 与 Web wasm32 已接入自动导出；Android x86_64 和 iOS 
 目录。`binary/`、`sdk/`、`addons/gdpp/build/` 与 `example/.godot/` 都有精确忽略规则；CMake 对象和
 其他开发中间产物仍统一位于根目录 `build/<preset>`。
 
-发行 SDK 结构：
+单个正式插件包的 SDK 结构如下；`<version>` 只会是 4.4、4.5、4.6、4.7 中的一个：
 
 ```text
 addons/gdpp/sdk/
-├── 4.4/                     # 4.4 原生绑定、运行时与 sdk.manifest
-├── 4.5/                     # 4.5 原生绑定、运行时与 sdk.manifest
-├── 4.6/                     # 4.6 原生绑定、运行时与 sdk.manifest
-└── 4.7/                     # 4.7 原生绑定、运行时与 sdk.manifest
-    └── web/wasm32/          # 单独发布的 nothreads/threads target pack
+├── .gdignore
+└── <version>/               # 当前宿主原生绑定、运行时与 sdk.manifest
+    ├── android/arm64/       # 三个桌面宿主都包含，最低 Android 9 / API 28
+    └── ios/arm64/           # 仅 mac-arm64 包包含，最低 iOS 16
 ```
 
-公共多版本插件默认携带全部四套 SDK。面向已确定 Godot 版本的客户交付时，通过
-`-DGDPP_PACKAGE_GODOT_VERSIONS=4.5` 只打包目标 SDK；编译器使用同一套最新版 GDScript 前端，
-内置的 4.4～4.7 目标 API 能力表不会因此裁剪。该模式避免把客户不会使用的其他版本 godot-cpp
-静态库交付出去，同时仍包含目标版本 development/debug/release 原生构建所需的头文件、运行时
-和 ABI 库。Android/Web 交叉目标按平台、架构及线程模式作为独立 target pack 叠加，不强迫
-桌面用户下载全部目标静态库。
+正式发布按三个宿主与四个 SDK 版本组成 12 个 ZIP，命名为
+`gdpp-<GDPP版本>-godot-<Godot版本>-<宿主>.zip`，宿主固定为 `mac-arm64`、`linux-x64`、
+`windows-x64`。构建时通过 `-DGDPP_PACKAGE_GODOT_VERSIONS=4.5` 只生成一个宿主 SDK；compiler
+插件仍固定使用 Godot 4.4 ABI 和同一套最新版 GDScript 前端，内置的 4.4～4.7 目标 API 能力表
+不会因此裁剪。Android target pack 随三个宿主包交付，iOS target pack 只随 macOS 包交付；
+Web 保持独立可选 target pack，不计入这 12 个 ZIP。
+
+每个 ZIP 内的 `PACKAGE_MANIFEST.txt` 记录 GDPP 版本、compiler API、目标 Godot API、宿主、
+最低系统和可导出目标。打包器会核对三套 SDK 的 runtime ABI/源码摘要，并失败关闭地拒绝错误
+版本、错误平台、缺少移动 target pack 或最低版本不一致的组合。
 
 SDK profile 不沿用构建 GDPP 编译器插件时的优化级别。`debug` 静态库始终以 Debug 构建，
 `release` 静态库始终以 Release 构建；因此开发者使用 Debug compiler 插件执行 Release 导出时，
@@ -245,4 +249,7 @@ Godot 4.5 的场景导出缓存目录没有正确使用 scene customizer configu
   AAB/ABI split 与商店签名认证。
 - Web 已完成 Godot 4.5 API 下 `threads`/`nothreads` 的真实 Emscripten 编译链接、dylink/入口、
   shared-memory 差分和路径泄漏审计；官方模板导出及 Chromium 门禁已进入 CI，Safari、Firefox、
-  移动浏览器和真实 CDN 尚未认证。iOS 仍属于平台矩阵。
+  移动浏览器和真实 CDN 尚未认证。
+- iOS 16+ 已实现 device arm64、Simulator arm64/x86_64、动态 XCFramework 和事务式提交；独立
+  CI 负责四个 Godot 目标包及 Godot 4.6.2 无源码 Xcode 工程/无签名 Simulator 构建。真机、
+  Apple 签名、TestFlight 和 App Store 仍必须在客户发布环境认证。
