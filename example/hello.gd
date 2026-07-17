@@ -121,9 +121,9 @@ func _on_ready() -> void:
 func _publish_web_smoke_status(status: String) -> void:
     if not OS.has_feature("web"):
         return
-    # CI reads this deterministic DOM oracle with Chrome --dump-dom. Browser
-    # console forwarding differs between Chrome versions and must not decide
-    # whether a commercial export is accepted.
+    # CI reads this deterministic DOM oracle through a persistent browser session. Browser
+    # console forwarding differs between Chrome versions and must not decide whether a
+    # commercial export is accepted.
     JavaScriptBridge.eval(
         "document.documentElement.dataset.gdppStatus = '%s';" % status
     )

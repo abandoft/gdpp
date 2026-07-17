@@ -200,13 +200,11 @@ jobs:
           done
           grep -qi '^Cross-Origin-Opener-Policy: same-origin' "$root/headers.txt"
           grep -qi '^Cross-Origin-Embedder-Policy: require-corp' "$root/headers.txt"
-          timeout 150s google-chrome --headless=new --no-sandbox \
-            --use-gl=angle --use-angle=swiftshader-webgl \
-            --enable-webgl --enable-unsafe-swiftshader \
-            --autoplay-policy=no-user-gesture-required \
-            --enable-logging=stderr --v=0 --virtual-time-budget=120000 --dump-dom \
-            "http://127.0.0.1:${{ matrix.port }}/GDPPExample.html" \
-            > "$root/browser-dom.txt" 2> "$root/browser.log"
+          python3 tools/run_web_browser_smoke.py \
+            --url "http://127.0.0.1:${{ matrix.port }}/GDPPExample.html" \
+            --dom-output "$root/browser-dom.txt" \
+            --log-output "$root/browser.log" \
+            --timeout 150
           if ! grep -q 'data-gdpp-status="ok"' "$root/browser-dom.txt"; then
             echo 'Web runtime did not publish its successful DOM oracle.'
             tail -80 "$root/browser.log"
