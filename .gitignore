@@ -15,5 +15,6 @@
 __pycache__/
 *.py[cod]
 .DS_Store
-._*
 /FORME.md
+/MINE.md
+._*
