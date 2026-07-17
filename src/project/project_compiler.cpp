@@ -1,0 +1,2175 @@
+#include "gdpp/project_compiler.hpp"
+
+#include "gdpp/constant_evaluator.hpp"
+#include "gdpp/extension_bridge.hpp"
+#include "gdpp/godot_api.hpp"
+#include "gdpp/lexer.hpp"
+#include "gdpp/native_builder.hpp"
+#include "gdpp/parser.hpp"
+#include "gdpp/path_utf8.hpp"
+#include "gdpp/semantic.hpp"
+#include "gdpp/sha256.hpp"
+#include "gdpp/source.hpp"
+#include "gdpp/version.hpp"
+
+#include "project_file_selector.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <fstream>
+#include <iomanip>
+#include <iterator>
+#include <limits>
+#include <map>
+#include <optional>
+#include <set>
+#include <sstream>
+#include <string_view>
+#include <system_error>
+#include <unordered_map>
+#include <utility>
+
+namespace gdpp {
+namespace {
+
+struct ManifestEntry {
+    std::string implementation_hash;
+    std::string public_abi_hash;
+    std::string class_name;
+    std::string header;
+    std::string source;
+    std::vector<std::string> dependencies;
+};
+
+using Manifest = std::map<std::string, ManifestEntry>;
+
+struct EmbeddedScriptSource {
+    std::string id;
+    std::string source;
+};
+
+struct EmbeddedScriptScan {
+    std::vector<EmbeddedScriptSource> scripts;
+    std::vector<std::string> unresolved_ids;
+};
+
+std::optional<std::string> read_file(const std::filesystem::path& path) {
+    std::ifstream input{path, std::ios::binary};
+    if (!input)
+        return std::nullopt;
+    return std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+}
+
+std::optional<std::string> quoted_attribute(std::string_view line, std::string_view attribute) {
+    const auto key = std::string{attribute} + "=\"";
+    std::size_t search_from = 0;
+    while (true) {
+        const auto begin = line.find(key, search_from);
+        if (begin == std::string_view::npos)
+            return std::nullopt;
+        const bool complete_name = begin == 0 ||
+                                   std::isspace(static_cast<unsigned char>(line[begin - 1])) != 0 ||
+                                   line[begin - 1] == '[';
+        if (complete_name) {
+            const auto value_begin = begin + key.size();
+            const auto end = line.find('"', value_begin);
+            if (end == std::string_view::npos)
+                return std::nullopt;
+            return std::string{line.substr(value_begin, end - value_begin)};
+        }
+        search_from = begin + 1;
+    }
+}
+
+std::optional<std::string> text_resource_uid(std::string_view source) {
+    const auto line_end = source.find_first_of("\r\n");
+    const auto first_line = source.substr(0, line_end);
+    auto uid = quoted_attribute(first_line, "uid");
+    if (!uid || uid->rfind("uid://", 0) != 0)
+        return std::nullopt;
+    return uid;
+}
+
+std::optional<std::string> uid_sidecar_value(std::string_view source) {
+    const auto first = source.find_first_not_of(" \t\r\n");
+    if (first == std::string_view::npos)
+        return std::nullopt;
+    const auto last = source.find_last_not_of(" \t\r\n");
+    std::string uid{source.substr(first, last - first + 1)};
+    if (uid.rfind("uid://", 0) != 0)
+        return std::nullopt;
+    return uid;
+}
+
+std::optional<std::string> imported_resource_uid(std::string_view source) {
+    std::size_t offset = 0;
+    while (offset < source.size()) {
+        const auto line_end = source.find_first_of("\r\n", offset);
+        auto line =
+            source.substr(offset, line_end == std::string_view::npos ? source.size() - offset
+                                                                     : line_end - offset);
+        const auto first = line.find_first_not_of(" \t");
+        if (first != std::string_view::npos) {
+            line.remove_prefix(first);
+            if (line.rfind("uid=", 0) == 0) {
+                auto uid = quoted_attribute(line, "uid");
+                if (uid && uid->rfind("uid://", 0) == 0)
+                    return uid;
+            }
+        }
+        if (line_end == std::string_view::npos)
+            break;
+        offset = line_end + 1;
+        if (offset < source.size() && source[line_end] == '\r' && source[offset] == '\n')
+            ++offset;
+    }
+    return std::nullopt;
+}
+
+std::vector<std::pair<std::string, std::string>> text_resource_references(std::string_view source) {
+    std::vector<std::pair<std::string, std::string>> references;
+    std::size_t offset = 0;
+    while (offset < source.size()) {
+        const auto line_end = source.find_first_of("\r\n", offset);
+        auto line =
+            source.substr(offset, line_end == std::string_view::npos ? source.size() - offset
+                                                                     : line_end - offset);
+        const auto first = line.find_first_not_of(" \t");
+        if (first != std::string_view::npos) {
+            line.remove_prefix(first);
+            if (line.rfind("[ext_resource", 0) == 0) {
+                const auto uid = quoted_attribute(line, "uid");
+                const auto path = quoted_attribute(line, "path");
+                if (uid && path && uid->rfind("uid://", 0) == 0 && path->rfind("res://", 0) == 0) {
+                    references.emplace_back(*uid, path->substr(6));
+                }
+            }
+        }
+        if (line_end == std::string_view::npos)
+            break;
+        offset = line_end + 1;
+        if (offset < source.size() && source[line_end] == '\r' && source[offset] == '\n')
+            ++offset;
+    }
+    return references;
+}
+
+std::optional<std::string> godot_string_literal(std::string_view value) {
+    const auto quote = value.find('"');
+    if (quote == std::string_view::npos)
+        return std::nullopt;
+    std::string result;
+    for (std::size_t index = quote + 1; index < value.size(); ++index) {
+        const char character = value[index];
+        if (character == '"')
+            return result;
+        if (character != '\\') {
+            result.push_back(character);
+            continue;
+        }
+        if (++index >= value.size())
+            return std::nullopt;
+        switch (value[index]) {
+        case 'n':
+            result.push_back('\n');
+            break;
+        case 'r':
+            result.push_back('\r');
+            break;
+        case 't':
+            result.push_back('\t');
+            break;
+        case '"':
+            result.push_back('"');
+            break;
+        case '\\':
+            result.push_back('\\');
+            break;
+        default:
+            // Preserve less common Godot escapes for the lexer instead of silently
+            // changing the embedded source text.
+            result.push_back('\\');
+            result.push_back(value[index]);
+            break;
+        }
+    }
+    return std::nullopt;
+}
+
+struct TextResourceSection {
+    std::string_view header;
+    std::string_view body;
+};
+
+std::vector<TextResourceSection> text_resource_sections(std::string_view resource) {
+    std::vector<TextResourceSection> sections;
+    std::size_t section_begin = 0;
+    while (section_begin < resource.size()) {
+        const auto line_end = resource.find('\n', section_begin);
+        const auto header_end = line_end == std::string_view::npos ? resource.size() : line_end;
+        const auto header = resource.substr(section_begin, header_end - section_begin);
+        const auto body_begin = line_end == std::string_view::npos ? resource.size() : line_end + 1;
+        auto section_end = resource.find("\n[", body_begin);
+        if (section_end == std::string_view::npos)
+            section_end = resource.size();
+        if (!header.empty() && header.front() == '[')
+            sections.push_back({header, resource.substr(body_begin, section_end - body_begin)});
+        section_begin = section_end == resource.size() ? resource.size() : section_end + 1;
+    }
+    return sections;
+}
+
+bool section_references_script(const TextResourceSection& section, std::string_view id) {
+    std::istringstream lines{std::string{section.body}};
+    std::string line;
+    const auto reference = "SubResource(\"" + std::string{id} + "\")";
+    while (std::getline(lines, line)) {
+        const auto first = line.find_first_not_of(" \t\r");
+        if (first == std::string::npos)
+            continue;
+        const std::string_view trimmed{line.data() + first, line.size() - first};
+        if (trimmed.rfind("script", 0) == 0 && trimmed.find(reference) != std::string_view::npos)
+            return true;
+    }
+    return false;
+}
+
+std::optional<std::string> section_native_type(const TextResourceSection& section,
+                                               const std::optional<std::string>& root_type) {
+    if (section.header.rfind("[resource", 0) == 0)
+        return root_type;
+    if (section.header.rfind("[node", 0) == 0 || section.header.rfind("[sub_resource", 0) == 0)
+        return quoted_attribute(section.header, "type");
+    return std::nullopt;
+}
+
+EmbeddedScriptScan embedded_gdscript_sources(std::string_view resource) {
+    EmbeddedScriptScan result;
+    const auto sections = text_resource_sections(resource);
+    std::optional<std::string> root_type;
+    if (!sections.empty() && sections.front().header.rfind("[gd_resource", 0) == 0)
+        root_type = quoted_attribute(sections.front().header, "type");
+
+    for (const auto& section : sections) {
+        const auto header = section.header;
+        if (header.rfind("[sub_resource", 0) != 0 ||
+            header.find("type=\"GDScript\"") == std::string_view::npos)
+            continue;
+        const auto id = quoted_attribute(header, "id");
+        if (!id)
+            continue;
+        const auto property = section.body.find("script/source");
+        if (property != std::string_view::npos) {
+            const auto equal =
+                section.body.find('=', property + std::string_view{"script/source"}.size());
+            if (equal != std::string_view::npos) {
+                if (auto source = godot_string_literal(section.body.substr(equal + 1))) {
+                    result.scripts.push_back({*id, std::move(*source)});
+                    continue;
+                }
+            }
+        }
+
+        // Godot can serialize an empty built-in GDScript without script/source. A native
+        // replacement still needs the concrete owner type: using GDScript's implicit RefCounted
+        // base would lose Resource/Node identity during export conversion.
+        std::optional<std::string> owner_type;
+        for (const auto& owner : sections) {
+            if (!section_references_script(owner, *id))
+                continue;
+            const auto candidate = section_native_type(owner, root_type);
+            if (!candidate)
+                continue;
+            if (owner_type && *owner_type != *candidate) {
+                owner_type.reset();
+                break;
+            }
+            owner_type = candidate;
+        }
+        if (owner_type)
+            result.scripts.push_back({*id, "extends " + *owner_type + "\n"});
+        else
+            result.unresolved_ids.push_back(*id);
+    }
+    return result;
+}
+
+std::optional<std::string> scene_root_script(const std::filesystem::path& project_root,
+                                             const std::string& scene_relative) {
+    const auto scene_path = path_from_utf8(scene_relative);
+    if (scene_path.extension() != ".tscn")
+        return std::nullopt;
+    const auto content = read_file(project_root / scene_path);
+    if (!content)
+        return std::nullopt;
+
+    std::unordered_map<std::string, std::string> script_resources;
+    std::istringstream stream{*content};
+    std::string line;
+    bool in_root_node = false;
+    while (std::getline(stream, line)) {
+        const auto first = line.find_first_not_of(" \t\r");
+        if (first == std::string::npos || line[first] == ';' || line[first] == '#')
+            continue;
+        const std::string_view trimmed{line.data() + first, line.size() - first};
+        if (trimmed.rfind("[ext_resource", 0) == 0 &&
+            trimmed.find("type=\"Script\"") != std::string_view::npos) {
+            const auto id = quoted_attribute(trimmed, "id");
+            auto path = quoted_attribute(trimmed, "path");
+            if (!id || !path)
+                continue;
+            constexpr std::string_view resource_prefix{"res://"};
+            if (path->rfind(resource_prefix, 0) == 0)
+                path->erase(0, resource_prefix.size());
+            script_resources.emplace(
+                *id, generic_path_to_utf8(path_from_utf8(*path).lexically_normal()));
+            continue;
+        }
+        if (trimmed.rfind("[node", 0) == 0) {
+            if (in_root_node)
+                break;
+            in_root_node = true;
+            continue;
+        }
+        if (!in_root_node || trimmed.rfind("script", 0) != 0)
+            continue;
+        const auto ext_resource = trimmed.find("ExtResource(\"");
+        if (ext_resource == std::string_view::npos)
+            continue;
+        const auto id_begin = ext_resource + std::string_view{"ExtResource(\""}.size();
+        const auto id_end = trimmed.find('"', id_begin);
+        if (id_end == std::string_view::npos)
+            continue;
+        const auto resource =
+            script_resources.find(std::string{trimmed.substr(id_begin, id_end - id_begin)});
+        if (resource != script_resources.end())
+            return resource->second;
+    }
+    return std::nullopt;
+}
+
+std::unordered_map<std::string, std::string>
+read_project_autoloads(const std::filesystem::path& project_file) {
+    std::unordered_map<std::string, std::string> result;
+    const auto content = read_file(project_file);
+    if (!content)
+        return result;
+    std::istringstream stream{*content};
+    std::string line;
+    bool in_autoload_section = false;
+    while (std::getline(stream, line)) {
+        const auto first = line.find_first_not_of(" \t\r");
+        if (first == std::string::npos || line[first] == ';' || line[first] == '#')
+            continue;
+        if (line[first] == '[') {
+            in_autoload_section = line.compare(first, 10, "[autoload]") == 0;
+            continue;
+        }
+        if (!in_autoload_section)
+            continue;
+        const auto equal = line.find('=', first);
+        if (equal == std::string::npos)
+            continue;
+        auto name = line.substr(first, equal - first);
+        const auto name_end = name.find_last_not_of(" \t");
+        if (name_end == std::string::npos)
+            continue;
+        name.resize(name_end + 1);
+        const auto quote = line.find('"', equal + 1);
+        const auto last_quote = line.find_last_of('"');
+        if (quote == std::string::npos || last_quote <= quote)
+            continue;
+        auto path = line.substr(quote + 1, last_quote - quote - 1);
+        if (!path.empty() && path.front() == '*')
+            path.erase(path.begin());
+        constexpr std::string_view resource_prefix{"res://"};
+        if (path.rfind(resource_prefix, 0) == 0)
+            path.erase(0, resource_prefix.size());
+        if (path.empty())
+            continue;
+        path = generic_path_to_utf8(path_from_utf8(path).lexically_normal());
+        if (const auto script = scene_root_script(project_file.parent_path(), path))
+            path = *script;
+        if (path_from_utf8(path).extension() == ".gd")
+            result.emplace(std::move(path), std::move(name));
+    }
+    return result;
+}
+
+bool write_file_if_changed(const std::filesystem::path& path, const std::string& content) {
+    if (const auto existing = read_file(path); existing && *existing == content)
+        return true;
+    auto temporary = path;
+    temporary += ".tmp";
+    {
+        std::ofstream output{temporary, std::ios::binary | std::ios::trunc};
+        output.write(content.data(), static_cast<std::streamsize>(content.size()));
+        if (!output.good())
+            return false;
+    }
+    std::error_code error;
+    std::filesystem::rename(temporary, path, error);
+    if (!error)
+        return true;
+    std::filesystem::remove(path, error);
+    error.clear();
+    std::filesystem::rename(temporary, path, error);
+    if (error) {
+        std::filesystem::remove(temporary, error);
+        return false;
+    }
+    return true;
+}
+
+bool inside_root(const std::filesystem::path& root, const std::filesystem::path& candidate) {
+    const auto relative = candidate.lexically_relative(root);
+    return !relative.empty() && *relative.begin() != "..";
+}
+
+std::string to_pascal_case(std::string_view value) {
+    std::string result;
+    bool uppercase = true;
+    for (const char character : value) {
+        const auto byte = static_cast<unsigned char>(character);
+        if (std::isalnum(byte) == 0) {
+            uppercase = true;
+            continue;
+        }
+        result.push_back(uppercase ? static_cast<char>(std::toupper(byte)) : character);
+        uppercase = false;
+    }
+    return result.empty() ? "GeneratedScript" : result;
+}
+
+std::string to_snake_case(std::string_view value) {
+    std::string result;
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        const auto byte = static_cast<unsigned char>(value[index]);
+        if (std::isupper(byte) != 0) {
+            const bool previous_is_lower =
+                index > 0 && std::islower(static_cast<unsigned char>(value[index - 1])) != 0;
+            const bool next_starts_word =
+                index > 0 && index + 1 < value.size() &&
+                std::islower(static_cast<unsigned char>(value[index + 1])) != 0;
+            if (!result.empty() && result.back() != '_' && (previous_is_lower || next_starts_word))
+                result.push_back('_');
+            result.push_back(static_cast<char>(std::tolower(byte)));
+        } else if (std::isalnum(byte) != 0 || value[index] == '_') {
+            result.push_back(value[index]);
+        } else {
+            result.push_back('_');
+        }
+    }
+    return result.empty() ? "generated_script" : result;
+}
+
+std::string native_class_stem(const std::string& relative, const std::string& script_name,
+                              const bool globally_named) {
+    if (globally_named)
+        return script_name;
+    auto path = path_from_utf8(relative);
+    path.replace_extension();
+    // Unnamed scripts are resources, not global types. Deriving their C++ identity from the
+    // complete resource path prevents common file names such as player.gd/opponent.gd from
+    // colliding while the digest makes separator/case normalization collisions deterministic.
+    return "Path_" + to_pascal_case(generic_path_to_utf8(path)) + "_" +
+           sha256(relative).substr(0, 12);
+}
+
+std::string normalized_script_reference(const std::string& owner, const std::string& reference) {
+    constexpr std::string_view resource_prefix{"res://"};
+    std::filesystem::path path;
+    if (reference.rfind(resource_prefix, 0) == 0) {
+        path = path_from_utf8(reference.substr(resource_prefix.size()));
+    } else {
+        path = path_from_utf8(owner).parent_path() / path_from_utf8(reference);
+    }
+    return generic_path_to_utf8(path.lexically_normal());
+}
+
+Type signature_expression_type(const ast::Expression& expression, const GodotApi& api) {
+    const Type dynamic{TypeKind::variant, "Variant"};
+    if (expression.get_if<ast::ArrayExpression>())
+        return {TypeKind::array, "Array"};
+    if (expression.get_if<ast::DictionaryExpression>())
+        return {TypeKind::dictionary, "Dictionary"};
+    if (const auto* literal = expression.get_if<ast::LiteralExpression>()) {
+        switch (literal->kind) {
+        case ast::LiteralKind::nil:
+            return {TypeKind::nil, "null"};
+        case ast::LiteralKind::boolean:
+            return {TypeKind::boolean, "bool"};
+        case ast::LiteralKind::integer:
+            return {TypeKind::integer, "int"};
+        case ast::LiteralKind::floating:
+            return {TypeKind::floating, "float"};
+        case ast::LiteralKind::string:
+            return {TypeKind::string, "String"};
+        case ast::LiteralKind::string_name:
+            return {TypeKind::string_name, "StringName"};
+        case ast::LiteralKind::node_path:
+            return {TypeKind::builtin, "NodePath"};
+        case ast::LiteralKind::none:
+            return dynamic;
+        }
+    }
+    if (const auto* identifier = expression.get_if<ast::IdentifierExpression>();
+        identifier && (identifier->name == "PI" || identifier->name == "TAU" ||
+                       identifier->name == "INF" || identifier->name == "NAN")) {
+        return {TypeKind::floating, "float"};
+    }
+    if (const auto* unary = expression.get_if<ast::UnaryExpression>()) {
+        if (unary->operation == "not")
+            return {TypeKind::boolean, "bool"};
+        if (unary->operation == "~")
+            return {TypeKind::integer, "int"};
+        return signature_expression_type(*unary->operand, api);
+    }
+    if (const auto* binary = expression.get_if<ast::BinaryExpression>()) {
+        const auto left = signature_expression_type(*binary->left, api);
+        const auto right = signature_expression_type(*binary->right, api);
+        static const std::set<std::string_view> comparisons{
+            "==", "!=", "<", ">", "<=", ">=", "in", "not in", "is", "is not", "and", "or"};
+        if (comparisons.find(binary->operation) != comparisons.end())
+            return {TypeKind::boolean, "bool"};
+        static const std::set<std::string_view> integer_operations{"<<", ">>", "&", "|", "^", "%"};
+        if (integer_operations.find(binary->operation) != integer_operations.end() &&
+            left.kind == TypeKind::integer && right.kind == TypeKind::integer) {
+            return {TypeKind::integer, "int"};
+        }
+        if (binary->operation == "+" && left.kind == TypeKind::string && right == left)
+            return left;
+        if (left.is_numeric() && right.is_numeric()) {
+            if (left.kind == TypeKind::floating || right.kind == TypeKind::floating) {
+                return {TypeKind::floating, "float"};
+            }
+            return {TypeKind::integer, "int"};
+        }
+        return dynamic;
+    }
+    if (const auto* conditional = expression.get_if<ast::ConditionalExpression>()) {
+        const auto when_true = signature_expression_type(*conditional->when_true, api);
+        const auto when_false = signature_expression_type(*conditional->when_false, api);
+        if (when_true == when_false)
+            return when_true;
+        if (when_true.is_numeric() && when_false.is_numeric())
+            return {TypeKind::floating, "float"};
+    }
+    if (const auto* call = expression.get_if<ast::CallExpression>()) {
+        const auto* callee = call->callee->get_if<ast::IdentifierExpression>();
+        if (!callee)
+            return dynamic;
+        const auto constructed = type_from_annotation(callee->name);
+        if (constructed.kind == TypeKind::builtin || api.find_class(callee->name)) {
+            return constructed;
+        }
+    }
+    return dynamic;
+}
+
+Type signature_type(const std::optional<std::string>& annotation,
+                    const ast::Expression* initializer, const GodotApi& api) {
+    if (annotation) {
+        if (api.has_global_enum(*annotation))
+            return {TypeKind::enumeration, *annotation};
+        if (const auto separator = annotation->rfind('.');
+            separator != std::string::npos &&
+            api.has_class_enum(annotation->substr(0, separator),
+                               annotation->substr(separator + 1))) {
+            return {TypeKind::enumeration, *annotation};
+        }
+        return type_from_annotation(*annotation);
+    }
+    if (initializer)
+        return signature_expression_type(*initializer, api);
+    return {TypeKind::variant, "Variant"};
+}
+
+ScriptInnerClassSymbol inner_class_symbol(const ast::ClassDeclaration& declaration,
+                                          const GodotApi& api) {
+    ScriptInnerClassSymbol symbol;
+    symbol.name = declaration.name;
+    symbol.godot_base_type = declaration.base_type.value_or("RefCounted");
+    for (const auto& variable : declaration.variables) {
+        symbol.members.push_back(
+            {variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field,
+             variable.name,
+             signature_type(variable.type,
+                            variable.infer_type || variable.is_constant ? variable.initializer.get()
+                                                                        : nullptr,
+                            api),
+             {},
+             0,
+             variable.is_constant || variable.is_static,
+             variable.getter.has_value() || variable.setter.has_value(),
+             false,
+             {},
+             {}});
+    }
+    for (const auto& function : declaration.functions) {
+        ScriptMemberSymbol member;
+        member.kind = ScriptMemberKind::function;
+        member.name = function.name;
+        member.type = function.name == "_init" ? Type{TypeKind::void_type, "void"}
+                                               : signature_type(function.return_type, nullptr, api);
+        member.is_static = function.is_static;
+        member.has_explicit_type = function.name == "_init" || function.return_type.has_value();
+        for (const auto& parameter : function.parameters) {
+            member.parameters.push_back(signature_type(parameter.type, nullptr, api));
+            member.explicit_parameter_types.push_back(parameter.type.has_value());
+            member.default_parameters.push_back(parameter.default_value != nullptr);
+            if (!parameter.default_value)
+                ++member.required_arguments;
+        }
+        symbol.members.push_back(std::move(member));
+    }
+    for (const auto& signal : declaration.signals) {
+        ScriptMemberSymbol member;
+        member.kind = ScriptMemberKind::signal;
+        member.name = signal.name;
+        member.type = {TypeKind::builtin, "Signal"};
+        for (const auto& parameter : signal.parameters) {
+            member.parameters.push_back(signature_type(parameter.type, nullptr, api));
+            ++member.required_arguments;
+        }
+        symbol.members.push_back(std::move(member));
+    }
+    for (const auto& declaration_enum : declaration.enums) {
+        ScriptEnumSymbol enumeration;
+        enumeration.name = declaration_enum.name.value_or("");
+        std::unordered_map<std::string, std::int64_t> previous;
+        std::int64_t next_value = 0;
+        for (const auto& entry : declaration_enum.entries) {
+            const auto value = entry.value ? evaluate_integer_constant(*entry.value, previous)
+                                           : std::optional<std::int64_t>{next_value};
+            const auto resolved = value.value_or(0);
+            previous.emplace(entry.name, resolved);
+            enumeration.entries.push_back({entry.name, resolved});
+            if (!declaration_enum.name) {
+                symbol.members.push_back({ScriptMemberKind::enum_value,
+                                          entry.name,
+                                          {TypeKind::integer, "int"},
+                                          {},
+                                          0,
+                                          true,
+                                          false,
+                                          false,
+                                          {},
+                                          {}});
+            }
+            if (resolved != std::numeric_limits<std::int64_t>::max())
+                next_value = resolved + 1;
+        }
+        if (declaration_enum.name)
+            symbol.enums.push_back(std::move(enumeration));
+    }
+    return symbol;
+}
+
+Manifest read_manifest(const std::filesystem::path& path) {
+    Manifest manifest;
+    std::ifstream input{path};
+    std::string magic;
+    std::string version;
+    std::string compiler_version;
+    std::string codegen_fingerprint;
+    if (!(input >> magic >> version >> compiler_version >> codegen_fingerprint) ||
+        magic != "GDPP_MANIFEST" || version != "3" || compiler_version != GDPP_VERSION_STRING ||
+        codegen_fingerprint != GDPP_CODEGEN_FINGERPRINT) {
+        return manifest;
+    }
+    std::string source_path;
+    ManifestEntry entry;
+    std::size_t dependency_count = 0;
+    while (input >> std::quoted(source_path) >> std::quoted(entry.implementation_hash) >>
+           std::quoted(entry.public_abi_hash) >> std::quoted(entry.class_name) >>
+           std::quoted(entry.header) >> std::quoted(entry.source) >> dependency_count) {
+        entry.dependencies.clear();
+        entry.dependencies.reserve(dependency_count);
+        for (std::size_t index = 0; index < dependency_count; ++index) {
+            std::string dependency;
+            if (!(input >> std::quoted(dependency)))
+                return {};
+            entry.dependencies.push_back(std::move(dependency));
+        }
+        manifest.emplace(source_path, entry);
+    }
+    return manifest;
+}
+
+std::string write_manifest(const Manifest& manifest) {
+    std::ostringstream output;
+    output << "GDPP_MANIFEST 3 " << GDPP_VERSION_STRING << ' ' << GDPP_CODEGEN_FINGERPRINT << '\n';
+    for (const auto& [path, entry] : manifest) {
+        output << std::quoted(path) << ' ' << std::quoted(entry.implementation_hash) << ' '
+               << std::quoted(entry.public_abi_hash) << ' ' << std::quoted(entry.class_name) << ' '
+               << std::quoted(entry.header) << ' ' << std::quoted(entry.source) << ' '
+               << entry.dependencies.size();
+        for (const auto& dependency : entry.dependencies)
+            output << ' ' << std::quoted(dependency);
+        output << '\n';
+    }
+    return output.str();
+}
+
+std::string cmake_path(const std::filesystem::path& path) {
+    const auto value = generic_path_to_utf8(path);
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (const char character : value) {
+        if (character == '"' || character == '\\')
+            escaped.push_back('\\');
+        escaped.push_back(character);
+    }
+    return escaped;
+}
+
+std::optional<std::filesystem::path>
+containing_build_directory(const std::filesystem::path& root,
+                           const std::filesystem::path& relative_output) {
+    auto current = root;
+    for (const auto& component : relative_output) {
+        current /= component;
+        if (component == "build")
+            return current;
+    }
+    return std::nullopt;
+}
+
+std::string generated_cmake(const ProjectCompileOptions& options,
+                            const std::vector<CompiledProjectScript>& scripts,
+                            const std::string& build_id,
+                            const std::filesystem::path& native_library_directory,
+                            const std::vector<ExtensionBridge>& bridges) {
+    std::ostringstream output;
+    output
+        << "cmake_minimum_required(VERSION 3.22)\n"
+        << "project(gdpp_project LANGUAGES CXX)\n\n"
+        << "set(CMAKE_CXX_STANDARD 17)\n"
+        << "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n"
+        << "set(CMAKE_CXX_EXTENSIONS OFF)\n"
+        << "if(MSVC)\n"
+        << "  set(CMAKE_MSVC_RUNTIME_LIBRARY \"MultiThreaded\")\n"
+        << "  set(GDPP_MSVC_COMPILE_JOBS 4 CACHE STRING \"Maximum concurrent GDPP MSVC "
+           "compiles\")\n"
+        << "  if(CMAKE_GENERATOR MATCHES \"Ninja\")\n"
+        << "    set_property(GLOBAL PROPERTY JOB_POOLS "
+           "gdpp_compile_pool=${GDPP_MSVC_COMPILE_JOBS};gdpp_link_pool=1)\n"
+        << "  endif()\n"
+        << "endif()\n"
+        << "set(GDPP_SDK_DIR \"" << cmake_path(options.sdk_root)
+        << "\" CACHE PATH \"GDPP SDK root\" FORCE)\n"
+        << "set(GDPP_GODOT_CPP_DIR \"" << cmake_path(options.godot_cpp_directory)
+        << "\" CACHE PATH \"Optional godot-cpp source fallback\" FORCE)\n"
+        << "set(GDPP_TARGET_GODOT_VERSION \"" << godot_version_name(options.compiler.target_version)
+        << "\")\n\n"
+        << "string(TOLOWER \"${CMAKE_SYSTEM_NAME}\" GDPP_PLATFORM)\n"
+        << "if(GDPP_PLATFORM STREQUAL \"darwin\")\n"
+        << "  set(GDPP_PLATFORM \"macos\")\n"
+        << "elseif(GDPP_PLATFORM STREQUAL \"emscripten\")\n"
+        << "  set(GDPP_PLATFORM \"web\")\n"
+        << "endif()\n"
+        << "string(TOLOWER \"${CMAKE_SYSTEM_PROCESSOR}\" GDPP_ARCH)\n"
+        << "if(GDPP_ARCH MATCHES \"^(aarch64|arm64)$\")\n"
+        << "  set(GDPP_ARCH \"arm64\")\n"
+        << "elseif(GDPP_ARCH MATCHES \"^(amd64|x86_64)$\")\n"
+        << "  set(GDPP_ARCH \"x86_64\")\n"
+        << "endif()\n\n"
+        << "if(NOT EXISTS \"${GDPP_SDK_DIR}/include/gdpp/runtime/variant_ops.hpp\")\n"
+        << "  message(FATAL_ERROR \"Invalid GDPP_SDK_DIR: ${GDPP_SDK_DIR}\")\n"
+        << "endif()\n"
+        << "file(SHA256 \"${GDPP_SDK_DIR}/include/gdpp/runtime/variant_ops.hpp\" "
+           "GDPP_RUNTIME_HEADER_SHA256)\n"
+        << "file(SHA256 \"${GDPP_SDK_DIR}/src/runtime/variant_ops.cpp\" "
+           "GDPP_RUNTIME_SOURCE_SHA256)\n"
+        << "if(NOT GDPP_RUNTIME_HEADER_SHA256 STREQUAL \"" << GDPP_NATIVE_RUNTIME_HEADER_SHA256
+        << "\" OR NOT GDPP_RUNTIME_SOURCE_SHA256 STREQUAL \"" << GDPP_NATIVE_RUNTIME_SOURCE_SHA256
+        << "\")\n"
+        << "  message(FATAL_ERROR \"GDPP SDK runtime contract does not match generated code; "
+           "reinstall the matching SDK\")\n"
+        << "endif()\n"
+        << "set(GDPP_BINDING_EXTENSION \".a\")\n"
+        << "if(GDPP_PLATFORM STREQUAL \"windows\")\n"
+        << "  set(GDPP_BINDING_EXTENSION \".lib\")\n"
+        << "endif()\n"
+        << "file(GLOB GDPP_BINDING_LIBRARIES LIST_DIRECTORIES FALSE\n"
+        << "  \"${GDPP_SDK_DIR}/lib/*editor*${GDPP_ARCH}*${GDPP_BINDING_EXTENSION}\")\n"
+        << "if(GDPP_PLATFORM STREQUAL \"macos\" AND NOT GDPP_BINDING_LIBRARIES)\n"
+        << "  file(GLOB GDPP_BINDING_LIBRARIES LIST_DIRECTORIES FALSE\n"
+        << "    \"${GDPP_SDK_DIR}/lib/*editor*universal*${GDPP_BINDING_EXTENSION}\")\n"
+        << "endif()\n"
+        << "list(LENGTH GDPP_BINDING_LIBRARIES GDPP_BINDING_LIBRARY_COUNT)\n"
+        << "if(GDPP_BINDING_LIBRARY_COUNT EQUAL 1)\n"
+        << "  add_library(gdpp_godot_cpp STATIC IMPORTED GLOBAL)\n"
+        << "  set_target_properties(gdpp_godot_cpp PROPERTIES\n"
+        << "    IMPORTED_LOCATION \"${GDPP_BINDING_LIBRARIES}\"\n"
+        << "    INTERFACE_INCLUDE_DIRECTORIES "
+           "\"${GDPP_SDK_DIR}/godot-cpp/include;${GDPP_SDK_DIR}/godot-cpp/gen/include\"\n"
+        << "    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "
+           "\"${GDPP_SDK_DIR}/godot-cpp/include;${GDPP_SDK_DIR}/godot-cpp/gen/include\"\n"
+        << "  )\n"
+        << "  target_compile_definitions(gdpp_godot_cpp INTERFACE GDEXTENSION THREADS_ENABLED)\n"
+        << "  if(GDPP_PLATFORM STREQUAL \"windows\")\n"
+        << "    target_compile_definitions(gdpp_godot_cpp INTERFACE WINDOWS_ENABLED "
+           "TYPED_METHOD_BIND _HAS_EXCEPTIONS=0 NOMINMAX)\n"
+        << "  elseif(GDPP_PLATFORM STREQUAL \"macos\")\n"
+        << "    target_compile_definitions(gdpp_godot_cpp INTERFACE MACOS_ENABLED UNIX_ENABLED)\n"
+        << "  elseif(GDPP_PLATFORM STREQUAL \"linux\")\n"
+        << "    target_compile_definitions(gdpp_godot_cpp INTERFACE LINUX_ENABLED UNIX_ENABLED)\n"
+        << "  elseif(GDPP_PLATFORM STREQUAL \"android\")\n"
+        << "    target_compile_definitions(gdpp_godot_cpp INTERFACE ANDROID_ENABLED UNIX_ENABLED)\n"
+        << "  endif()\n"
+        << "  set(GDPP_GODOT_CPP_TARGET gdpp_godot_cpp)\n"
+        << "elseif(GDPP_BINDING_LIBRARY_COUNT EQUAL 0 AND "
+           "EXISTS \"${GDPP_GODOT_CPP_DIR}/CMakeLists.txt\")\n"
+        << "  message(STATUS \"GDPP SDK has no precompiled host binding; using source fallback\")\n"
+        << "  set(ENV{PYTHONDONTWRITEBYTECODE} \"1\")\n"
+        << "  set(GODOTCPP_API_VERSION \"${GDPP_TARGET_GODOT_VERSION}\" CACHE STRING \"\" FORCE)\n"
+        << "  set(GODOTCPP_TARGET \"editor\" CACHE STRING \"\" FORCE)\n"
+        << "  set(GODOTCPP_ENABLE_TESTING OFF CACHE BOOL \"\" FORCE)\n"
+        << "  set(GODOTCPP_SYSTEM_HEADERS ON CACHE BOOL \"\" FORCE)\n"
+        << "  add_subdirectory(\"${GDPP_GODOT_CPP_DIR}\" "
+           "\"${CMAKE_CURRENT_BINARY_DIR}/godot-cpp\" EXCLUDE_FROM_ALL)\n"
+        << "  set(GDPP_GODOT_CPP_TARGET godot::cpp)\n"
+        << "else()\n"
+        << "  message(FATAL_ERROR \"Expected zero or one ${GDPP_PLATFORM}/${GDPP_ARCH} editor "
+           "binding in ${GDPP_SDK_DIR}/lib; found: ${GDPP_BINDING_LIBRARIES}\")\n"
+        << "endif()\n\n"
+        << "add_library(gdpp_project SHARED\n"
+        << "  register_types.cpp\n"
+        << "  \"${GDPP_SDK_DIR}/src/runtime/variant_ops.cpp\"\n";
+    for (const auto& script : scripts)
+        output << "  \"${CMAKE_CURRENT_SOURCE_DIR}/generated/" << script.source_file_name << "\"\n";
+    output
+        << ")\n"
+        << "target_include_directories(gdpp_project PRIVATE\n"
+        << "  \"${CMAKE_CURRENT_SOURCE_DIR}/generated\"\n"
+        << "  \"${GDPP_SDK_DIR}/include\"\n"
+        << ")\n"
+        << "target_link_libraries(gdpp_project PRIVATE ${GDPP_GODOT_CPP_TARGET})\n"
+        << "if(GDPP_PLATFORM STREQUAL \"linux\" OR GDPP_PLATFORM STREQUAL \"android\")\n"
+        << "  file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/gdpp.exports.map\"\n"
+        << "    \"{ global: gdpp_project_library_init; local: *; };\\n\")\n"
+        << "  target_link_options(gdpp_project PRIVATE \"LINKER:--exclude-libs,ALL\")\n"
+        << "  target_link_options(gdpp_project PRIVATE\n"
+        << "    \"LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/gdpp.exports.map\")\n"
+        << "elseif(GDPP_PLATFORM STREQUAL \"macos\")\n"
+        << "  file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/gdpp.exports.macos\"\n"
+        << "    \"_gdpp_project_library_init\\n\")\n"
+        << "  target_link_options(gdpp_project PRIVATE\n"
+        << "    \"LINKER:-exported_symbols_list,${CMAKE_CURRENT_BINARY_DIR}/gdpp.exports.macos\")\n"
+        << "endif()\n"
+        << "target_compile_options(gdpp_project PRIVATE\n"
+        << "  $<$<CXX_COMPILER_ID:MSVC>:/utf-8>\n"
+        << "  $<$<CXX_COMPILER_ID:MSVC>:/permissive->\n"
+        << "  $<$<CXX_COMPILER_ID:MSVC>:/Zc:__cplusplus>\n"
+        << "  $<$<CXX_COMPILER_ID:MSVC>:/EHsc>\n"
+        << "  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-fno-exceptions>\n"
+        << ")\n"
+        << "set_target_properties(gdpp_project PROPERTIES\n"
+        << "  POSITION_INDEPENDENT_CODE ON\n"
+        << "  CXX_VISIBILITY_PRESET hidden\n"
+        << "  VISIBILITY_INLINES_HIDDEN YES)\n"
+        << "if(MSVC AND CMAKE_GENERATOR MATCHES \"Ninja\")\n"
+        << "  set_property(TARGET gdpp_project PROPERTY JOB_POOL_COMPILE gdpp_compile_pool)\n"
+        << "  set_property(TARGET gdpp_project PROPERTY JOB_POOL_LINK gdpp_link_pool)\n"
+        << "endif()\n\n";
+    std::size_t bridge_index = 0;
+    for (const auto& bridge : bridges) {
+        if (std::all_of(bridge.classes.begin(), bridge.classes.end(),
+                        [](const ExtensionBridgeClass& type) { return type.runtime_only; })) {
+            continue;
+        }
+        output << "set(GDPP_BRIDGE_TARGET_" << bridge_index << " FALSE)\n";
+        for (const auto& target : bridge.targets) {
+            if (target.profile != "development")
+                continue;
+            output << "if(GDPP_PLATFORM STREQUAL \"" << target.platform
+                   << "\" AND GDPP_ARCH STREQUAL \"" << target.architecture << "\")\n";
+            output << "  set(GDPP_BRIDGE_TARGET_" << bridge_index << " TRUE)\n";
+            if (!target.include_directories.empty()) {
+                output << "  target_include_directories(gdpp_project PRIVATE\n";
+                for (const auto& include : target.include_directories)
+                    output << "    \"" << cmake_path(include) << "\"\n";
+                output << "  )\n";
+            }
+            if (!target.link_libraries.empty()) {
+                output << "  target_link_libraries(gdpp_project PRIVATE\n";
+                for (const auto& library : target.link_libraries)
+                    output << "    \"" << cmake_path(library) << "\"\n";
+                output << "  )\n";
+            }
+            output << "endif()\n";
+        }
+        output << "if(NOT GDPP_BRIDGE_TARGET_" << bridge_index << ")\n"
+               << "  message(FATAL_ERROR \"No development target in third-party bridge: "
+               << cmake_path(bridge.manifest_path) << "\")\n"
+               << "endif()\n";
+        ++bridge_index;
+    }
+    output << "set_target_properties(gdpp_project PROPERTIES\n"
+           << "  OUTPUT_NAME \"gdpp_project.development.${GDPP_PLATFORM}.${GDPP_ARCH}." << build_id
+           << "\"\n"
+           << "  LIBRARY_OUTPUT_DIRECTORY \"" << cmake_path(native_library_directory) << "\"\n"
+           << "  RUNTIME_OUTPUT_DIRECTORY \"" << cmake_path(native_library_directory) << "\"\n"
+           << "  ARCHIVE_OUTPUT_DIRECTORY \"" << cmake_path(native_library_directory) << "\"\n"
+           << ")\n"
+           << "add_custom_command(TARGET gdpp_project POST_BUILD\n"
+           << "  COMMAND \"${CMAKE_COMMAND}\"\n"
+           << "    \"-DGDPP_ARTIFACT_DIRECTORY=$<TARGET_FILE_DIR:gdpp_project>\"\n"
+           << "    \"-DGDPP_CURRENT_ARTIFACT=$<TARGET_FILE_NAME:gdpp_project>\"\n"
+           << "    \"-DGDPP_ARTIFACT_PREFIX=${CMAKE_SHARED_LIBRARY_PREFIX}"
+              "gdpp_project.development.${GDPP_PLATFORM}.${GDPP_ARCH}.\"\n"
+           << "    \"-DGDPP_ARTIFACT_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}\"\n"
+           << "    -P \"${CMAKE_CURRENT_SOURCE_DIR}/prune_stale_development.cmake\"\n"
+           << "  VERBATIM\n"
+           << ")\n";
+    return output.str();
+}
+
+std::string generated_artifact_pruner() {
+    return R"cmake(# Generated by GDPP. Do not edit.
+foreach(GDPP_REQUIRED_VARIABLE IN ITEMS
+        GDPP_ARTIFACT_DIRECTORY GDPP_CURRENT_ARTIFACT GDPP_ARTIFACT_PREFIX GDPP_ARTIFACT_SUFFIX)
+  if(NOT DEFINED ${GDPP_REQUIRED_VARIABLE})
+    message(FATAL_ERROR "Missing ${GDPP_REQUIRED_VARIABLE} for GDPP artifact cleanup")
+  endif()
+endforeach()
+
+file(GLOB GDPP_ARTIFACT_CANDIDATES LIST_DIRECTORIES false
+     "${GDPP_ARTIFACT_DIRECTORY}/${GDPP_ARTIFACT_PREFIX}*${GDPP_ARTIFACT_SUFFIX}")
+string(LENGTH "${GDPP_ARTIFACT_PREFIX}" GDPP_PREFIX_LENGTH)
+string(LENGTH "${GDPP_ARTIFACT_SUFFIX}" GDPP_SUFFIX_LENGTH)
+foreach(GDPP_ARTIFACT IN LISTS GDPP_ARTIFACT_CANDIDATES)
+  get_filename_component(GDPP_FILENAME "${GDPP_ARTIFACT}" NAME)
+  if(GDPP_FILENAME STREQUAL GDPP_CURRENT_ARTIFACT)
+    continue()
+  endif()
+  string(LENGTH "${GDPP_FILENAME}" GDPP_FILENAME_LENGTH)
+  math(EXPR GDPP_BUILD_ID_LENGTH
+       "${GDPP_FILENAME_LENGTH} - ${GDPP_PREFIX_LENGTH} - ${GDPP_SUFFIX_LENGTH}")
+  if(NOT GDPP_BUILD_ID_LENGTH EQUAL 16)
+    continue()
+  endif()
+  string(SUBSTRING "${GDPP_FILENAME}" ${GDPP_PREFIX_LENGTH} 16 GDPP_BUILD_ID)
+  if(NOT GDPP_BUILD_ID MATCHES "^[0-9A-Fa-f]+$")
+    continue()
+  endif()
+  file(REMOVE "${GDPP_ARTIFACT}")
+  if(EXISTS "${GDPP_ARTIFACT}")
+    message(FATAL_ERROR "Cannot remove stale GDPP development library: ${GDPP_ARTIFACT}")
+  endif()
+endforeach()
+)cmake";
+}
+
+std::string generated_registration(const std::vector<CompiledProjectScript>& scripts) {
+    std::ostringstream output;
+    output << "// Generated by GDPP. Do not edit.\n";
+    for (const auto& script : scripts)
+        output << "#include \"" << script.header_file_name << "\"\n";
+    output << "\n#include <gdextension_interface.h>\n"
+           << "#include <godot_cpp/core/class_db.hpp>\n"
+           << "#include <godot_cpp/core/defs.hpp>\n"
+           << "#include <godot_cpp/godot.hpp>\n\n"
+           << "namespace {\n"
+           << "void initialize_gdpp_project(godot::ModuleInitializationLevel level) {\n"
+           << "    if (level != godot::MODULE_INITIALIZATION_LEVEL_SCENE) return;\n";
+    for (const auto& script : scripts) {
+        for (const auto& inner_class_name : script.inner_class_names) {
+            output << "    GDREGISTER_CLASS(" << inner_class_name << ");\n";
+        }
+        output << "    "
+               << (script.is_abstract ? "GDREGISTER_ABSTRACT_CLASS(" : "GDREGISTER_CLASS(")
+               << script.class_name << ");\n";
+    }
+    output << "}\n"
+           << "void uninitialize_gdpp_project(godot::ModuleInitializationLevel level) {\n"
+           << "    if (level != godot::MODULE_INITIALIZATION_LEVEL_SCENE) return;\n";
+    // Generated preload caches and script static fields can own Godot resources
+    // for the lifetime of the project extension. Release them while the
+    // scene-level servers are still alive; C++ static destructors run too late
+    // during shutdown.
+    for (auto script = scripts.rbegin(); script != scripts.rend(); ++script) {
+        output << "    " << script->class_name << "::_gdpp_release_preloaded_resources();\n";
+        for (auto inner = script->inner_class_names.rbegin();
+             inner != script->inner_class_names.rend(); ++inner) {
+            output << "    " << *inner << "::_gdpp_release_preloaded_resources();\n";
+        }
+    }
+    output << "}\n"
+           << "} // namespace\n\n"
+           << "extern \"C\" GDExtensionBool GDE_EXPORT\n"
+           << "gdpp_project_library_init(GDExtensionInterfaceGetProcAddress address,\n"
+           << "                            GDExtensionClassLibraryPtr library,\n"
+           << "                            GDExtensionInitialization* initialization) {\n"
+           << "    godot::GDExtensionBinding::InitObject init{address, library, initialization};\n"
+           << "    init.register_initializer(initialize_gdpp_project);\n"
+           << "    init.register_terminator(uninitialize_gdpp_project);\n"
+           << "    init.set_minimum_library_initialization_level(\n"
+           << "        godot::MODULE_INITIALIZATION_LEVEL_SCENE);\n"
+           << "    return init.init();\n"
+           << "}\n";
+    return output.str();
+}
+
+std::string generated_descriptor(const std::filesystem::path& project_relative_library_directory,
+                                 const std::string& build_id, GodotVersion target_version) {
+    const auto root = "res://" + generic_path_to_utf8(project_relative_library_directory) + "/";
+    const auto path = [&](NativePlatform platform, std::string_view architecture) {
+        return root + native_library_name(NativeBuildProfile::development, platform, architecture,
+                                          build_id);
+    };
+    std::ostringstream output;
+    output << "[configuration]\n\n"
+           << "entry_symbol = \"gdpp_project_library_init\"\n"
+           << "compatibility_minimum = \"" << godot_version_name(target_version) << "\"\n"
+           << "reloadable = true\n\n"
+           << "[libraries]\n\n"
+           << "macos.editor.arm64 = \"" << path(NativePlatform::macos, "arm64") << "\"\n"
+           << "macos.editor.x86_64 = \"" << path(NativePlatform::macos, "x86_64") << "\"\n"
+           << "macos.editor.universal = \"" << path(NativePlatform::macos, "universal") << "\"\n"
+           << "macos.editor.universal.arm64 = \"" << path(NativePlatform::macos, "universal")
+           << "\"\n"
+           << "macos.editor.universal.x86_64 = \"" << path(NativePlatform::macos, "universal")
+           << "\"\n"
+           << "linux.editor.x86_64 = \"" << path(NativePlatform::linux, "x86_64") << "\"\n"
+           << "linux.editor.arm64 = \"" << path(NativePlatform::linux, "arm64") << "\"\n"
+           << "windows.editor.x86_64 = \"" << path(NativePlatform::windows, "x86_64") << "\"\n"
+           << "windows.editor.arm64 = \"" << path(NativePlatform::windows, "arm64") << "\"\n";
+    return output.str();
+}
+
+Diagnostic project_error(std::string code, std::string message) {
+    return {DiagnosticSeverity::error, std::move(code), std::move(message), {}};
+}
+
+bool has_project_errors(const std::vector<ProjectDiagnostic>& diagnostics) {
+    return std::any_of(diagnostics.begin(), diagnostics.end(), [](const auto& diagnostic) {
+        return diagnostic.diagnostic.severity == DiagnosticSeverity::error;
+    });
+}
+
+} // namespace
+
+ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& options) const {
+    ProjectCompileResult result;
+    std::error_code error;
+    const auto root = std::filesystem::absolute(options.project_root, error).lexically_normal();
+    if (error || !std::filesystem::is_directory(root)) {
+        result.diagnostics.push_back(
+            {options.project_root, project_error("PRJ0001", "project root is not a directory")});
+        return result;
+    }
+    const auto output =
+        std::filesystem::absolute(options.output_directory, error).lexically_normal();
+    if (error || !inside_root(root, output)) {
+        result.diagnostics.push_back(
+            {options.output_directory,
+             project_error("PRJ0002", "project output must be inside the project root")});
+        return result;
+    }
+    const auto native_library_directory =
+        options.native_library_directory.empty()
+            ? (root / "addons/gdpp/binary")
+            : std::filesystem::absolute(options.native_library_directory, error).lexically_normal();
+    if (error || !inside_root(root, native_library_directory)) {
+        result.diagnostics.push_back(
+            {options.native_library_directory,
+             project_error("PRJ0010", "native library output must be inside the project root")});
+        return result;
+    }
+
+    const auto generated = output / "generated";
+    const auto manifest_path = output / "manifest.txt";
+    const auto old_manifest = read_manifest(manifest_path);
+    const auto project_autoloads = read_project_autoloads(root / "project.godot");
+    std::vector<std::filesystem::path> source_paths;
+    std::vector<std::filesystem::path> text_resource_paths;
+    std::vector<std::filesystem::path> uid_sidecar_paths;
+    std::vector<std::filesystem::path> import_sidecar_paths;
+    std::vector<std::filesystem::path> external_extension_descriptors;
+    std::vector<std::filesystem::path> extension_bridge_manifests;
+    const project::ProjectFileSelector file_selector{root, output};
+    std::filesystem::recursive_directory_iterator iterator{
+        root, std::filesystem::directory_options::skip_permission_denied, error};
+    const std::filesystem::recursive_directory_iterator end;
+    while (!error && iterator != end) {
+        const auto relative = iterator->path().lexically_relative(root);
+        if (iterator->is_directory() && !file_selector.should_descend(relative)) {
+            iterator.disable_recursion_pending();
+        } else if (iterator->is_regular_file() && iterator->path().extension() == ".gd" &&
+                   file_selector.should_compile(relative)) {
+            source_paths.push_back(iterator->path());
+        } else if (iterator->is_regular_file() &&
+                   (iterator->path().extension() == ".tscn" ||
+                    iterator->path().extension() == ".tres") &&
+                   file_selector.should_compile(relative)) {
+            text_resource_paths.push_back(iterator->path());
+        } else if (iterator->is_regular_file() && iterator->path().extension() == ".gdextension" &&
+                   file_selector.should_compile(relative)) {
+            external_extension_descriptors.push_back(iterator->path());
+        } else if (iterator->is_regular_file() &&
+                   iterator->path().filename() == "gdpp_bridge.json" &&
+                   file_selector.should_compile(relative)) {
+            extension_bridge_manifests.push_back(iterator->path());
+        } else if (iterator->is_regular_file() && iterator->path().extension() == ".uid" &&
+                   file_selector.should_compile(relative)) {
+            uid_sidecar_paths.push_back(iterator->path());
+        } else if (iterator->is_regular_file() && iterator->path().extension() == ".import" &&
+                   file_selector.should_compile(relative)) {
+            import_sidecar_paths.push_back(iterator->path());
+        }
+        iterator.increment(error);
+    }
+    if (error) {
+        result.diagnostics.push_back(
+            {root, project_error("PRJ0003", "failed while scanning project scripts")});
+        return result;
+    }
+    std::sort(source_paths.begin(), source_paths.end());
+    std::sort(text_resource_paths.begin(), text_resource_paths.end());
+    std::sort(uid_sidecar_paths.begin(), uid_sidecar_paths.end());
+    std::sort(import_sidecar_paths.begin(), import_sidecar_paths.end());
+    std::sort(external_extension_descriptors.begin(), external_extension_descriptors.end());
+    std::sort(extension_bridge_manifests.begin(), extension_bridge_manifests.end());
+
+    auto bridge_load =
+        load_extension_bridges(root, extension_bridge_manifests, options.compiler.target_version);
+    for (const auto& diagnostic : bridge_load.diagnostics) {
+        result.diagnostics.push_back(
+            {root, project_error("PRJ0020", "invalid third-party bridge: " + diagnostic)});
+    }
+    if (has_project_errors(result.diagnostics))
+        return result;
+    // A checked-in contract is an explicit, reviewable override for offline/cross-machine builds.
+    // Live ClassDB reflection fills only classes that are not already described by one of those
+    // manifests. Keeping each reflected class in its own bridge also gives the incremental cache
+    // class-granular invalidation when a third-party API changes.
+    std::set<std::string> declared_bridge_classes;
+    for (const auto& bridge : bridge_load.bridges) {
+        for (const auto& type : bridge.classes)
+            declared_bridge_classes.insert(type.gdscript_name);
+    }
+    for (const auto& reflected : options.reflected_extension_bridges) {
+        ExtensionBridge filtered = reflected;
+        filtered.classes.erase(std::remove_if(filtered.classes.begin(), filtered.classes.end(),
+                                              [&](const auto& type) {
+                                                  return declared_bridge_classes.find(
+                                                             type.gdscript_name) !=
+                                                         declared_bridge_classes.end();
+                                              }),
+                               filtered.classes.end());
+        for (const auto& type : filtered.classes)
+            declared_bridge_classes.insert(type.gdscript_name);
+        if (!filtered.classes.empty())
+            bridge_load.bridges.push_back(std::move(filtered));
+    }
+    struct BridgeClassReference {
+        const ExtensionBridge* bridge{nullptr};
+        const ExtensionBridgeClass* type{nullptr};
+    };
+    std::map<std::string, BridgeClassReference> bridge_classes;
+    for (const auto& bridge : bridge_load.bridges) {
+        for (const auto& type : bridge.classes)
+            bridge_classes.emplace(type.gdscript_name, BridgeClassReference{&bridge, &type});
+    }
+    const auto find_bridge_enum =
+        [&](const std::string& qualified_name) -> const ExtensionBridgeEnum* {
+        const auto separator = qualified_name.find('.');
+        if (separator == std::string::npos ||
+            qualified_name.find('.', separator + 1) != std::string::npos) {
+            return nullptr;
+        }
+        const auto owner = bridge_classes.find(qualified_name.substr(0, separator));
+        if (owner == bridge_classes.end())
+            return nullptr;
+        const auto enum_name = qualified_name.substr(separator + 1);
+        const auto found =
+            std::find_if(owner->second.type->enums.begin(), owner->second.type->enums.end(),
+                         [&](const auto& enumeration) { return enumeration.name == enum_name; });
+        return found == owner->second.type->enums.end() ? nullptr : &*found;
+    };
+    const auto bridge_contract_identity = [](const ExtensionBridge& bridge) {
+        return bridge.abi + ":" + bridge.contract_hash;
+    };
+
+    struct SourceInput {
+        std::filesystem::path path;
+        std::string relative;
+        std::string source;
+        std::string source_hash;
+        std::string public_abi_hash;
+        std::string implementation_hash;
+        ast::Script script;
+        std::vector<std::string> dependencies;
+        std::vector<std::string> extension_abis;
+        std::string script_class_name;
+        std::string native_class_stem;
+        std::string base_reference{"Node"};
+        std::string semantic_base_type{"Node"};
+        std::optional<std::size_t> script_base;
+        std::optional<std::size_t> local_inner_base;
+        BridgeClassReference extension_base;
+        bool globally_named{false};
+        std::string autoload_name;
+        std::vector<ScriptMemberSymbol> members;
+        std::vector<ScriptEnumSymbol> enums;
+        std::vector<ScriptInnerClassSymbol> inner_classes;
+        bool is_abstract{false};
+    };
+    std::vector<SourceInput> inputs;
+    inputs.reserve(source_paths.size());
+    std::map<std::string, std::string> resource_aliases;
+    const auto add_resource_alias = [&](const std::filesystem::path& source_path, std::string uid,
+                                        std::string project_path) {
+        const auto [existing, inserted] = resource_aliases.emplace(uid, project_path);
+        if (!inserted && existing->second != project_path) {
+            result.diagnostics.push_back(
+                {source_path,
+                 project_error("PRJ0019", "resource UID '" + existing->first +
+                                              "' resolves to both '" + existing->second +
+                                              "' and '" + project_path + "'")});
+        }
+    };
+    const auto& target_api = GodotApi::for_version(options.compiler.target_version);
+    const auto append_source = [&](const std::filesystem::path& source_path, std::string relative,
+                                   std::string source) {
+        auto source_hash =
+            sha256(std::string{GDPP_VERSION_STRING} + ":codegen:" + GDPP_CODEGEN_FINGERPRINT +
+                   ":api:" + std::string{target_api.version()} +
+                   (options.compiler.optimize ? ":opt:" : ":no-opt:") + source);
+        SourceInput input;
+        input.path = source_path;
+        input.relative = std::move(relative);
+        input.source = std::move(source);
+        input.source_hash = std::move(source_hash);
+        inputs.push_back(std::move(input));
+    };
+    for (const auto& source_path : source_paths) {
+        const auto source = read_file(source_path);
+        if (!source) {
+            result.diagnostics.push_back(
+                {source_path, project_error("PRJ0004", "cannot read script")});
+            continue;
+        }
+        append_source(source_path, generic_path_to_utf8(source_path.lexically_relative(root)),
+                      *source);
+    }
+    for (const auto& sidecar_path : uid_sidecar_paths) {
+        const auto sidecar = read_file(sidecar_path);
+        if (!sidecar)
+            continue;
+        const auto uid = uid_sidecar_value(*sidecar);
+        if (!uid)
+            continue;
+        auto resource_path = sidecar_path;
+        resource_path.replace_extension();
+        add_resource_alias(sidecar_path, *uid,
+                           generic_path_to_utf8(resource_path.lexically_relative(root)));
+    }
+    for (const auto& sidecar_path : import_sidecar_paths) {
+        const auto sidecar = read_file(sidecar_path);
+        if (!sidecar)
+            continue;
+        const auto uid = imported_resource_uid(*sidecar);
+        if (!uid)
+            continue;
+        auto resource_path = sidecar_path;
+        resource_path.replace_extension();
+        add_resource_alias(sidecar_path, *uid,
+                           generic_path_to_utf8(resource_path.lexically_relative(root)));
+    }
+    for (const auto& resource_path : text_resource_paths) {
+        const auto resource = read_file(resource_path);
+        if (!resource) {
+            result.diagnostics.push_back(
+                {resource_path,
+                 project_error("PRJ0016", "cannot read text resource for embedded scripts")});
+            continue;
+        }
+        const auto relative_resource = generic_path_to_utf8(resource_path.lexically_relative(root));
+        if (const auto uid = text_resource_uid(*resource))
+            add_resource_alias(resource_path, *uid, relative_resource);
+        for (auto& [uid, path] : text_resource_references(*resource))
+            add_resource_alias(resource_path, std::move(uid), std::move(path));
+        auto embedded_scan = embedded_gdscript_sources(*resource);
+        for (const auto& unresolved : embedded_scan.unresolved_ids) {
+            result.diagnostics.push_back(
+                {resource_path,
+                 project_error("PRJ0017",
+                               "cannot infer the native owner type for source-less embedded "
+                               "GDScript '" +
+                                   unresolved + "'")});
+        }
+        for (auto& embedded : embedded_scan.scripts) {
+            append_source(resource_path, relative_resource + "::" + embedded.id,
+                          std::move(embedded.source));
+        }
+    }
+    if (has_project_errors(result.diagnostics))
+        return result;
+    std::sort(inputs.begin(), inputs.end(), [](const SourceInput& left, const SourceInput& right) {
+        return left.relative < right.relative;
+    });
+
+    // Parse every script before code generation so project-wide class names and inheritance form
+    // one deterministic graph. The regular compiler reparses each unit later and remains the
+    // authority for full language diagnostics.
+    std::unordered_map<std::string, std::size_t> script_classes;
+    std::unordered_map<std::string, std::size_t> native_class_names;
+    std::unordered_map<std::string, std::size_t> script_paths;
+    for (std::size_t index = 0; index < inputs.size(); ++index) {
+        auto& input = inputs[index];
+        const SourceFile source{input.relative, input.source};
+        DiagnosticBag diagnostics;
+        Lexer lexer{source, diagnostics};
+        const auto tokens = lexer.scan();
+        Parser parser{tokens, diagnostics};
+        input.script = parser.parse_script();
+        const auto& script = input.script;
+        for (const auto& diagnostic : diagnostics.items())
+            result.diagnostics.push_back({input.path, diagnostic});
+        input.script_class_name =
+            script.class_name.value_or(to_pascal_case(path_to_utf8(input.path.stem())));
+        input.globally_named = script.class_name.has_value();
+        input.is_abstract = std::any_of(
+            script.annotations.begin(), script.annotations.end(),
+            [](const ast::Annotation& annotation) { return annotation.name == "abstract"; });
+        input.native_class_stem =
+            native_class_stem(input.relative, input.script_class_name, input.globally_named);
+        if (const auto autoload = project_autoloads.find(input.relative);
+            autoload != project_autoloads.end()) {
+            input.autoload_name = autoload->second;
+        }
+        input.base_reference = script.base_type.value_or("Node");
+        for (const auto& variable : script.variables) {
+            input.members.push_back(
+                {variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field,
+                 variable.name,
+                 signature_type(variable.type,
+                                variable.infer_type || variable.is_constant
+                                    ? variable.initializer.get()
+                                    : nullptr,
+                                target_api),
+                 {},
+                 0,
+                 variable.is_constant || variable.is_static,
+                 variable.getter.has_value() || variable.setter.has_value(),
+                 false,
+                 {},
+                 {}});
+        }
+        for (const auto& function : script.functions) {
+            ScriptMemberSymbol member;
+            member.kind = ScriptMemberKind::function;
+            member.name = function.name;
+            member.type = function.name == "_init"
+                              ? Type{TypeKind::void_type, "void"}
+                              : signature_type(function.return_type, nullptr, target_api);
+            member.is_static = function.is_static;
+            member.has_explicit_type = function.name == "_init" || function.return_type.has_value();
+            for (const auto& parameter : function.parameters) {
+                member.parameters.push_back(signature_type(parameter.type, nullptr, target_api));
+                member.explicit_parameter_types.push_back(parameter.type.has_value());
+                member.default_parameters.push_back(parameter.default_value != nullptr);
+                if (!parameter.default_value)
+                    ++member.required_arguments;
+            }
+            input.members.push_back(std::move(member));
+        }
+        for (const auto& signal : script.signals) {
+            ScriptMemberSymbol member;
+            member.kind = ScriptMemberKind::signal;
+            member.name = signal.name;
+            member.type = {TypeKind::builtin, "Signal"};
+            for (const auto& parameter : signal.parameters) {
+                member.parameters.push_back(signature_type(parameter.type, nullptr, target_api));
+                ++member.required_arguments;
+            }
+            input.members.push_back(std::move(member));
+        }
+        for (const auto& declaration : script.enums) {
+            ScriptEnumSymbol enumeration;
+            enumeration.name = declaration.name.value_or("");
+            std::unordered_map<std::string, std::int64_t> previous;
+            std::int64_t next_value = 0;
+            for (const auto& entry : declaration.entries) {
+                const auto value = entry.value ? evaluate_integer_constant(*entry.value, previous)
+                                               : std::optional<std::int64_t>{next_value};
+                const auto resolved = value.value_or(0);
+                previous.emplace(entry.name, resolved);
+                enumeration.entries.push_back({entry.name, resolved});
+                if (!declaration.name) {
+                    input.members.push_back({ScriptMemberKind::enum_value,
+                                             entry.name,
+                                             {TypeKind::integer, "int"},
+                                             {},
+                                             0,
+                                             true,
+                                             false,
+                                             false,
+                                             {},
+                                             {}});
+                }
+                if (resolved != std::numeric_limits<std::int64_t>::max())
+                    next_value = resolved + 1;
+            }
+            if (declaration.name)
+                input.enums.push_back(std::move(enumeration));
+        }
+        for (const auto& declaration : script.classes)
+            input.inner_classes.push_back(inner_class_symbol(declaration, target_api));
+        if (input.globally_named && target_api.find_class(input.script_class_name)) {
+            result.diagnostics.push_back(
+                {input.path,
+                 project_error("PRJ0012", "script class_name '" + input.script_class_name +
+                                              "' collides with a Godot engine type")});
+        }
+        const auto [native_owner, unique_native_name] =
+            native_class_names.emplace(input.native_class_stem, index);
+        if (!unique_native_name) {
+            result.diagnostics.push_back(
+                {input.path,
+                 project_error("PRJ0005", "native script class '" + input.native_class_stem +
+                                              "' is also produced by " +
+                                              inputs[native_owner->second].relative)});
+        }
+        if (input.globally_named) {
+            const auto [owner, unique_script_name] =
+                script_classes.emplace(input.script_class_name, index);
+            if (!unique_script_name) {
+                result.diagnostics.push_back(
+                    {input.path,
+                     project_error("PRJ0015", "global script class '" + input.script_class_name +
+                                                  "' is also declared by " +
+                                                  inputs[owner->second].relative)});
+            }
+        }
+        script_paths.emplace(input.relative, index);
+    }
+    for (const auto& [name, bridge_class] : bridge_classes) {
+        if (!target_api.find_class(bridge_class.type->godot_base)) {
+            result.diagnostics.push_back(
+                {bridge_class.bridge->manifest_path,
+                 project_error("PRJ0021", "bridge class '" + name +
+                                              "' declares unknown Godot base '" +
+                                              bridge_class.type->godot_base + "'")});
+        }
+        if (target_api.find_class(name)) {
+            result.diagnostics.push_back(
+                {bridge_class.bridge->manifest_path,
+                 project_error("PRJ0023",
+                               "bridge class '" + name + "' collides with a Godot engine type")});
+        }
+        if (const auto script = script_classes.find(name); script != script_classes.end()) {
+            result.diagnostics.push_back(
+                {bridge_class.bridge->manifest_path,
+                 project_error("PRJ0023", "bridge class '" + name +
+                                              "' collides with global script class declared by " +
+                                              inputs[script->second].relative)});
+        }
+        const auto autoload = std::find_if(
+            project_autoloads.begin(), project_autoloads.end(),
+            [bridge_name = name](const auto& entry) { return entry.second == bridge_name; });
+        if (autoload != project_autoloads.end()) {
+            result.diagnostics.push_back(
+                {bridge_class.bridge->manifest_path,
+                 project_error("PRJ0023", "bridge class '" + name +
+                                              "' collides with project autoload declared for " +
+                                              autoload->first)});
+        }
+        const auto bridge_manifest_path = bridge_class.bridge->manifest_path;
+        const auto validate_contract_type = [&](const std::string& type_name,
+                                                const bool allow_void) {
+            const auto type = type_from_annotation(type_name);
+            const bool known_object = type.kind != TypeKind::object ||
+                                      target_api.find_class(type_name) ||
+                                      bridge_classes.find(type_name) != bridge_classes.end() ||
+                                      script_classes.find(type_name) != script_classes.end() ||
+                                      find_bridge_enum(type_name);
+            if ((!allow_void && type.kind == TypeKind::void_type) || !known_object) {
+                result.diagnostics.push_back(
+                    {bridge_manifest_path,
+                     project_error("PRJ0024", "bridge member type '" + type_name +
+                                                  "' is not available to the target project")});
+            }
+        };
+        for (const auto& member : bridge_class.type->members) {
+            validate_contract_type(member.type, member.kind == ExtensionBridgeMemberKind::method);
+            for (const auto& parameter : member.parameters)
+                validate_contract_type(parameter.type, false);
+        }
+    }
+    if (has_project_errors(result.diagnostics))
+        return result;
+
+    for (auto& input : inputs) {
+        const auto resolve_enum_type = [&](Type& type) {
+            if (type.kind != TypeKind::object)
+                return;
+            const auto local = std::find_if(
+                input.enums.begin(), input.enums.end(),
+                [&](const ScriptEnumSymbol& enumeration) { return enumeration.name == type.name; });
+            if (local != input.enums.end()) {
+                type = {TypeKind::enumeration, input.script_class_name + "." + local->name};
+                return;
+            }
+            const auto separator = type.name.find('.');
+            if (separator == std::string::npos)
+                return;
+            const auto owner = script_classes.find(type.name.substr(0, separator));
+            if (owner == script_classes.end())
+                return;
+            const auto& enumerations = inputs[owner->second].enums;
+            const auto found = std::find_if(
+                enumerations.begin(), enumerations.end(), [&](const ScriptEnumSymbol& enumeration) {
+                    return enumeration.name == type.name.substr(separator + 1);
+                });
+            if (found != enumerations.end())
+                type.kind = TypeKind::enumeration;
+        };
+        for (auto& member : input.members) {
+            resolve_enum_type(member.type);
+            for (auto& parameter : member.parameters)
+                resolve_enum_type(parameter);
+        }
+        for (auto& inner : input.inner_classes) {
+            for (auto& member : inner.members) {
+                resolve_enum_type(member.type);
+                for (auto& parameter : member.parameters)
+                    resolve_enum_type(parameter);
+            }
+        }
+    }
+
+    for (std::size_t index = 0; index < inputs.size(); ++index) {
+        auto& input = inputs[index];
+        if (target_api.find_class(input.base_reference)) {
+            input.semantic_base_type = input.base_reference;
+            continue;
+        }
+        const auto by_class = script_classes.find(input.base_reference);
+        if (by_class != script_classes.end()) {
+            input.script_base = by_class->second;
+            continue;
+        }
+        const auto path_reference =
+            normalized_script_reference(input.relative, input.base_reference);
+        const auto by_path = script_paths.find(path_reference);
+        if (by_path != script_paths.end()) {
+            input.script_base = by_path->second;
+            continue;
+        }
+        const auto local_inner =
+            std::find_if(input.inner_classes.begin(), input.inner_classes.end(),
+                         [&](const auto& inner) { return inner.name == input.base_reference; });
+        if (local_inner != input.inner_classes.end()) {
+            input.local_inner_base =
+                static_cast<std::size_t>(std::distance(input.inner_classes.begin(), local_inner));
+            input.semantic_base_type = local_inner->godot_base_type;
+            continue;
+        }
+        const auto bridged = bridge_classes.find(input.base_reference);
+        if (bridged != bridge_classes.end()) {
+            if (bridged->second.type->runtime_only) {
+                result.diagnostics.push_back(
+                    {input.path,
+                     project_error(
+                         "PRJ0022",
+                         "runtime-only bridge type '" + input.base_reference +
+                             "' is visible to Godot but cannot be emitted as a cross-library "
+                             "GDExtension C++ base. Provider headers alone do not solve this; "
+                             "GDPP needs a script-instance-compatible inheritance backend")});
+                continue;
+            }
+            if (!target_api.find_class(bridged->second.type->godot_base)) {
+                result.diagnostics.push_back(
+                    {input.path,
+                     project_error("PRJ0021", "bridge base '" + input.base_reference +
+                                                  "' declares unknown Godot base '" +
+                                                  bridged->second.type->godot_base + "'")});
+                continue;
+            }
+            input.extension_base = bridged->second;
+            input.semantic_base_type = bridged->second.type->godot_base;
+            continue;
+        }
+        if (external_extension_descriptors.empty()) {
+            result.diagnostics.push_back(
+                {input.path,
+                 project_error("PRJ0013", "base script or Godot type '" + input.base_reference +
+                                              "' was not found in the project")});
+            continue;
+        }
+        std::ostringstream providers;
+        constexpr std::size_t displayed_provider_limit = 3;
+        for (std::size_t provider_index = 0;
+             provider_index < external_extension_descriptors.size() &&
+             provider_index < displayed_provider_limit;
+             ++provider_index) {
+            if (provider_index > 0)
+                providers << ", ";
+            providers << generic_path_to_utf8(
+                external_extension_descriptors[provider_index].lexically_relative(root));
+        }
+        if (external_extension_descriptors.size() > displayed_provider_limit)
+            providers << ", ...";
+        result.diagnostics.push_back(
+            {input.path,
+             project_error(
+                 "PRJ0018",
+                 "base type '" + input.base_reference +
+                     "' is not declared by Godot or project scripts; the project contains "
+                     "third-party GDExtensions (" +
+                     providers.str() +
+                     "). Godot can attach GDScript to that native base, but the current GDPP "
+                     "backend cannot register a cross-library GDExtension subclass; binary-only "
+                     "AOT is blocked instead of emitting an unsafe class")});
+    }
+    if (has_project_errors(result.diagnostics))
+        return result;
+
+    std::vector<std::size_t> compile_order;
+    std::vector<unsigned char> visit_state(inputs.size(), 0);
+    std::vector<std::size_t> inheritance_stack;
+    const auto visit = [&](auto&& self, const std::size_t index) -> bool {
+        if (visit_state[index] == 2)
+            return true;
+        if (visit_state[index] == 1) {
+            std::ostringstream cycle;
+            const auto begin = std::find(inheritance_stack.begin(), inheritance_stack.end(), index);
+            for (auto current = begin; current != inheritance_stack.end(); ++current) {
+                if (current != begin)
+                    cycle << " -> ";
+                cycle << inputs[*current].script_class_name;
+            }
+            cycle << " -> " << inputs[index].script_class_name;
+            result.diagnostics.push_back(
+                {inputs[index].path,
+                 project_error("PRJ0014", "cyclic script inheritance: " + cycle.str())});
+            return false;
+        }
+        visit_state[index] = 1;
+        inheritance_stack.push_back(index);
+        if (inputs[index].script_base) {
+            if (!self(self, *inputs[index].script_base))
+                return false;
+            inputs[index].semantic_base_type =
+                inputs[*inputs[index].script_base].semantic_base_type;
+        }
+        inheritance_stack.pop_back();
+        visit_state[index] = 2;
+        compile_order.push_back(index);
+        return true;
+    };
+    for (std::size_t index = 0; index < inputs.size(); ++index) {
+        if (!visit(visit, index))
+            break;
+    }
+    if (has_project_errors(result.diagnostics))
+        return result;
+
+    // Resolve omitted override annotations before building the shared symbol table. GDScript
+    // permits an overriding method to omit types that are present on its script base; emitting
+    // those omissions as Variant would create an illegal C++ virtual override and would also
+    // weaken every cross-script call site. The topological order guarantees that inherited
+    // signatures are already stable when a derived script is processed.
+    const auto inherited_member = [&](const auto& self, const std::size_t owner,
+                                      const std::string& name) -> const ScriptMemberSymbol* {
+        if (!inputs[owner].script_base)
+            return nullptr;
+        const auto base = *inputs[owner].script_base;
+        const auto found = std::find_if(
+            inputs[base].members.begin(), inputs[base].members.end(), [&](const auto& member) {
+                return member.kind == ScriptMemberKind::function && member.name == name;
+            });
+        return found != inputs[base].members.end() ? &*found : self(self, base, name);
+    };
+    for (const auto index : compile_order) {
+        auto& input = inputs[index];
+        for (auto& member : input.members) {
+            if (member.kind != ScriptMemberKind::function || member.is_static ||
+                member.name == "_init") {
+                continue;
+            }
+            // First normalize omitted annotations against Godot's actual virtual ABI. This is
+            // also the root contract inherited through arbitrarily deep script hierarchies.
+            if (const auto* method = target_api.find_method(input.semantic_base_type, member.name);
+                method && method->is_virtual) {
+                if (!member.has_explicit_type) {
+                    member.type = std::string_view{method->return_type}.empty()
+                                      ? Type{TypeKind::void_type, "void"}
+                                      : type_from_godot_api(method->return_type);
+                }
+                for (std::size_t parameter = 0;
+                     parameter < member.parameters.size() && parameter < method->maximum_arguments;
+                     ++parameter) {
+                    if ((parameter >= member.explicit_parameter_types.size() ||
+                         !member.explicit_parameter_types[parameter])) {
+                        if (const auto* argument = target_api.argument(*method, parameter))
+                            member.parameters[parameter] = type_from_godot_api(argument->type);
+                    }
+                }
+            }
+            if (!input.script_base)
+                continue;
+            const auto* inherited = inherited_member(inherited_member, index, member.name);
+            if (!inherited || inherited->is_static ||
+                inherited->parameters.size() != member.parameters.size()) {
+                continue;
+            }
+            if (!member.has_explicit_type)
+                member.type = inherited->type;
+            for (std::size_t parameter = 0; parameter < member.parameters.size(); ++parameter) {
+                if (parameter >= member.explicit_parameter_types.size() ||
+                    !member.explicit_parameter_types[parameter]) {
+                    member.parameters[parameter] = inherited->parameters[parameter];
+                }
+            }
+        }
+    }
+
+    const auto append_expression_identity = [](const auto& self, std::ostringstream& identity,
+                                               const ast::Expression& expression) -> void {
+        identity << '(' << static_cast<int>(expression.kind()) << ':'
+                 << static_cast<int>(expression.literal_kind()) << ':' << expression.value();
+        for (std::size_t index = 0; index < expression.operand_count(); ++index)
+            self(self, identity, *expression.operand(index));
+        if (const auto* lambda = expression.lambda()) {
+            identity << ":lambda:" << lambda->parameters.size() << ':'
+                     << lambda->return_type.value_or("");
+            for (const auto& parameter : lambda->parameters) {
+                identity << ':' << parameter.name << ':' << parameter.type.value_or("");
+                if (parameter.default_value)
+                    self(self, identity, *parameter.default_value);
+            }
+        }
+        identity << ')';
+    };
+    const auto append_annotation_identity = [&](std::ostringstream& identity,
+                                                const std::vector<ast::Annotation>& annotations) {
+        for (const auto& annotation : annotations) {
+            identity << "@" << annotation.name << ':' << annotation.arguments.size();
+            for (const auto& argument : annotation.arguments)
+                append_expression_identity(append_expression_identity, identity, *argument);
+            identity << ';';
+        }
+    };
+    const auto append_public_abi = [&](const SourceInput& input) {
+        std::ostringstream identity;
+        identity << "path:" << input.relative << ":script:" << input.script_class_name
+                 << ":native-stem:" << input.native_class_stem << ":base:" << input.base_reference
+                 << ":api-base:" << input.semantic_base_type << ":autoload:" << input.autoload_name
+                 << ":abstract:" << input.is_abstract << ":tool:" << input.script.tool << ':';
+        append_annotation_identity(identity, input.script.annotations);
+        identity << '\n';
+        if (input.extension_base.bridge && input.extension_base.type) {
+            identity << "extension-base:" << input.extension_base.type->gdscript_name << ':'
+                     << input.extension_base.type->cpp_type << ':'
+                     << input.extension_base.type->header << ':'
+                     << input.extension_base.type->godot_base
+                     << ":abi:" << bridge_contract_identity(*input.extension_base.bridge) << '\n';
+        }
+        for (const auto& member : input.members) {
+            identity << static_cast<int>(member.kind) << ':' << member.name << ':'
+                     << static_cast<int>(member.type.kind) << ':' << member.type.name << ':'
+                     << member.required_arguments << ':' << member.is_static << ':'
+                     << member.has_accessor << ':' << member.has_explicit_type;
+            if (const auto bridge = bridge_classes.find(member.type.name);
+                bridge != bridge_classes.end()) {
+                identity << ":bridge-abi:" << bridge_contract_identity(*bridge->second.bridge);
+            }
+            for (std::size_t index = 0; index < member.parameters.size(); ++index) {
+                const auto& parameter = member.parameters[index];
+                identity << ':' << static_cast<int>(parameter.kind) << ':' << parameter.name << ':'
+                         << (index < member.explicit_parameter_types.size() &&
+                             member.explicit_parameter_types[index])
+                         << ':'
+                         << (index < member.default_parameters.size() &&
+                             member.default_parameters[index]);
+                if (const auto bridge = bridge_classes.find(parameter.name);
+                    bridge != bridge_classes.end()) {
+                    identity << ":bridge-abi:" << bridge_contract_identity(*bridge->second.bridge);
+                }
+            }
+            identity << '\n';
+        }
+        for (const auto& enumeration : input.enums) {
+            identity << "enum:" << enumeration.name;
+            for (const auto& entry : enumeration.entries)
+                identity << ':' << entry.name << ':' << entry.value;
+            identity << '\n';
+        }
+        for (const auto& inner : input.inner_classes) {
+            identity << "inner:" << inner.name << ':' << inner.godot_base_type << '\n';
+            for (const auto& member : inner.members) {
+                identity << "inner-member:" << static_cast<int>(member.kind) << ':' << member.name
+                         << ':' << static_cast<int>(member.type.kind) << ':' << member.type.name
+                         << ':' << member.required_arguments << ':' << member.is_static << ':'
+                         << member.has_accessor;
+                if (const auto bridge = bridge_classes.find(member.type.name);
+                    bridge != bridge_classes.end()) {
+                    identity << ":bridge-abi:" << bridge_contract_identity(*bridge->second.bridge);
+                }
+                for (const auto& parameter : member.parameters) {
+                    identity << ':' << static_cast<int>(parameter.kind) << ':' << parameter.name;
+                    if (const auto bridge = bridge_classes.find(parameter.name);
+                        bridge != bridge_classes.end()) {
+                        identity << ":bridge-abi:"
+                                 << bridge_contract_identity(*bridge->second.bridge);
+                    }
+                }
+                identity << '\n';
+            }
+        }
+        for (const auto& variable : input.script.variables) {
+            identity << "field-metadata:" << variable.name << ':' << variable.is_static << ':'
+                     << variable.is_constant << ':' << variable.onready << ':';
+            append_annotation_identity(identity, variable.annotations);
+            identity << '\n';
+            if (variable.is_constant && variable.initializer) {
+                identity << "constant-value:" << variable.name << ':';
+                append_expression_identity(append_expression_identity, identity,
+                                           *variable.initializer);
+                identity << '\n';
+            }
+        }
+        for (const auto& function : input.script.functions) {
+            identity << "function-parameters:" << function.name << ':';
+            append_annotation_identity(identity, function.annotations);
+            for (const auto& parameter : function.parameters) {
+                identity << ':' << parameter.name;
+                if (parameter.default_value)
+                    append_expression_identity(append_expression_identity, identity,
+                                               *parameter.default_value);
+            }
+            identity << '\n';
+        }
+        for (const auto& signal : input.script.signals) {
+            identity << "signal-parameters:" << signal.name << ':';
+            append_annotation_identity(identity, signal.annotations);
+            for (const auto& parameter : signal.parameters)
+                identity << ':' << parameter.name;
+            identity << '\n';
+        }
+        for (const auto& enumeration : input.script.enums) {
+            identity << "enum-metadata:" << enumeration.name.value_or("") << ':';
+            append_annotation_identity(identity, enumeration.annotations);
+            identity << '\n';
+        }
+        const auto append_inner_metadata = [&](const auto& self,
+                                               const ast::ClassDeclaration& declaration) -> void {
+            identity << "inner-metadata:" << declaration.name << ':';
+            append_annotation_identity(identity, declaration.annotations);
+            identity << '\n';
+            for (const auto& variable : declaration.variables) {
+                identity << "inner-field-metadata:" << declaration.name << ':' << variable.name
+                         << ':';
+                append_annotation_identity(identity, variable.annotations);
+                identity << '\n';
+            }
+            for (const auto& function : declaration.functions) {
+                identity << "inner-function-metadata:" << declaration.name << ':' << function.name
+                         << ':';
+                append_annotation_identity(identity, function.annotations);
+                identity << '\n';
+            }
+            for (const auto& nested : declaration.classes)
+                self(self, nested);
+        };
+        for (const auto& inner : input.script.classes)
+            append_inner_metadata(append_inner_metadata, inner);
+        return sha256(identity.str());
+    };
+    for (auto& input : inputs)
+        input.public_abi_hash = append_public_abi(input);
+
+    ScriptSymbolTable script_symbols;
+    for (const auto& input : inputs) {
+        ScriptClassSymbol symbol;
+        symbol.path = input.relative;
+        symbol.script_name = input.script_class_name;
+        symbol.native_class_name =
+            "GDPPNative_" + input.native_class_stem + "_" + input.public_abi_hash.substr(0, 16);
+        symbol.header_file_name = to_snake_case(input.native_class_stem) + ".gd.hpp";
+        symbol.godot_base_type = input.semantic_base_type;
+        if (input.script_base)
+            symbol.base_script_path = inputs[*input.script_base].relative;
+        symbol.globally_named = input.globally_named;
+        symbol.is_abstract = input.is_abstract;
+        symbol.autoload_name = input.autoload_name;
+        symbol.members = input.members;
+        symbol.enums = input.enums;
+        symbol.inner_classes = input.inner_classes;
+        for (auto& inner : symbol.inner_classes) {
+            inner.native_class_name = symbol.native_class_name + "__" + inner.name;
+        }
+        script_symbols.add(std::move(symbol));
+    }
+    for (const auto& bridge : bridge_load.bridges) {
+        for (const auto& type : bridge.classes) {
+            ExternalClassSymbol external;
+            external.name = type.gdscript_name;
+            external.godot_base_type = type.godot_base;
+            external.provider_abi = bridge_contract_identity(bridge);
+            external.runtime_only = type.runtime_only;
+            external.members_complete = type.members_complete;
+            const auto external_member_type = [&](const std::string& name) {
+                return find_bridge_enum(name) ? Type{TypeKind::enumeration, name}
+                                              : type_from_annotation(name);
+            };
+            for (const auto& bridge_member : type.members) {
+                ScriptMemberSymbol member;
+                member.name = bridge_member.name;
+                member.type = external_member_type(bridge_member.type);
+                member.has_explicit_type = true;
+                member.is_vararg = bridge_member.vararg;
+                member.is_static = bridge_member.is_static;
+                member.read_only = bridge_member.read_only;
+                member.constant_value = bridge_member.constant_value;
+                member.has_accessor = bridge_member.kind == ExtensionBridgeMemberKind::property;
+                if (bridge_member.kind == ExtensionBridgeMemberKind::method)
+                    member.kind = ScriptMemberKind::function;
+                else if (bridge_member.kind == ExtensionBridgeMemberKind::signal)
+                    member.kind = ScriptMemberKind::signal;
+                else if (bridge_member.kind == ExtensionBridgeMemberKind::constant)
+                    member.kind = ScriptMemberKind::constant;
+                else
+                    member.kind = ScriptMemberKind::field;
+                for (const auto& parameter : bridge_member.parameters) {
+                    member.parameters.push_back(external_member_type(parameter.type));
+                    member.explicit_parameter_types.push_back(true);
+                    member.default_parameters.push_back(parameter.has_default);
+                    if (!parameter.has_default)
+                        ++member.required_arguments;
+                }
+                external.members.push_back(std::move(member));
+            }
+            for (const auto& bridge_enum : type.enums) {
+                ScriptEnumSymbol enumeration;
+                enumeration.name = bridge_enum.name;
+                enumeration.is_bitfield = bridge_enum.is_bitfield;
+                for (const auto& entry : bridge_enum.entries)
+                    enumeration.entries.push_back({entry.name, entry.value});
+                external.enums.push_back(std::move(enumeration));
+            }
+            script_symbols.add_external(std::move(external));
+        }
+    }
+    for (const auto& [uid, path] : resource_aliases)
+        script_symbols.add_resource_alias(uid, path);
+
+    for (auto& input : inputs) {
+        DiagnosticBag diagnostics;
+        SemanticAnalyzer analyzer{diagnostics, target_api, input.semantic_base_type,
+                                  &script_symbols, input.relative};
+        const auto semantic = analyzer.analyze(input.script);
+        for (const auto& diagnostic : diagnostics.items())
+            result.diagnostics.push_back({input.path, diagnostic});
+        input.dependencies.assign(semantic.referenced_script_paths().begin(),
+                                  semantic.referenced_script_paths().end());
+        input.extension_abis.assign(semantic.referenced_extension_abis().begin(),
+                                    semantic.referenced_extension_abis().end());
+        std::sort(input.extension_abis.begin(), input.extension_abis.end());
+        if (input.script_base)
+            input.dependencies.push_back(inputs[*input.script_base].relative);
+        std::sort(input.dependencies.begin(), input.dependencies.end());
+        input.dependencies.erase(std::unique(input.dependencies.begin(), input.dependencies.end()),
+                                 input.dependencies.end());
+    }
+    if (has_project_errors(result.diagnostics))
+        return result;
+
+    for (auto& input : inputs) {
+        std::ostringstream dependency_identity;
+        for (const auto& dependency : input.dependencies) {
+            const auto found = script_paths.find(dependency);
+            if (found != script_paths.end())
+                dependency_identity << dependency << ':' << inputs[found->second].public_abi_hash
+                                    << '\n';
+        }
+        input.implementation_hash =
+            sha256(input.source_hash + ":public-abi:" + input.public_abi_hash +
+                   ":dependencies:" + dependency_identity.str() + ":extension-abis:" + [&] {
+                       std::ostringstream values;
+                       for (const auto& abi : input.extension_abis)
+                           values << abi << '\n';
+                       return values.str();
+                   }());
+    }
+    std::ostringstream build_identity;
+    build_identity << target_api.version() << '\n';
+    for (const auto& input : inputs)
+        build_identity << input.relative << ':' << input.implementation_hash << '\n';
+    result.build_id = sha256(build_identity.str()).substr(0, 16);
+
+    auto compiler_options = options.compiler;
+    compiler_options.script_symbols = &script_symbols;
+
+    struct PendingOutput {
+        std::size_t script_index;
+        std::string header;
+        std::string source;
+    };
+    std::vector<PendingOutput> pending;
+    Manifest new_manifest;
+    std::unordered_map<std::string, std::string> class_owners;
+    std::set<std::string> output_names;
+    const Compiler compiler;
+    for (const auto input_index : compile_order) {
+        const auto& input = inputs[input_index];
+        CompiledProjectScript script;
+        script.relative_path = input.relative;
+        script.content_hash = input.implementation_hash;
+        script.public_abi_hash = input.public_abi_hash;
+        script.dependencies = input.dependencies;
+        script.is_abstract = input.is_abstract;
+        const auto expected_class_name =
+            "GDPPNative_" + input.native_class_stem + "_" + input.public_abi_hash.substr(0, 16);
+        for (const auto& inner : input.inner_classes) {
+            script.inner_class_names.push_back(expected_class_name + "__" + inner.name);
+        }
+        const auto cached = old_manifest.find(input.relative);
+        if (cached != old_manifest.end() &&
+            cached->second.implementation_hash == input.implementation_hash &&
+            cached->second.public_abi_hash == input.public_abi_hash &&
+            cached->second.class_name == expected_class_name &&
+            std::filesystem::is_regular_file(generated / cached->second.header) &&
+            std::filesystem::is_regular_file(generated / cached->second.source)) {
+            script.class_name = cached->second.class_name;
+            script.header_file_name = cached->second.header;
+            script.source_file_name = cached->second.source;
+            script.cache_hit = true;
+            ++result.cache_hit_count;
+        } else {
+            auto script_options = compiler_options;
+            script_options.native_class_suffix = "_" + input.public_abi_hash.substr(0, 16);
+            script_options.current_script_path = input.relative;
+            script_options.semantic_base_type = input.semantic_base_type;
+            if (input.script_base) {
+                const auto& base = inputs[*input.script_base];
+                const auto* base_symbol = script_symbols.find_path(base.relative);
+                script_options.native_base_class =
+                    base_symbol ? base_symbol->native_class_name : "";
+                script_options.native_base_header =
+                    base_symbol ? base_symbol->header_file_name : "";
+            } else if (input.extension_base.type) {
+                script_options.native_base_class = input.extension_base.type->cpp_type;
+                script_options.native_base_header = input.extension_base.type->header;
+            } else if (input.local_inner_base) {
+                script_options.native_base_class =
+                    "GDPPNative_" + input.native_class_stem + "_" +
+                    input.public_abi_hash.substr(0, 16) + "__" +
+                    input.inner_classes[*input.local_inner_base].name;
+                script_options.native_base_header.clear();
+            }
+            auto compilation = compiler.compile(input.relative, input.source, script_options);
+            if (!compilation.success) {
+                for (auto& diagnostic : compilation.diagnostics)
+                    result.diagnostics.push_back({input.path, std::move(diagnostic)});
+                continue;
+            }
+            script.class_name = compilation.unit.class_name;
+            script.header_file_name = compilation.unit.header_file_name;
+            script.source_file_name = compilation.unit.source_file_name;
+            script.inner_class_names = compilation.unit.inner_class_names;
+            script.is_abstract = compilation.unit.is_abstract;
+            pending.push_back({result.scripts.size(), std::move(compilation.unit.header),
+                               std::move(compilation.unit.source)});
+            ++result.compiled_count;
+        }
+        const auto [owner, unique_class] = class_owners.emplace(script.class_name, input.relative);
+        if (!unique_class) {
+            result.diagnostics.push_back(
+                {input.path,
+                 project_error("PRJ0005", "native class '" + script.class_name +
+                                              "' is also produced by " + owner->second)});
+        }
+        if (!output_names.insert(script.header_file_name).second ||
+            !output_names.insert(script.source_file_name).second) {
+            result.diagnostics.push_back(
+                {input.path, project_error("PRJ0006", "generated file name collision")});
+        }
+        new_manifest.emplace(input.relative,
+                             ManifestEntry{input.implementation_hash, input.public_abi_hash,
+                                           script.class_name, script.header_file_name,
+                                           script.source_file_name, input.dependencies});
+        result.scripts.push_back(std::move(script));
+    }
+    if (has_project_errors(result.diagnostics))
+        return result;
+
+    std::filesystem::create_directories(generated, error);
+    if (error) {
+        result.diagnostics.push_back(
+            {output, project_error("PRJ0007", "cannot create project build directories")});
+        return result;
+    }
+    for (const auto& item : pending) {
+        const auto& script = result.scripts[item.script_index];
+        if (!write_file_if_changed(generated / script.header_file_name, item.header) ||
+            !write_file_if_changed(generated / script.source_file_name, item.source)) {
+            result.diagnostics.push_back(
+                {generated, project_error("PRJ0008", "cannot write generated translation unit")});
+            return result;
+        }
+    }
+    for (const auto& [path, entry] : old_manifest) {
+        if (new_manifest.find(path) != new_manifest.end())
+            continue;
+        // A moved globally named script can keep the same generated file names. The new
+        // translation unit is written before stale manifest entries are removed, so deleting by
+        // old source path alone would also delete the freshly generated output.
+        if (!output_names.count(entry.header)) {
+            std::filesystem::remove(generated / entry.header, error);
+            error.clear();
+        }
+        if (!output_names.count(entry.source)) {
+            std::filesystem::remove(generated / entry.source, error);
+            error.clear();
+        }
+        ++result.removed_count;
+    }
+
+    const auto relative_library_directory = native_library_directory.lexically_relative(root);
+    const auto relative_output = output.lexically_relative(root);
+    const auto build_directory = containing_build_directory(root, relative_output);
+    const bool cmake_written =
+        !options.generate_cmake ||
+        write_file_if_changed(output / "CMakeLists.txt",
+                              generated_cmake(options, result.scripts, result.build_id,
+                                              native_library_directory, bridge_load.bridges));
+    const bool artifact_pruner_written =
+        !options.generate_cmake || write_file_if_changed(output / "prune_stale_development.cmake",
+                                                         generated_artifact_pruner());
+    if (!write_file_if_changed(output / "register_types.cpp",
+                               generated_registration(result.scripts)) ||
+        !cmake_written || !artifact_pruner_written ||
+        !write_file_if_changed(output / "gdpp_project.gdextension",
+                               generated_descriptor(relative_library_directory, result.build_id,
+                                                    options.compiler.target_version)) ||
+        !write_file_if_changed(output / "build_id.txt", result.build_id + "\n") ||
+        !write_file_if_changed(output / "bridge.lock",
+                               write_extension_bridge_lock(bridge_load.bridges)) ||
+        (build_directory &&
+         !write_file_if_changed(*build_directory / ".gdignore",
+                                "# Generated by GDPP. Keep native intermediates out of Godot's "
+                                "resource scan.\n")) ||
+        !write_file_if_changed(manifest_path, write_manifest(new_manifest))) {
+        result.diagnostics.push_back(
+            {output, project_error("PRJ0009", "cannot write project build scaffold")});
+        return result;
+    }
+
+    result.success = true;
+    if (options.generate_cmake) {
+        result.cmake_source_directory = output;
+        result.cmake_build_directory = output / "native";
+    }
+    result.extension_descriptor = output / "gdpp_project.gdextension";
+    result.native_library_directory = native_library_directory;
+    return result;
+}
+
+} // namespace gdpp
