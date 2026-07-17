@@ -131,7 +131,7 @@ def main() -> int:
     parser.add_argument("--target-godot", default="4.7")
     parser.add_argument("--file-timeout", type=float, default=10.0)
     parser.add_argument("--project-timeout", type=float, default=60.0)
-    parser.add_argument("--native-build-timeout", type=float, default=300.0)
+    parser.add_argument("--native-build-timeout", type=float, default=600.0)
     args = parser.parse_args()
 
     manifest = load_json(args.manifest)

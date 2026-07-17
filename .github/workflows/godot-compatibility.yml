@@ -29,9 +29,12 @@ jobs:
           version: ${{ matrix.version }}
           templates: linux
       - name: Configure compiler plugin and SDK
-        run: >-
-          cmake --preset plugin
-          -DGDPP_GODOT_EXECUTABLE=${{ steps.godot.outputs.executable }}
+        shell: bash
+        run: |
+          sdk_version="$(printf '%s' '${{ matrix.version }}' | cut -d. -f1,2)"
+          cmake --preset plugin \
+            -DGDPP_GODOT_EXECUTABLE=${{ steps.godot.outputs.executable }} \
+            -DGDPP_PACKAGE_GODOT_VERSIONS="$sdk_version"
       - name: Build compiler plugin and direct native targets
         run: cmake --build --preset plugin --parallel
       - name: Run compiler and Godot integration tests
@@ -168,7 +171,7 @@ jobs:
         run: cmake --build --preset dev --parallel
       - name: Compile pinned official Godot projects
         run: >-
-          ctest --preset dev --output-on-failure
+          ctest --preset dev --verbose --output-on-failure
           -R '^gdpp\.compatibility\.'
       - name: Upload compatibility report
         if: always()
