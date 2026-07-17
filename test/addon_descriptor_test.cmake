@@ -52,6 +52,16 @@ foreach(required_runtime_export IN ITEMS
             "Single-descriptor export transaction is missing: ${required_runtime_export}")
     endif()
 endforeach()
+foreach(required_scene_compatibility IN ITEMS
+        "current.has_method(&\"get_base_scene_state\")"
+        "current.call(&\"get_base_scene_state\") as SceneState")
+    string(FIND "${export_plugin}" "${required_scene_compatibility}" compatibility_offset)
+    if(compatibility_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Godot 4.4 scene-state compatibility guard is missing: "
+            "${required_scene_compatibility}")
+    endif()
+endforeach()
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/plugin.gd" editor_plugin)
 string(FIND "${editor_plugin}"
     "if not DirAccess.dir_exists_absolute(ndk_parent):" safe_ndk_probe)

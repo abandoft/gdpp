@@ -911,7 +911,12 @@ func _scene_state_chain(scene_state: SceneState) -> Array[SceneState]:
     var current := scene_state
     while current != null:
         result.append(current)
-        current = current.get_base_scene_state()
+        # Godot 4.5 exposed SceneState's existing base-state traversal to scripts. On the
+        # supported 4.4 baseline every scene resource is still transformed independently, but
+        # its local SceneState is the only state the editor API can inspect safely.
+        if not current.has_method(&"get_base_scene_state"):
+            break
+        current = current.call(&"get_base_scene_state") as SceneState
     return result
 
 
