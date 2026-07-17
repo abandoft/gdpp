@@ -110,7 +110,7 @@ func _export_begin(
     _target_architecture = _architecture_from_features(features)
     _target_variant = _web_variant_from_features(features)
     _build_profile = "debug" if is_debug else "release"
-    if not bool(get_option(STRIP_OPTION)):
+    if get_option(STRIP_OPTION) != true:
         print("GDPP: AOT source stripping is disabled for this export preset")
         # Godot 4.5 can reuse a remapped scene produced by an earlier AOT preset even when the
         # current preset disables transformation. Such a scene names GDPPNative classes that are
@@ -461,7 +461,7 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
             )
             return false
         var preset := get_export_preset()
-        if preset == null or not bool(preset.get("variant/extensions_support")):
+        if preset == null or preset.get("variant/extensions_support") != true:
             _fail_export(
                 "Web AOT requires the export preset option 'Variant > Extensions Support'"
             )
@@ -1443,8 +1443,8 @@ func _fail_export(message: String) -> void:
     push_error("GDPP export: %s" % message)
     var platform := get_export_platform()
     if platform != null:
-        var allow_fallback := bool(get_option(ALLOW_SOURCE_FALLBACK_OPTION))
-        var fail_closed := bool(get_option(STRIP_OPTION)) and not allow_fallback
+        var allow_fallback := get_option(ALLOW_SOURCE_FALLBACK_OPTION) == true
+        var fail_closed := get_option(STRIP_OPTION) == true and not allow_fallback
         platform.add_message(
             (
                 EditorExportPlatform.EXPORT_MESSAGE_ERROR
