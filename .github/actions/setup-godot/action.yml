@@ -1,0 +1,74 @@
+name: Setup official Godot
+description: Download a pinned Linux editor and an optional minimal export-template set.
+
+inputs:
+  version:
+    description: Exact stable Godot version, for example 4.5.2.
+    required: true
+  templates:
+    description: "Export templates to install: none, linux, android, or web."
+    required: false
+    default: none
+
+outputs:
+  executable:
+    description: Absolute path to the downloaded Godot editor.
+    value: ${{ steps.install.outputs.executable }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      name: Download official editor and templates
+      shell: bash
+      env:
+        GODOT_VERSION: ${{ inputs.version }}
+        GODOT_TEMPLATES: ${{ inputs.templates }}
+      run: |
+        set -euo pipefail
+        root="$GITHUB_WORKSPACE/build/ci/godot/$GODOT_VERSION"
+        mkdir -p "$root"
+        editor="$root/Godot_v${GODOT_VERSION}-stable_linux.x86_64"
+        if [[ ! -x "$editor" ]]; then
+          curl --fail --location --retry 3 \
+            --output "$root/editor.zip" \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q "$root/editor.zip" -d "$root"
+          chmod +x "$editor"
+        fi
+        echo "executable=$editor" >> "$GITHUB_OUTPUT"
+
+        if [[ "$GODOT_TEMPLATES" == "none" ]]; then
+          exit 0
+        fi
+        if [[ "$GODOT_TEMPLATES" != "linux" && "$GODOT_TEMPLATES" != "android" && \
+              "$GODOT_TEMPLATES" != "web" ]]; then
+          echo "Unsupported template set: $GODOT_TEMPLATES" >&2
+          exit 2
+        fi
+        archive="$root/export_templates.tpz"
+        curl --fail --location --retry 3 --output "$archive" \
+          "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+        extracted="$root/export-templates"
+        rm -rf "$extracted"
+        mkdir -p "$extracted"
+        if [[ "$GODOT_TEMPLATES" == "linux" ]]; then
+          unzip -q "$archive" templates/linux_debug.x86_64 templates/linux_release.x86_64 \
+            templates/version.txt -d "$extracted"
+        elif [[ "$GODOT_TEMPLATES" == "android" ]]; then
+          unzip -q "$archive" templates/android_debug.apk templates/android_release.apk \
+            templates/version.txt -d "$extracted"
+        else
+          mapfile -t web_templates < <(
+            unzip -Z1 "$archive" | grep -E '^templates/web.*\.zip$' | LC_ALL=C sort
+          )
+          if [[ ${#web_templates[@]} -lt 4 ]]; then
+            echo "Expected threaded/unthreaded Web templates with and without GDExtension; found ${#web_templates[@]}" >&2
+            printf '%s\n' "${web_templates[@]}" >&2
+            exit 3
+          fi
+          unzip -q "$archive" "${web_templates[@]}" templates/version.txt -d "$extracted"
+        fi
+        destination="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+        mkdir -p "$destination"
+        cp "$extracted"/templates/* "$destination/"

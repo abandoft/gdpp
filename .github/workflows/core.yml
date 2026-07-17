@@ -1,0 +1,31 @@
+name: Compiler core
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Core / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure compiler
+        run: cmake --preset dev
+      - name: Build compiler and unit tests
+        run: cmake --build --preset dev --parallel
+      - name: Run compiler tests
+        run: ctest --preset dev

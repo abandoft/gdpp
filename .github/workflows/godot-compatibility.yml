@@ -1,0 +1,175 @@
+name: Godot compatibility
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: godot-compatibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    name: Godot / ${{ matrix.version }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [4.4, 4.5.2, 4.6.3, 4.7]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - id: godot
+        uses: ./.github/actions/setup-godot
+        with:
+          version: ${{ matrix.version }}
+          templates: linux
+      - name: Configure compiler plugin and SDK
+        run: >-
+          cmake --preset plugin
+          -DGDPP_GODOT_EXECUTABLE=${{ steps.godot.outputs.executable }}
+      - name: Build compiler plugin and direct native targets
+        run: cmake --build --preset plugin --parallel
+      - name: Run compiler and Godot integration tests
+        run: ctest --preset plugin
+      - name: Preflight project and export plugin
+        shell: bash
+        env:
+          GODOT: ${{ steps.godot.outputs.executable }}
+        run: |
+          set -euo pipefail
+          mkdir -p example/addons/gdpp/build/export
+          "$GODOT" --headless --editor --path example --quit-after 120 \
+            2>&1 | tee example/addons/gdpp/build/export/gdpp-warmup.log
+          "$GODOT" --headless --editor --path example --import \
+            2>&1 | tee example/addons/gdpp/build/export/gdpp-preflight.log
+          if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|Parse Error:|WARNING:|Unable to open' \
+              example/addons/gdpp/build/export/gdpp-preflight.log; then
+            echo 'Godot project or export plugin failed its parse/load preflight.'
+            exit 1
+          fi
+      - name: Export, run and audit binary-only project
+        shell: bash
+        env:
+          GODOT: ${{ steps.godot.outputs.executable }}
+        run: |
+          set -euo pipefail
+          output=example/addons/gdpp/build/export
+          "$GODOT" --headless --editor --path example \
+            --export-release 'Linux x86_64' "$output/aot/gdpp-runtime.x86_64" \
+            2>&1 | tee "$output/gdpp-aot-export.log"
+          project=example/addons/gdpp/binary/libgdpp_project.release.linux.x86_64.so
+          test -x "$output/aot/gdpp-runtime.x86_64"
+          test -f "$project"
+          test "$(nm -D --defined-only "$project" | awk 'NF {print $NF}' | wc -l)" -eq 1
+          nm -D --defined-only "$project" | awk 'NF {print $NF}' | \
+            grep -qx gdpp_project_library_init
+          if readelf -S "$project" | grep '\.symtab' >/dev/null; then
+            echo 'Linux Release project library contains a normal symbol table.'
+            exit 1
+          fi
+          timeout 15s "$output/aot/gdpp-runtime.x86_64" --headless --quit-after 2 \
+            2>&1 | tee "$output/gdpp-aot-runtime.log"
+          grep -q '^GDPP_EXPORTED_PROPERTIES_OK$' "$output/gdpp-aot-runtime.log"
+          grep -q 'GDPP_AOT_SUMMARY scenes=' "$output/gdpp-aot-export.log"
+          if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|WARNING:|Unable to open' \
+              "$output/gdpp-aot-export.log" "$output/gdpp-aot-runtime.log"; then
+            echo 'AOT export or runtime emitted a forbidden diagnostic.'
+            exit 1
+          fi
+
+          mkdir -p build/pck-audit
+          cp tools/audit_export_pck.gd build/pck-audit/audit_export_pck.gd
+          printf '[application]\nconfig/name="GDPP PCK Audit"\n' > build/pck-audit/project.godot
+          "$GODOT" --headless --path build/pck-audit \
+            --script "$GITHUB_WORKSPACE/build/pck-audit/audit_export_pck.gd" -- \
+            "$GITHUB_WORKSPACE/$output/aot/gdpp-runtime.pck" \
+            "$GITHUB_WORKSPACE/$output/aot" "$GITHUB_WORKSPACE/$project" \
+            2>&1 | tee "$output/gdpp-pck-audit.log"
+          grep -q '^PCK_AUDIT_VIOLATIONS=0$' "$output/gdpp-pck-audit.log"
+          grep -q '^PCK_AUDIT_PROJECT_LIBRARIES=1$' "$output/gdpp-pck-audit.log"
+      - name: Compare GDScript and AOT behavior/performance
+        shell: bash
+        env:
+          GODOT: ${{ steps.godot.outputs.executable }}
+        run: |
+          set -euo pipefail
+          output=example/addons/gdpp/build/export
+          "$GODOT" --headless --editor --path example \
+            --export-release 'Linux GDScript Fallback' "$output/gds/gdpp-runtime-gds.x86_64" \
+            2>&1 | tee "$output/gdpp-gds-export.log"
+          if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|WARNING:|Unable to open' \
+              "$output/gdpp-gds-export.log"; then
+            echo 'GDScript comparison export emitted a forbidden diagnostic.'
+            exit 1
+          fi
+          python3 tools/run_runtime_matrix.py \
+            --gds-executable "$output/gds/gdpp-runtime-gds.x86_64" \
+            --aot-executable "$output/aot/gdpp-runtime.x86_64" \
+            --gds-pck "$output/gds/gdpp-runtime-gds.pck" \
+            --aot-pck "$output/aot/gdpp-runtime.pck" \
+            --gds-artifact-directory "$output/gds" \
+            --aot-artifact-directory "$output/aot" \
+            --output "$output/runtime-matrix.json" \
+            --work-directory example/addons/gdpp/build/runtime-matrix \
+            --repeats 3 --samples 5 --iterations 10000 --enforce
+      - name: Verify binary-only export fails closed without its SDK
+        shell: bash
+        env:
+          GODOT: ${{ steps.godot.outputs.executable }}
+        run: |
+          set -euo pipefail
+          sdk_version="$(printf '%s' '${{ matrix.version }}' | cut -d. -f1,2)"
+          sdk="example/addons/gdpp/sdk/$sdk_version"
+          mv "$sdk" "$sdk.unavailable"
+          trap 'mv "$sdk.unavailable" "$sdk" 2>/dev/null || true' EXIT
+          set +e
+          "$GODOT" --headless --editor --path example \
+            --export-pack 'Linux x86_64' \
+            example/addons/gdpp/build/export/gdpp-must-fail.pck \
+            > example/addons/gdpp/build/export/gdpp-must-fail.log 2>&1
+          status=$?
+          set -e
+          test "$status" -ne 0 || \
+            grep -q 'binary-only export is blocked to prevent source disclosure' \
+              example/addons/gdpp/build/export/gdpp-must-fail.log
+          grep -q 'binary-only export is blocked to prevent source disclosure' \
+            example/addons/gdpp/build/export/gdpp-must-fail.log
+      - name: Upload compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-${{ matrix.version }}-compatibility
+          path: |
+            example/addons/gdpp/build/export/*.log
+            example/addons/gdpp/build/export/runtime-matrix.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  official-corpus:
+    name: Official project corpus
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure pinned official corpus
+        run: cmake --preset dev -DGDPP_ENABLE_OFFICIAL_CORPUS_TESTS=ON
+      - name: Build compiler
+        run: cmake --build --preset dev --parallel
+      - name: Compile pinned official Godot projects
+        run: >-
+          ctest --preset dev --output-on-failure
+          -R '^gdpp\.compatibility\.'
+      - name: Upload compatibility report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-project-compatibility-report
+          path: build/dev/compatibility/results/report.json
+          if-no-files-found: warn
+          retention-days: 14
