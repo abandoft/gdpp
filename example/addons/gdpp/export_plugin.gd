@@ -1443,8 +1443,8 @@ func _fail_export(message: String) -> void:
     push_error("GDPP export: %s" % message)
     var platform := get_export_platform()
     if platform != null:
-        var allow_fallback := get_option(ALLOW_SOURCE_FALLBACK_OPTION) == true
-        var fail_closed := get_option(STRIP_OPTION) == true and not allow_fallback
+        var allow_fallback: bool = get_option(ALLOW_SOURCE_FALLBACK_OPTION) == true
+        var fail_closed: bool = get_option(STRIP_OPTION) == true and not allow_fallback
         platform.add_message(
             (
                 EditorExportPlatform.EXPORT_MESSAGE_ERROR
