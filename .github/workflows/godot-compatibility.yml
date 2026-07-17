@@ -146,8 +146,15 @@ jobs:
           set -euo pipefail
           sdk_version="$(printf '%s' '${{ matrix.version }}' | cut -d. -f1,2)"
           sdk="example/addons/gdpp/sdk/$sdk_version"
+          project="example/addons/gdpp/binary/libgdpp_project.release.linux.x86_64.so"
+          test -f "$project"
           mv "$sdk" "$sdk.unavailable"
-          trap 'mv "$sdk.unavailable" "$sdk" 2>/dev/null || true' EXIT
+          mv "$project" "$project.unavailable"
+          restore_fault_injection() {
+            mv "$sdk.unavailable" "$sdk" 2>/dev/null || true
+            mv "$project.unavailable" "$project" 2>/dev/null || true
+          }
+          trap restore_fault_injection EXIT
           set +e
           "$GODOT" --headless --editor --path example \
             --export-pack 'Linux x86_64' \
