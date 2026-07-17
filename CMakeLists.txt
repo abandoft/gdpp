@@ -37,8 +37,12 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 # godot-cpp imports Python modules while generating bindings. Keep bytecode caches out of the
 # pinned source submodule so every intermediate artifact remains below the root build directory.
 set(ENV{PYTHONDONTWRITEBYTECODE} "1")
+# RULE_LAUNCH_CUSTOM is a raw shell fragment rather than an argv list, so VERBATIM cannot quote
+# the launcher executable for us.  Keep the quotes explicit: hosted Windows CMake installations
+# live below "Program Files", and an unquoted launcher otherwise fails before any custom command
+# can start.
 set_property(GLOBAL PROPERTY RULE_LAUNCH_CUSTOM
-    "${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1"
+    "\"${CMAKE_COMMAND}\" -E env PYTHONDONTWRITEBYTECODE=1"
 )
 
 option(GDPP_BUILD_CLI "Build the gdpp command-line compiler" ON)
