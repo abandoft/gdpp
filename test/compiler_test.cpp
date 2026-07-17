@@ -735,7 +735,10 @@ TEST_CASE("compiler preserves explicit typed iterator variables") {
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("gdpp::runtime::iter_init") != std::string::npos);
-    REQUIRE(result.unit.source.find("int64_t value = static_cast<int64_t>(godot::Variant(") !=
+    REQUIRE(
+        result.unit.source.find("int64_t value = static_cast<int64_t>(gdpp::runtime::iter_get(") !=
+        std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Variant(gdpp::runtime::iter_get(") ==
             std::string::npos);
 }
 
@@ -768,7 +771,9 @@ TEST_CASE("compiler preserves typed subscript and builtin component scalar seman
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("_gdpp_subscript_container_") != std::string::npos);
-    REQUIRE(result.unit.source.find("static_cast<int64_t>(godot::Variant(") != std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<int64_t>(values[") != std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<int64_t>(godot::Variant(values[") ==
+            std::string::npos);
     REQUIRE(result.unit.source.find("static_cast<int64_t>(_gdpp_subscript_container_") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("static_cast<double>(vector.x)") != std::string::npos);
@@ -1189,6 +1194,27 @@ TEST_CASE("compiler retains local lambda adapters for direct native calls") {
     REQUIRE(result.unit.source.find("godot::Callable operation") == std::string::npos);
 }
 
+TEST_CASE("compiler preserves native scalar paths across dynamic boundaries") {
+    const gdpp::Compiler compiler;
+    const auto result =
+        compiler.compile("dynamic_scalar_fast_paths.gd",
+                         "func update(values: Dictionary, callback: Callable) -> int:\n"
+                         "    values.integer_value += 1\n"
+                         "    values.float_value += 0.5\n"
+                         "    var total: int = 0\n"
+                         "    total += callback.call(2)\n"
+                         "    return total + int(values.integer_value)\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("gdpp::runtime::compound_assign_integer(") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::compound_assign(") != std::string::npos);
+    REQUIRE(result.unit.source.find("total + static_cast<int64_t>(") != std::string::npos);
+    REQUIRE(result.unit.source.find("const auto _gdpp_callable_argument_") != std::string::npos);
+    REQUIRE(result.unit.source.find("const godot::Variant _gdpp_callable_argument_") ==
+            std::string::npos);
+}
+
 TEST_CASE("compiler rejects direct Callable and unknown expression invocation") {
     const gdpp::Compiler compiler;
     const auto direct =
@@ -1569,7 +1595,7 @@ TEST_CASE("builtin unary operators use Variant evaluation when godot-cpp has no 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("godot::Variant::OP_POSITIVE") != std::string::npos);
     REQUIRE(result.unit.source.find("godot::Variant::OP_NEGATE") != std::string::npos);
-    REQUIRE(result.unit.source.find("static_cast<godot::Vector2>(godot::Variant(") !=
+    REQUIRE(result.unit.source.find("static_cast<godot::Vector2>(gdpp::runtime::unary(") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("return (+value);") != std::string::npos);
 }

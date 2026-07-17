@@ -223,6 +223,50 @@ godot::Variant binary(godot::Variant::Operator operation, const godot::Variant& 
     return result;
 }
 
+godot::Variant binary_integer(const godot::Variant::Operator operation, const godot::Variant& left,
+                              const std::int64_t right) {
+    if (left.get_type() == godot::Variant::INT) {
+        const auto left_value = static_cast<std::int64_t>(left);
+        if (operation == godot::Variant::OP_ADD || operation == godot::Variant::OP_BIT_AND) {
+            const auto left_bits = static_cast<std::uint64_t>(left_value);
+            const auto right_bits = static_cast<std::uint64_t>(right);
+            const auto result_bits = operation == godot::Variant::OP_ADD ? left_bits + right_bits
+                                                                         : left_bits & right_bits;
+            std::int64_t result = 0;
+            std::memcpy(&result, &result_bits, sizeof(result));
+            return result;
+        }
+    }
+    return binary(operation, left, godot::Variant(right));
+}
+
+godot::Variant binary_integer(const godot::Variant::Operator operation, const std::int64_t left,
+                              const godot::Variant& right) {
+    if (right.get_type() == godot::Variant::INT) {
+        const auto right_value = static_cast<std::int64_t>(right);
+        if (operation == godot::Variant::OP_ADD || operation == godot::Variant::OP_BIT_AND) {
+            const auto left_bits = static_cast<std::uint64_t>(left);
+            const auto right_bits = static_cast<std::uint64_t>(right_value);
+            const auto result_bits = operation == godot::Variant::OP_ADD ? left_bits + right_bits
+                                                                         : left_bits & right_bits;
+            std::int64_t result = 0;
+            std::memcpy(&result, &result_bits, sizeof(result));
+            return result;
+        }
+    }
+    return binary(operation, godot::Variant(left), right);
+}
+
+void compound_assign(godot::Variant& target, const godot::Variant::Operator operation,
+                     const godot::Variant& value) {
+    target = binary(operation, target, value);
+}
+
+void compound_assign_integer(godot::Variant& target, const godot::Variant::Operator operation,
+                             const std::int64_t value) {
+    target = binary_integer(operation, target, value);
+}
+
 godot::Variant unary(godot::Variant::Operator operation, const godot::Variant& operand) {
     godot::Variant result;
     bool valid = false;

@@ -23,6 +23,17 @@ namespace gdpp::runtime {
 
 [[nodiscard]] godot::Variant binary(godot::Variant::Operator operation, const godot::Variant& left,
                                     const godot::Variant& right);
+// Keep statically typed integer operands out of temporary Variant wrappers. These entry points are
+// particularly important for mixed expressions such as `dictionary.value & 3` and
+// `typed_total += callable.call()`, where only one side is genuinely dynamic.
+[[nodiscard]] godot::Variant binary_integer(godot::Variant::Operator operation,
+                                            const godot::Variant& left, std::int64_t right);
+[[nodiscard]] godot::Variant binary_integer(godot::Variant::Operator operation, std::int64_t left,
+                                            const godot::Variant& right);
+void compound_assign(godot::Variant& target, godot::Variant::Operator operation,
+                     const godot::Variant& value);
+void compound_assign_integer(godot::Variant& target, godot::Variant::Operator operation,
+                             std::int64_t value);
 [[nodiscard]] godot::Variant unary(godot::Variant::Operator operation,
                                    const godot::Variant& operand);
 [[nodiscard]] bool is_instance_valid(const godot::Variant& value) noexcept;
@@ -136,7 +147,7 @@ template <typename Callback> class LocalCallable final : public godot::Callable 
         if (!direct_)
             return godot::Callable::call(arguments...);
         LocalCallableArguments<sizeof...(Arguments)> values(
-            std::array<godot::Variant, sizeof...(Arguments)>{godot::Variant(arguments)...});
+            std::array<godot::Variant, sizeof...(Arguments)>{arguments...});
         return callback_(values);
     }
 
