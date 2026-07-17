@@ -143,8 +143,27 @@ jobs:
           root="example/addons/gdpp/build/ios"
           project="$(find "$root" -type d -name '*.xcodeproj' -print -quit)"
           test -n "$project"
+          engine_archive="$(find "$root" -path \
+            '*/GDPPExample.xcframework/*-simulator/libgodot.a' -print -quit)"
+          project_library="$(find "$root" -path \
+            '*libgdpp_project.release.ios.arm64.xcframework/*-simulator/libgdpp_project.dylib' \
+            -print -quit)"
+          test -n "$engine_archive"
+          test -n "$project_library"
+          engine_archs="$(xcrun lipo -archs "$engine_archive")"
+          if grep -qw arm64 <<<"$engine_archs"; then
+            simulator_arch=arm64
+          elif grep -qw x86_64 <<<"$engine_archs"; then
+            simulator_arch=x86_64
+          else
+            echo "Official Godot Simulator archive has no supported architecture: $engine_archs"
+            exit 1
+          fi
+          xcrun lipo -archs "$project_library" | grep -qw "$simulator_arch"
+          echo "Building the architecture supplied by the official Godot template: $simulator_arch"
           xcodebuild -project "$project" -configuration Release \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            ARCHS="$simulator_arch" ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO build \
             | tee "$root/xcodebuild.log"
           grep -q '\*\* BUILD SUCCEEDED \*\*' "$root/xcodebuild.log"

@@ -55,7 +55,10 @@ addons/gdpp/binary/libgdpp_project.<debug|release>.ios.arm64.xcframework/
 
 仓库的 iOS 流水线分为两层：Godot 4.4～4.7 target pack 矩阵检查三种切片、最低版本、路径
 可复现性和 SDK 契约；Godot 4.6.2 集成门禁再生成无源码 Xcode 工程，并以关闭签名的方式完成
-iOS Simulator Release 构建。关闭签名只用于可重复 CI，不代表正式包可以省略 Apple 签名。
+iOS Simulator Release 构建。集成门禁从官方 Godot 模板的实际静态库读取可用架构，并只选择
+该架构与 GDPP Universal Simulator target pack 的交集；target pack 矩阵仍独立强制检查 arm64
+和 x86_64，避免官方模板的单架构限制掩盖 GDPP 切片缺失。关闭签名只用于可重复 CI，不代表
+正式包可以省略 Apple 签名。
 
 商业发布仍需在发布组织自己的 Apple 账号环境完成：
 
