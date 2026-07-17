@@ -34,7 +34,7 @@ jobs:
       matrix:
         version: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.target != 'all' && format('["{0}"]', inputs.target) || '["4.4.1","4.5.2","4.6.3","4.7"]') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - id: godot
@@ -162,7 +162,7 @@ jobs:
             example/addons/gdpp/build/export/gdpp-must-fail.log
       - name: Upload compatibility evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: godot-${{ matrix.version }}-compatibility
           path: |
@@ -177,7 +177,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - name: Configure pinned official corpus
@@ -190,7 +190,7 @@ jobs:
           -R '^gdpp\.compatibility\.'
       - name: Upload compatibility report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: official-project-compatibility-report
           path: build/dev/compatibility/results/report.json

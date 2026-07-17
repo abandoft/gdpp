@@ -23,7 +23,7 @@ jobs:
       matrix:
         godot: [4.4, 4.5, 4.6, 4.7]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: android-actions/setup-android@v3
@@ -51,7 +51,7 @@ jobs:
           test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_debug*.a' | wc -l)" -eq 1
           test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_release*.a' | wc -l)" -eq 1
       - name: Upload target SDK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gdpp-android-arm64-godot-${{ matrix.godot }}
           path: example/addons/gdpp/sdk/${{ matrix.godot }}/android/arm64
@@ -62,7 +62,7 @@ jobs:
     name: Android APK / Godot 4.5.2 / arm64
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: android-actions/setup-android@v3
@@ -144,7 +144,7 @@ jobs:
           grep -q 'GDPP_AOT_SUMMARY scenes=' "$root/export.log"
       - name: Upload APK evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gdpp-android-apk-godot-4.5.2
           path: example/addons/gdpp/build/android
