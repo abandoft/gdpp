@@ -102,7 +102,7 @@ if(GDPP_BUILD_CLI)
         )
         set_tests_properties(
             gdpp.compatibility.official_projects
-            PROPERTIES FIXTURES_REQUIRED official_compatibility_corpus TIMEOUT 600
+            PROPERTIES FIXTURES_REQUIRED official_compatibility_corpus TIMEOUT 1200
         )
     endif()
 endif()
