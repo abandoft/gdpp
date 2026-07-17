@@ -1,0 +1,231 @@
+#pragma once
+
+#include "gdpp/core/source.hpp"
+#include "gdpp/semantic/intrinsics.hpp"
+#include "gdpp/semantic/type.hpp"
+
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace gdpp::ir {
+
+struct LambdaExpression;
+
+enum class ExpressionKind {
+    literal,
+    identifier,
+    unary,
+    binary,
+    call,
+    member,
+    subscript,
+    conditional,
+    node_reference,
+    array_literal,
+    dictionary_literal,
+    lambda,
+};
+
+enum class LiteralKind { none, nil, boolean, integer, floating, string, string_name, node_path };
+
+enum class ResolutionKind {
+    none,
+    godot_method,
+    godot_property,
+    godot_constructor,
+    godot_singleton,
+    external_singleton,
+    godot_type,
+    external_type,
+    script_type,
+    script_autoload,
+    script_constant,
+    script_enum_type,
+    script_resource,
+    script_constructor,
+    external_constructor,
+    external_static_method,
+    external_callable,
+    external_signal,
+    inner_constructor,
+    inner_type,
+    script_super,
+    script_signal,
+    script_callable,
+    script_static_callable,
+    script_static_field,
+    script_free,
+    enum_member,
+    script_property,
+    dynamic_method,
+    dynamic_property,
+    utility_function,
+    global_constant,
+    global_enum_type,
+    global_enum_value,
+    builtin_constant,
+    intrinsic,
+};
+
+struct Expression {
+    ExpressionKind kind{ExpressionKind::literal};
+    Type type;
+    SourceSpan span{};
+    std::string value;
+    LiteralKind literal_kind{LiteralKind::none};
+    ResolutionKind resolution{ResolutionKind::none};
+    std::string resolved_owner;
+    std::string getter;
+    std::string setter;
+    bool direct_access{false};
+    std::int64_t indexed_argument{-1};
+    IntrinsicKind intrinsic{IntrinsicKind::none};
+    std::vector<std::unique_ptr<Expression>> operands;
+    std::unique_ptr<LambdaExpression> lambda;
+};
+
+using ExpressionPtr = std::unique_ptr<Expression>;
+
+enum class StatementKind {
+    expression,
+    return_statement,
+    await_statement,
+    await_variable,
+    assert_statement,
+    variable,
+    assignment,
+    if_statement,
+    match_statement,
+    match_branch,
+    while_statement,
+    for_statement,
+    pass_statement,
+    break_statement,
+    continue_statement,
+};
+
+enum class MatchPatternKind { value, wildcard, binding };
+
+struct MatchPattern {
+    MatchPatternKind kind{MatchPatternKind::value};
+    std::string name;
+    ExpressionPtr expression;
+    SourceSpan span{};
+};
+
+struct Statement {
+    StatementKind kind{StatementKind::expression};
+    SourceSpan span{};
+    std::string name;
+    Type declared_type;
+    std::string operation;
+    ExpressionPtr expression;
+    ExpressionPtr condition;
+    std::vector<Statement> body;
+    std::vector<Statement> else_body;
+    std::vector<MatchPattern> patterns;
+};
+
+struct PropertyAccessor {
+    std::string parameter;
+    std::string method;
+    std::vector<Statement> body;
+    SourceSpan span{};
+};
+
+struct Parameter {
+    std::string name;
+    Type type;
+    ExpressionPtr default_value;
+    SourceSpan span{};
+};
+
+enum class PropertyArgumentKind { number, string };
+
+struct PropertyArgument {
+    PropertyArgumentKind kind{PropertyArgumentKind::string};
+    std::string value;
+};
+
+struct PropertyAnnotation {
+    std::string name;
+    std::vector<PropertyArgument> arguments;
+};
+
+struct EnumEntry {
+    std::string name;
+    std::int64_t value{0};
+};
+
+struct Enum {
+    std::string name;
+    std::vector<EnumEntry> entries;
+    SourceSpan span{};
+};
+
+struct Field {
+    std::string name;
+    Type type;
+    Type property_type;
+    ExpressionPtr initializer;
+    std::optional<PropertyAnnotation> property;
+    std::vector<PropertyAnnotation> property_groups;
+    std::optional<PropertyAccessor> getter;
+    std::optional<PropertyAccessor> setter;
+    std::string enum_hint;
+    bool is_constant{false};
+    bool is_static{false};
+    bool onready{false};
+    SourceSpan span{};
+};
+
+struct Signal {
+    std::string name;
+    std::vector<Parameter> parameters;
+    SourceSpan span{};
+};
+
+struct Function {
+    std::string name;
+    std::vector<Parameter> parameters;
+    Type return_type;
+    std::vector<Statement> body;
+    bool is_static{false};
+    SourceSpan span{};
+};
+
+struct LambdaExpression {
+    std::vector<Parameter> parameters;
+    Type return_type;
+    std::vector<Statement> body;
+    bool owner_bound{false};
+    SourceSpan span{};
+};
+
+struct Class {
+    std::string name;
+    std::string base_type{"RefCounted"};
+    std::vector<Enum> enums;
+    std::vector<Field> fields;
+    std::vector<Signal> signals;
+    std::vector<Function> functions;
+    std::vector<Class> classes;
+    SourceSpan span{};
+};
+
+struct Module {
+    std::optional<std::string> base_type;
+    std::optional<std::string> class_name;
+    bool is_abstract{false};
+    std::vector<Enum> enums;
+    std::vector<Field> fields;
+    std::vector<Signal> signals;
+    std::vector<Function> functions;
+    std::vector<Class> classes;
+    SourceSpan span{};
+};
+
+} // namespace gdpp::ir

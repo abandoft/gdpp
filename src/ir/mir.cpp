@@ -1,4 +1,4 @@
-#include "gdpp/mir.hpp"
+#include "gdpp/ir/mir.hpp"
 
 #include <algorithm>
 #include <functional>

@@ -1,6 +1,6 @@
 #include "support/test.hpp"
 
-#include "gdpp/compiler.hpp"
+#include "gdpp/compiler/compiler.hpp"
 
 #include <algorithm>
 #include <string>

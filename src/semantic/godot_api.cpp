@@ -1,4 +1,4 @@
-#include "gdpp/godot_api.hpp"
+#include "gdpp/semantic/godot_api.hpp"
 
 #include <algorithm>
 #include <iterator>

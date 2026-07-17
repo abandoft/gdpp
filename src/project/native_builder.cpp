@@ -1,7 +1,7 @@
-#include "gdpp/native_builder.hpp"
+#include "gdpp/project/native_builder.hpp"
 
-#include "gdpp/path_utf8.hpp"
-#include "gdpp/sha256.hpp"
+#include "gdpp/support/path_utf8.hpp"
+#include "gdpp/support/sha256.hpp"
 #include "gdpp/version.hpp"
 
 #include <algorithm>

@@ -1,6 +1,6 @@
 #include "support/test.hpp"
 
-#include "gdpp/native_builder.hpp"
+#include "gdpp/project/native_builder.hpp"
 #include "gdpp/version.hpp"
 
 #include <algorithm>

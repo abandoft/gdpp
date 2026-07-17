@@ -1,9 +1,9 @@
 #include "support/test.hpp"
 
-#include "gdpp/diagnostic.hpp"
-#include "gdpp/lexer.hpp"
-#include "gdpp/parser.hpp"
-#include "gdpp/source.hpp"
+#include "gdpp/core/diagnostic.hpp"
+#include "gdpp/core/source.hpp"
+#include "gdpp/frontend/lexer.hpp"
+#include "gdpp/frontend/parser.hpp"
 
 TEST_CASE("parser builds declarations and structured function body") {
     const gdpp::SourceFile source{"player.gd", "extends Node\n"

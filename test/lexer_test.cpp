@@ -1,9 +1,9 @@
 #include "support/test.hpp"
 
-#include "gdpp/diagnostic.hpp"
-#include "gdpp/lexer.hpp"
-#include "gdpp/source.hpp"
-#include "gdpp/token.hpp"
+#include "gdpp/core/diagnostic.hpp"
+#include "gdpp/core/source.hpp"
+#include "gdpp/frontend/lexer.hpp"
+#include "gdpp/frontend/token.hpp"
 
 #include <algorithm>
 

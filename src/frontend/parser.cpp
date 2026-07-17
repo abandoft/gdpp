@@ -1,6 +1,6 @@
-#include "gdpp/parser.hpp"
+#include "gdpp/frontend/parser.hpp"
 
-#include "gdpp/language_features.hpp"
+#include "gdpp/frontend/language_features.hpp"
 
 #include <algorithm>
 #include <limits>

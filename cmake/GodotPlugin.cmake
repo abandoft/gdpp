@@ -143,15 +143,18 @@ file(MAKE_DIRECTORY
 add_library(
     gdpp_godot_plugin
     SHARED
-    "${CMAKE_SOURCE_DIR}/src/godot/compiler_service.cpp"
-    "${CMAKE_SOURCE_DIR}/src/godot/register_types.cpp"
+    "${CMAKE_SOURCE_DIR}/src/integration/godot/compiler_service.cpp"
+    "${CMAKE_SOURCE_DIR}/src/integration/godot/register_types.cpp"
 )
 find_package(Threads REQUIRED)
 target_link_libraries(
     gdpp_godot_plugin
     PRIVATE gdpp::core gdpp::runtime godot::cpp Threads::Threads
 )
-target_include_directories(gdpp_godot_plugin PRIVATE "${CMAKE_SOURCE_DIR}/src/godot")
+target_include_directories(
+    gdpp_godot_plugin
+    PRIVATE "${CMAKE_SOURCE_DIR}/src/integration/godot"
+)
 target_compile_features(gdpp_godot_plugin PRIVATE cxx_std_17)
 set_target_properties(gdpp_godot_plugin PROPERTIES
     CXX_VISIBILITY_PRESET hidden
@@ -230,7 +233,11 @@ file(GENERATE
 
 # A tiny no-op runtime keeps ordinary GDScript exports runnable when an AOT export preflight fails.
 # On a successful export the export plugin replaces the stable descriptor with the project library.
-add_library(gdpp_fallback SHARED "${CMAKE_SOURCE_DIR}/src/godot/export_fallback.cpp")
+add_library(
+    gdpp_fallback
+    SHARED
+    "${CMAKE_SOURCE_DIR}/src/integration/godot/export_fallback.cpp"
+)
 target_link_libraries(gdpp_fallback PRIVATE godot::cpp)
 target_compile_features(gdpp_fallback PRIVATE cxx_std_17)
 set_target_properties(gdpp_fallback PROPERTIES

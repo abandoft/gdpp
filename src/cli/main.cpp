@@ -1,8 +1,8 @@
-#include "gdpp/compiler.hpp"
-#include "gdpp/diagnostic.hpp"
-#include "gdpp/path_utf8.hpp"
-#include "gdpp/project_compiler.hpp"
-#include "gdpp/source.hpp"
+#include "gdpp/compiler/compiler.hpp"
+#include "gdpp/core/diagnostic.hpp"
+#include "gdpp/core/source.hpp"
+#include "gdpp/project/project_compiler.hpp"
+#include "gdpp/support/path_utf8.hpp"
 #include "gdpp/version.hpp"
 
 #include <filesystem>

@@ -1,8 +1,8 @@
 #include "support/test.hpp"
 
-#include "gdpp/path_utf8.hpp"
-#include "gdpp/project_compiler.hpp"
-#include "gdpp/sha256.hpp"
+#include "gdpp/project/project_compiler.hpp"
+#include "gdpp/support/path_utf8.hpp"
+#include "gdpp/support/sha256.hpp"
 #include "gdpp/version.hpp"
 
 #include <algorithm>

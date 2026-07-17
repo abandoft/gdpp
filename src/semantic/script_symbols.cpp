@@ -1,4 +1,4 @@
-#include "gdpp/script_symbols.hpp"
+#include "gdpp/semantic/script_symbols.hpp"
 
 #include <algorithm>
 #include <filesystem>

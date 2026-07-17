@@ -1,7 +1,7 @@
-#include "gdpp/extension_bridge.hpp"
+#include "gdpp/project/extension_bridge.hpp"
 
-#include "gdpp/path_utf8.hpp"
-#include "gdpp/sha256.hpp"
+#include "gdpp/support/path_utf8.hpp"
+#include "gdpp/support/sha256.hpp"
 
 #include <algorithm>
 #include <cctype>

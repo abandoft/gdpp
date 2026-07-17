@@ -1,6 +1,6 @@
 #include "support/test.hpp"
 
-#include "gdpp/godot_api.hpp"
+#include "gdpp/semantic/godot_api.hpp"
 
 #include <string_view>
 

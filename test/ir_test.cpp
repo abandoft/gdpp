@@ -1,12 +1,12 @@
 #include "support/test.hpp"
 
-#include "gdpp/diagnostic.hpp"
-#include "gdpp/ir_lowerer.hpp"
-#include "gdpp/ir_optimizer.hpp"
-#include "gdpp/lexer.hpp"
-#include "gdpp/parser.hpp"
-#include "gdpp/semantic.hpp"
-#include "gdpp/source.hpp"
+#include "gdpp/core/diagnostic.hpp"
+#include "gdpp/core/source.hpp"
+#include "gdpp/frontend/lexer.hpp"
+#include "gdpp/frontend/parser.hpp"
+#include "gdpp/ir/lowering.hpp"
+#include "gdpp/ir/optimizer.hpp"
+#include "gdpp/semantic/analyzer.hpp"
 
 namespace {
 

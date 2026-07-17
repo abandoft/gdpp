@@ -1,0 +1,343 @@
+#include "gdpp/ir/optimizer.hpp"
+
+#include <algorithm>
+#include <charconv>
+#include <cmath>
+#include <iomanip>
+#include <limits>
+#include <optional>
+#include <sstream>
+#include <string>
+
+namespace gdpp {
+namespace {
+
+bool is_numeric_literal(const ir::Expression& expression) {
+    return expression.kind == ir::ExpressionKind::literal &&
+           (expression.literal_kind == ir::LiteralKind::integer ||
+            expression.literal_kind == ir::LiteralKind::floating);
+}
+
+std::string normalized_number(const ir::Expression& expression) {
+    auto value = expression.value;
+    value.erase(std::remove(value.begin(), value.end(), '_'), value.end());
+    return value;
+}
+
+std::optional<std::int64_t> integer_value(const ir::Expression& expression) {
+    auto value = normalized_number(expression);
+    int base = 10;
+    std::size_t prefix = 0;
+    if (value.size() > 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X')) {
+        base = 16;
+        prefix = 2;
+    } else if (value.size() > 2 && value[0] == '0' && (value[1] == 'b' || value[1] == 'B')) {
+        base = 2;
+        prefix = 2;
+    }
+    std::int64_t parsed = 0;
+    const auto* begin = value.data() + static_cast<std::ptrdiff_t>(prefix);
+    const auto* end = value.data() + static_cast<std::ptrdiff_t>(value.size());
+    const auto result = std::from_chars(begin, end, parsed, base);
+    if (result.ec != std::errc{} || result.ptr != end)
+        return std::nullopt;
+    return parsed;
+}
+
+std::optional<double> floating_value(const ir::Expression& expression) {
+    const auto value = normalized_number(expression);
+    try {
+        return std::stod(value);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::optional<std::int64_t> checked_add(const std::int64_t left, const std::int64_t right) {
+    if ((right > 0 && left > std::numeric_limits<std::int64_t>::max() - right) ||
+        (right < 0 && left < std::numeric_limits<std::int64_t>::min() - right)) {
+        return std::nullopt;
+    }
+    return left + right;
+}
+
+std::optional<std::int64_t> checked_subtract(const std::int64_t left, const std::int64_t right) {
+    if ((right < 0 && left > std::numeric_limits<std::int64_t>::max() + right) ||
+        (right > 0 && left < std::numeric_limits<std::int64_t>::min() + right)) {
+        return std::nullopt;
+    }
+    return left - right;
+}
+
+std::optional<std::int64_t> checked_multiply(const std::int64_t left, const std::int64_t right) {
+    if (left == 0 || right == 0)
+        return std::int64_t{0};
+    const auto maximum = std::numeric_limits<std::int64_t>::max();
+    const auto minimum = std::numeric_limits<std::int64_t>::min();
+    if ((left > 0 && right > 0 && left > maximum / right) ||
+        (left > 0 && right < 0 && right < minimum / left) ||
+        (left < 0 && right > 0 && left < minimum / right) ||
+        (left < 0 && right < 0 && left < maximum / right)) {
+        return std::nullopt;
+    }
+    return left * right;
+}
+
+std::string floating_text(double value) {
+    std::ostringstream output;
+    output << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
+    return output.str();
+}
+
+void replace_literal(ir::Expression& expression, ir::LiteralKind literal_kind, Type type,
+                     std::string value) {
+    expression.kind = ir::ExpressionKind::literal;
+    expression.literal_kind = literal_kind;
+    expression.type = std::move(type);
+    expression.value = std::move(value);
+    expression.operands.clear();
+}
+
+bool is_terminal(ir::StatementKind kind) {
+    return kind == ir::StatementKind::return_statement ||
+           kind == ir::StatementKind::break_statement ||
+           kind == ir::StatementKind::continue_statement;
+}
+
+} // namespace
+
+void IrOptimizer::optimize_expression(ir::Expression& expression, OptimizationStats& stats) const {
+    for (auto& operand : expression.operands)
+        optimize_expression(*operand, stats);
+    if (expression.lambda) {
+        for (auto& parameter : expression.lambda->parameters) {
+            if (parameter.default_value)
+                optimize_expression(*parameter.default_value, stats);
+        }
+        optimize_statements(expression.lambda->body, stats);
+    }
+
+    if (expression.kind == ir::ExpressionKind::unary && expression.operands.size() == 1) {
+        const auto& operand = *expression.operands.front();
+        if (is_numeric_literal(operand) && (expression.value == "+" || expression.value == "-")) {
+            if (operand.literal_kind == ir::LiteralKind::integer) {
+                const auto parsed = integer_value(operand);
+                if (!parsed || (expression.value == "-" &&
+                                *parsed == std::numeric_limits<std::int64_t>::min())) {
+                    return;
+                }
+                const auto result = expression.value == "-" ? -*parsed : *parsed;
+                replace_literal(expression, ir::LiteralKind::integer, {TypeKind::integer, "int"},
+                                std::to_string(result));
+            } else {
+                const auto parsed = floating_value(operand);
+                if (!parsed)
+                    return;
+                const auto result = expression.value == "-" ? -*parsed : *parsed;
+                replace_literal(expression, ir::LiteralKind::floating,
+                                {TypeKind::floating, "float"}, floating_text(result));
+            }
+            ++stats.constants_folded;
+        } else if (operand.literal_kind == ir::LiteralKind::boolean && expression.value == "not") {
+            replace_literal(expression, ir::LiteralKind::boolean, {TypeKind::boolean, "bool"},
+                            operand.value == "true" ? "false" : "true");
+            ++stats.constants_folded;
+        }
+        return;
+    }
+
+    if (expression.kind != ir::ExpressionKind::binary || expression.operands.size() != 2)
+        return;
+    const auto& left = *expression.operands[0];
+    const auto& right = *expression.operands[1];
+    if (left.literal_kind == ir::LiteralKind::string &&
+        right.literal_kind == ir::LiteralKind::string && expression.value == "+") {
+        replace_literal(expression, ir::LiteralKind::string, {TypeKind::string, "String"},
+                        left.value + right.value);
+        ++stats.constants_folded;
+        return;
+    }
+    if (!is_numeric_literal(left) || !is_numeric_literal(right))
+        return;
+
+    const bool floating = left.literal_kind == ir::LiteralKind::floating ||
+                          right.literal_kind == ir::LiteralKind::floating;
+    const auto& operation = expression.value;
+
+    if (!floating) {
+        const auto left_value = integer_value(left);
+        const auto right_value = integer_value(right);
+        if (!left_value || !right_value)
+            return;
+        if ((operation == "/" || operation == "%") && *right_value == 0)
+            return;
+        if (operation == "==" || operation == "!=" || operation == "<" || operation == "<=" ||
+            operation == ">" || operation == ">=") {
+            const bool result = operation == "=="   ? *left_value == *right_value
+                                : operation == "!=" ? *left_value != *right_value
+                                : operation == "<"  ? *left_value < *right_value
+                                : operation == "<=" ? *left_value <= *right_value
+                                : operation == ">"  ? *left_value > *right_value
+                                                    : *left_value >= *right_value;
+            replace_literal(expression, ir::LiteralKind::boolean, {TypeKind::boolean, "bool"},
+                            result ? "true" : "false");
+            ++stats.constants_folded;
+            return;
+        }
+        std::optional<std::int64_t> result;
+        if (operation == "+")
+            result = checked_add(*left_value, *right_value);
+        else if (operation == "-")
+            result = checked_subtract(*left_value, *right_value);
+        else if (operation == "*")
+            result = checked_multiply(*left_value, *right_value);
+        else if (operation == "/") {
+            if (*left_value == std::numeric_limits<std::int64_t>::min() && *right_value == -1)
+                return;
+            result = *left_value / *right_value;
+        } else if (operation == "%") {
+            if (*left_value == std::numeric_limits<std::int64_t>::min() && *right_value == -1)
+                return;
+            result = *left_value % *right_value;
+        } else {
+            return;
+        }
+        if (!result)
+            return;
+        replace_literal(expression, ir::LiteralKind::integer, {TypeKind::integer, "int"},
+                        std::to_string(*result));
+        ++stats.constants_folded;
+        return;
+    }
+
+    const auto parsed_left = floating_value(left);
+    const auto parsed_right = floating_value(right);
+    if (!parsed_left || !parsed_right)
+        return;
+    const double left_value = *parsed_left;
+    const double right_value = *parsed_right;
+    if ((operation == "/" || operation == "%") && right_value == 0.0)
+        return;
+
+    if (operation == "==" || operation == "!=" || operation == "<" || operation == "<=" ||
+        operation == ">" || operation == ">=") {
+        bool result = false;
+        if (operation == "==")
+            result = left_value == right_value;
+        if (operation == "!=")
+            result = left_value != right_value;
+        if (operation == "<")
+            result = left_value < right_value;
+        if (operation == "<=")
+            result = left_value <= right_value;
+        if (operation == ">")
+            result = left_value > right_value;
+        if (operation == ">=")
+            result = left_value >= right_value;
+        replace_literal(expression, ir::LiteralKind::boolean, {TypeKind::boolean, "bool"},
+                        result ? "true" : "false");
+        ++stats.constants_folded;
+        return;
+    }
+
+    double result = 0.0;
+    if (operation == "+")
+        result = left_value + right_value;
+    else if (operation == "-")
+        result = left_value - right_value;
+    else if (operation == "*")
+        result = left_value * right_value;
+    else if (operation == "/")
+        result = left_value / right_value;
+    else if (operation == "%")
+        result = std::fmod(left_value, right_value);
+    else
+        return;
+
+    replace_literal(expression, ir::LiteralKind::floating, {TypeKind::floating, "float"},
+                    floating_text(result));
+    ++stats.constants_folded;
+}
+
+void IrOptimizer::optimize_class(ir::Class& declaration, OptimizationStats& stats) const {
+    for (auto& field : declaration.fields) {
+        if (field.initializer)
+            optimize_expression(*field.initializer, stats);
+        if (field.getter)
+            optimize_statements(field.getter->body, stats);
+        if (field.setter)
+            optimize_statements(field.setter->body, stats);
+    }
+    for (auto& function : declaration.functions) {
+        for (auto& parameter : function.parameters) {
+            if (parameter.default_value)
+                optimize_expression(*parameter.default_value, stats);
+        }
+        optimize_statements(function.body, stats);
+    }
+    for (auto& inner : declaration.classes)
+        optimize_class(inner, stats);
+}
+
+void IrOptimizer::optimize_statements(std::vector<ir::Statement>& statements,
+                                      OptimizationStats& stats) const {
+    for (auto& statement : statements) {
+        if (statement.expression)
+            optimize_expression(*statement.expression, stats);
+        if (statement.condition)
+            optimize_expression(*statement.condition, stats);
+        for (auto& pattern : statement.patterns) {
+            if (pattern.expression)
+                optimize_expression(*pattern.expression, stats);
+        }
+        optimize_statements(statement.body, stats);
+        optimize_statements(statement.else_body, stats);
+    }
+
+    const auto before_passes = statements.size();
+    statements.erase(std::remove_if(statements.begin(), statements.end(),
+                                    [](const ir::Statement& statement) {
+                                        return statement.kind == ir::StatementKind::pass_statement;
+                                    }),
+                     statements.end());
+    stats.statements_removed += before_passes - statements.size();
+
+    const auto terminal =
+        std::find_if(statements.begin(), statements.end(),
+                     [](const ir::Statement& statement) { return is_terminal(statement.kind); });
+    if (terminal != statements.end()) {
+        const auto keep = static_cast<std::size_t>(std::distance(statements.begin(), terminal)) + 1;
+        stats.statements_removed += statements.size() - keep;
+        statements.erase(statements.begin() + static_cast<std::ptrdiff_t>(keep), statements.end());
+    }
+}
+
+OptimizationStats IrOptimizer::optimize(ir::Module& module) const {
+    OptimizationStats stats;
+    for (auto& field : module.fields) {
+        if (field.initializer)
+            optimize_expression(*field.initializer, stats);
+        if (field.getter)
+            optimize_statements(field.getter->body, stats);
+        if (field.setter)
+            optimize_statements(field.setter->body, stats);
+    }
+    for (auto& signal : module.signals) {
+        for (auto& parameter : signal.parameters) {
+            if (parameter.default_value)
+                optimize_expression(*parameter.default_value, stats);
+        }
+    }
+    for (auto& function : module.functions) {
+        for (auto& parameter : function.parameters) {
+            if (parameter.default_value)
+                optimize_expression(*parameter.default_value, stats);
+        }
+        optimize_statements(function.body, stats);
+    }
+    for (auto& declaration : module.classes)
+        optimize_class(declaration, stats);
+    return stats;
+}
+
+} // namespace gdpp

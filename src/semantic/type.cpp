@@ -1,4 +1,4 @@
-#include "gdpp/type.hpp"
+#include "gdpp/semantic/type.hpp"
 
 #include <unordered_map>
 #include <unordered_set>

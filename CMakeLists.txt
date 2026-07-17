@@ -95,6 +95,7 @@ file(SHA256 "${GDPP_NATIVE_RUNTIME_SOURCE}" GDPP_NATIVE_RUNTIME_SOURCE_SHA256)
 file(GLOB_RECURSE GDPP_CODEGEN_CONTRACT_FILES CONFIGURE_DEPENDS
     LIST_DIRECTORIES false
     "${CMAKE_SOURCE_DIR}/include/gdpp/*.hpp"
+    "${CMAKE_SOURCE_DIR}/src/core/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/compiler/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/frontend/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/semantic/*.cpp"
@@ -102,6 +103,7 @@ file(GLOB_RECURSE GDPP_CODEGEN_CONTRACT_FILES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/codegen/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/project/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/runtime/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/support/*.cpp"
     "${CMAKE_SOURCE_DIR}/third/godot-cpp/gdextension/extension_api*.json"
 )
 list(APPEND GDPP_CODEGEN_CONTRACT_FILES
@@ -261,29 +263,59 @@ foreach(GDPP_API_VERSION IN LISTS GDPP_SUPPORTED_GODOT_VERSIONS)
 endforeach()
 add_custom_target(gdpp_api_data DEPENDS ${GDPP_API_DATA_FILES})
 
-add_library(
-    gdpp_core
-    src/compiler/compiler.cpp
-    src/compiler/diagnostic.cpp
+# Keep the build manifest aligned with include/gdpp/<module> and src/<module>. The repository
+# architecture check enforces cross-module include direction; these named groups make target
+# ownership reviewable without introducing per-directory CMake files.
+set(GDPP_CORE_SOURCES
+    src/core/diagnostic.cpp
+    src/core/godot_version.cpp
+    src/core/source.cpp
+)
+set(GDPP_FRONTEND_SOURCES
     src/frontend/constant_evaluator.cpp
     src/frontend/language_features.cpp
     src/frontend/lexer.cpp
     src/frontend/parser.cpp
-    src/semantic/semantic.cpp
-    src/semantic/type.cpp
-    src/semantic/godot_version.cpp
+    src/frontend/token.cpp
+)
+set(GDPP_SEMANTIC_SOURCES
+    src/semantic/analyzer.cpp
     src/semantic/godot_api.cpp
-    src/semantic/intrinsic.cpp
+    src/semantic/intrinsics.cpp
     src/semantic/script_symbols.cpp
-    src/ir/ir_lowerer.cpp
+    src/semantic/type.cpp
+)
+set(GDPP_IR_SOURCES
+    src/ir/lowering.cpp
     src/ir/mir.cpp
-    src/ir/ir_optimizer.cpp
-    src/codegen/code_generator.cpp
+    src/ir/optimizer.cpp
+)
+set(GDPP_CODEGEN_SOURCES
+    src/codegen/cpp_generator.cpp
+)
+set(GDPP_COMPILER_SOURCES
+    src/compiler/compiler.cpp
+)
+set(GDPP_PROJECT_SOURCES
     src/project/extension_bridge.cpp
+    src/project/native_builder.cpp
     src/project/project_compiler.cpp
     src/project/project_file_selector.cpp
-    src/project/native_builder.cpp
-    src/project/sha256.cpp
+)
+set(GDPP_SUPPORT_SOURCES
+    src/support/sha256.cpp
+)
+
+add_library(
+    gdpp_core
+    ${GDPP_CORE_SOURCES}
+    ${GDPP_FRONTEND_SOURCES}
+    ${GDPP_SEMANTIC_SOURCES}
+    ${GDPP_IR_SOURCES}
+    ${GDPP_CODEGEN_SOURCES}
+    ${GDPP_COMPILER_SOURCES}
+    ${GDPP_PROJECT_SOURCES}
+    ${GDPP_SUPPORT_SOURCES}
 )
 add_dependencies(gdpp_core gdpp_api_data)
 set_source_files_properties(
