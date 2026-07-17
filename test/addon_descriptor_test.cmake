@@ -72,7 +72,6 @@ endif()
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/export_presets.cfg" export_presets)
 foreach(invalid_android_option IN ITEMS
         "gradle_build/compress_native_libraries=true"
-        "gradle_build/min_sdk=\"24\""
         "gradle_build/target_sdk=\"35\""
         "package/signed=true")
     string(FIND "${export_presets}" "${invalid_android_option}" invalid_offset)
@@ -81,9 +80,10 @@ foreach(invalid_android_option IN ITEMS
             "Non-Gradle unsigned Android fixture contains invalid option: ${invalid_android_option}")
     endif()
 endforeach()
-string(FIND "${export_presets}" "gradle_build/min_sdk=\"28\"" android_minimum_offset)
-if(android_minimum_offset EQUAL -1)
-    message(FATAL_ERROR "Android export fixture must enforce API 28 / Android 9")
+string(FIND "${export_presets}" "gradle_build/min_sdk=" android_minimum_offset)
+if(NOT android_minimum_offset EQUAL -1)
+    message(FATAL_ERROR
+        "Android export fixture must not override the export template minimum SDK")
 endif()
 
 foreach(required_windows_option IN ITEMS

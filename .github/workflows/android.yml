@@ -121,8 +121,6 @@ jobs:
             2>&1 | tee "$root/export.log"
           apk="$root/GDPPExample.apk"
           test -f "$apk"
-          "$ANDROID_SDK_ROOT/build-tools/35.0.0/aapt" dump badging "$apk" \
-            | grep -q "sdkVersion:'28'"
           unzip -Z1 "$apk" | LC_ALL=C sort > "$root/contents.txt"
           project_library="$(awk '/^lib\/arm64-v8a\/libgdpp_project.*\.so$/{print}' "$root/contents.txt")"
           test "$(printf '%s\n' "$project_library" | sed '/^$/d' | wc -l)" -eq 1
