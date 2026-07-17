@@ -1,0 +1,511 @@
+# 最新版 GDScript 兼容性与商业验收规范
+
+本文记录 GDPP 当前对最新版稳定 GDScript 的真实实现边界，并定义后续商业版本的验收口径。
+语言前端只有一条持续前移的最新版基线，不向用户暴露 4.4/4.5/4.6/4.7 等语法方言选择；这些
+版本只用于目标 Godot API、SDK 与 ABI。本文不把“能够分词”“元数据中存在”或“偶然生成过
+C++”计为完整兼容，所有结论都应能由仓库中的测试、固定版本语料和原生构建复现。
+
+审计基线：
+
+- [x] 最低运行目标为 Godot 4.4；前端跟进最新版稳定 GDScript，当前同步和审计来源为 Godot 4.7。
+- [x] Godot 4.4、4.5、4.6 与 4.7 使用独立 `extension_api.json` 能力表，编译时显式选择目标版本。
+- [x] 审计日期更新为 2026-07-17。
+- [x] 官方项目语料固定为 `godotengine/godot-demo-projects` 提交
+  `540ef657b792237cf981fa8783f1896715cd699c`，不会跟随上游分支静默变化。
+- [x] 旧 `godotengine/tps-demo` 属于 Godot 3 项目，不作为最新版兼容率样本；当前选择同一
+  官方组织下的 3D platformer、3D voxel、rhythm game 和 role playing game。
+
+## 状态口径
+
+| 标记 | 含义 |
+|---|---|
+| ✅ | 声明范围已经进入词法、AST、语义、类型化 IR 和 C++ 生成主链，并有自动化回归测试 |
+| 🟡 | 主路径可用，但仍缺语法分支、严格语义、运行差分、平台验证或完整测试矩阵 |
+| ⛔ | 尚未实现，编译器会拒绝，或当前不能安全生成等价代码 |
+
+表格中的 ✅ 不是“整个 GDScript 已达到商业稳定版”的宣传标记。运行时行为要达到商业承诺，
+还必须通过 Godot 内执行差分、导出包审计和全平台认证。
+
+## 当前可复现结论
+
+| 指标 | 当前结果 | 判定 |
+|---|---:|---|
+| C++ 编译器单元测试 | 232 / 232 | ✅ 本轮实机 |
+| 本机开发 CTest 项目门禁 | 7 / 7（单元、CLI、addon 清理与描述符测试） | ✅ 本轮实机 |
+| Godot 4.5.2 插件集成门禁 | macOS、Ubuntu 24.04、Windows 11 各 16 / 16；测试描述符按构建目录哈希与目标架构隔离，不读取其他构建树或发行目录陈旧库 | ✅ 本轮实机 |
+| macOS Universal 2 | AppleClang：arm64+x86_64 compiler、SDK、项目库、GDS→AOT→GDS Release 导出与运行通过；每个 Mach-O 切片单独检查唯一入口，PCK 违规为 0 | ✅ 本轮实机 |
+| Ubuntu 24.04 x86_64 | GCC 13：Release 编译、插件加载、GDS→AOT→GDS 导出/运行、PCK/ELF 审计和固定性能预算通过 | ✅ 本轮实机 |
+| Windows 11 x86_64 | MSVC 19.50：Release 编译、插件加载、GDS→AOT→GDS 导出/运行、PCK/PE 审计和固定性能预算通过；普通 Godot 进程可自动初始化 VS 工具链 | ✅ 本轮实机 |
+| Android arm64-v8a | macOS + NDK 29 生成 26,262,814 B Release APK；脚本/compiler/SDK 泄漏 0，项目库 1，唯一入口 1，普通符号表已剥离 | ✅ 构建/导出；无连接设备，未认证真机运行 |
+| Web wasm32 | Emscripten 5.0.7、Godot 4.5 API；`nothreads`/`threads` SDK 与 debug/Release side module 均真实构建，Release 大小 1,015,600 / 1,026,366 B，dylink 与入口通过，shared memory 差分正确，SDK/项目绝对路径泄漏为 0 | ✅ 编译/链接/Wasm；官方模板与 Chromium CI 待首次留档 |
+| 官方语料脚本总数 | 46 | ✅ 固定输入 |
+| 脱离项目上下文的单文件编译 | 22 / 46（47.83%） | 🟡 |
+| 3D platformer 项目编译 | 8 / 8 脚本 | ✅ |
+| 3D platformer 生成原生库 | CMake 配置、C++17 编译、动态库链接成功 | ✅ |
+| 3D voxel 项目编译 | 12 / 12 脚本 | ✅ |
+| 3D voxel 生成原生库 | CMake 配置、C++17 编译、动态库链接成功 | ✅ |
+| rhythm game 项目编译 | 12 / 12 脚本 | ✅ |
+| rhythm game 生成原生库 | CMake 配置、C++17 编译、动态库链接成功 | ✅ |
+| role playing game 项目编译 | 14 / 14 脚本 | ✅ |
+| role playing game 生成原生库 | CMake 配置、C++17 编译、动态库链接成功 | ✅ |
+| role playing game 降级到 Godot 4.6 SDK | 同一源码以 4.6 能力表重新生成并原生链接成功 | ✅ 本地审计，待纳入 CI |
+| Dungeon Rush 4.5 商业项目转译 | 195 个外部脚本和 2 个场景内嵌脚本，共 197 / 197 编译单元 | ✅ 本轮实机 |
+| Dungeon Rush 4.5 Windows 原生构建 | Godot 4.5.2、MSVC、C++17；development/release DLL 均链接成功 | ✅ 本轮实机 |
+| Dungeon Rush 4.5 无源码导出 | AOT PCK 1953 个项目文件、331 个场景/资源全部可加载；源码/编译器/SDK/中间物泄漏为 0，完整目录仅一个项目 DLL | ✅ 本轮实机 |
+| Dungeon Rush 4.5 AOT 导出日志 | 退出码 0；317 个场景、431 个脚本节点、15,931 个存储属性完成转换；无转换错误 | ✅ 本轮实机 |
+| Dungeon Rush 4.5 Windows 交互运行 | 越过黑屏/启动画面后独立验证连续菜单背景动效，两轮菜单/关卡切换覆盖设置、移动、翻滚、攻击、背包、暂停/恢复和退出；窗口始终响应，运行错误为 0 | ✅ 本轮实机 |
+| Dungeon Rush 4.5 Windows 声音 | 菜单音乐峰值约 0.142，关卡内背包 UI 音效峰值约 0.418；会话未静音且音量非零 | ✅ 本轮实机 |
+| Castle Defense 4.5 商业项目转译 | 178 个外部脚本和 2 个场景内嵌脚本，共 180 / 180 编译单元 | ✅ 本轮实机 |
+| Castle Defense 4.5 macOS 无源码导出 | 隔离审计 1557 个 PCK 文件、288 个场景/资源全部可加载；项目库 1 个，源码/编译器/SDK/中间物违规为 0 | ✅ 本轮实机 |
+| Castle Defense 4.5 macOS 功能门禁 | 19 个断言、5 个输入动作、失败 0；覆盖主菜单 BGM、解谜未解锁弹窗、普通模式、教程和暂停/恢复 | ✅ 本轮实机 |
+| Castle Defense 最终 development 原生构建 | 180 / 180 编译单元；AppleClang/C++17 链接成功，目录仅保留当前 1 个哈希库 | ✅ 本轮实机 |
+| Dungeon Rush 最终 development 原生构建 | 197 / 197 编译单元；AppleClang/C++17 链接成功，目录仅保留当前 1 个哈希库 | ✅ 本轮实机 |
+| NoahEngine 项目编译 | 修正 3 处项目语义笔误并为 `WaveformData` 提供 Runtime 类型契约；项目与 addon 的 122 / 122 GDScript 单元全部原生链接成功 | ✅ 本轮实机 |
+| NoahEngine 第三方扩展边界 | `WaveformData` 由仅含 Windows 二进制的 GDExtension 提供；Runtime 桥接可完成类型检查和生成，真实运行仍要求供应商二进制存在并先注册 ClassDB | ✅ 失败关闭边界 |
+| 固定 GDScript/AOT 运行差分 | macOS、Ubuntu 24.04、Windows 11，官方 Godot 4.5.2；每平台 3 轮 AB/BA、13 类工作负载各 15 个样本、每种实现 360 帧；行为 oracle 与全部性能预算通过 | ✅ 本轮实机 |
+| 示例项目无源码导出 | 三桌面平台实际 Release PCK/完整发行物审计通过；Android arm64 Release APK 包内容审计通过 | ✅ 当前固定平台范围 |
+
+单文件成功率和项目成功率必须分开理解。单文件编译没有项目级 `class_name`、脚本继承、Autoload
+和资源路径图，因此 platformer 的 5 / 8、voxel 的 9 / 12、RPG 的 3 / 14 单文件成功不代表
+项目只能编译这些脚本；项目编译器建立符号图后，四者分别达到 8 / 8、12 / 12、12 / 12 和
+14 / 14，
+并且生成代码均通过真实 C++17 编译与动态库链接。
+
+三桌面平台现已不只是编译审计：固定示例实际完成官方 Godot 4.5.2 插件加载、Release 导出、
+独立运行、行为 oracle 和发行内容检查。该范围仍不等价于 GUI 编辑器热重载、debug 导出、签名、
+最低系统、长时间运行或任意客户项目认证。Android 只完成 macOS 主机交叉构建和 APK 审计，
+ADB 没有连接设备，因此真机输入、音频和生命周期仍未验证。Web 当前完成原生编译和 Wasm
+结构认证，官方导出模板、PCK 与浏览器运行由新建的独立 CI 门禁负责，首次流水线结果落档前
+不算多浏览器运行认证。完整商业承诺继续以 C4/C6 和 M7
+门禁为准，详细环境与负面性能结果见[跨平台实测报告](PLATFORM_TEST_REPORT.md)。
+
+当前可以准确表述为：
+
+- [x] GDPP 已能把四个固定版本的官方中等复杂 Godot 4 项目完整转译为可链接的 GDExtension
+  原生库。
+- [x] GDPP 已能把 Dungeon Rush 的 197 个项目编译单元完整转译并链接为 Godot 4.5 原生库；
+  该门禁覆盖场景 Autoload、场景内嵌脚本、结构化 `await`、第三方 GDExtension 单例和跨脚本
+  字段初始化。
+- [x] Dungeon Rush 已在 Windows 11、官方 Godot 4.5.2 和 MSVC 下完成无源码 Release 导出、
+  PCK/完整目录内容审计以及两轮菜单/关卡真实交互；该结论只覆盖此项目和这组已记录环境，不外推为
+  任意项目兼容。
+- [x] Castle Defense 已在 macOS、官方 Godot 4.5.2 和 AppleClang 下完成 180 单元原生化、
+  无源码 Release 导出、全 PCK 资源加载、90 帧主界面捕获及关键菜单/关卡功能门禁；该结论同样
+  只覆盖当前固定项目快照。
+- [x] NoahEngine 已按商业集成方式直接修正项目自身的 `match` 目标笔误和类型判断误写，并给
+  `WaveformData` 增加不猜测 C++ 布局的 Runtime 类型契约；项目与原生 addon 内的 122 / 122
+  GDScript 单元全部完成转译和原生链接。
+  供应商当前只交付 Windows 二进制，所以其他平台只能做编译审计，不能把缺少供应商库的平台
+  宣称为运行通过。
+- [x] 未支持语法以稳定诊断结束，不输出可被误认为成功的半成品。
+- [x] 固定 Godot 4.5.2 GDScript/AOT 矩阵已在 macOS、Linux、Windows 比较值、嵌套写回、
+  lambda、`match`、字符串、信号、64 位溢出/位运算、13 类热路径、启动、帧工作量和发行体积；
+  行为差异为 0，阈值失败为 0。Linux 另完成 RSS；其他两平台没有可靠 RSS，未伪报结果。
+- [ ] 尚不能表述为“任意最新版 GDScript 无修改直接 AOT”。
+- [ ] 尚不能表述为“运行语义与最新版 Godot 完全一致”或“所有游戏都达到超高性能”；固定矩阵
+  已可重复，但还没有覆盖完整语言、全部引擎版本/平台和真实游戏内容。
+
+## Dungeon Rush 4.5 商业项目门禁
+
+`build/dungeon_rush` 是本地商业项目语料，不进入 Git 或公开 CI。2026-07-14 的审计输入包含
+195 个外部 GDScript 文件和 2 个场景内嵌脚本，共 197 个编译单元；外部脚本约 9,881 行。
+项目源码中两处写法由 Godot 4.5 规则判定为非法，且也不是任何当前支持的更高版本才提供的
+新语法：
+
+- [x] `skill_6_bollet.gd` 曾用单引号包住跨行代码模拟注释。普通单引号字符串不能跨行；该段本意
+  是停用代码，已改成逐行 `#` 注释。
+- [x] `props_generate.gd` 曾声明 `@export var kind = null`。导出属性必须提供可推断或显式的
+  Inspector 类型；该字段按项目实际类别数据改为 `@export var kind: String = ""`。
+
+修正项目源码后，门禁不是只检查“前端返回成功”，而是完整执行：
+
+- [x] 使用 Godot 4.5 能力表扫描和转译 197 / 197 个外部及内嵌脚本单元。
+- [x] 游戏内容目录统一为跨平台安全的 `lower_snake_case`，143 个目录和 1009 个文本资源引用
+  完成迁移；插件发布契约内的 `addons/` 目录不做破坏性改名。
+- [x] 解析 `Transition="*res://global/transition.tscn"`，从场景根节点解析真实脚本 Autoload。
+- [x] 目录移动后生成文件名复用不会被旧清单误删，并以“移动全局命名脚本”回归测试锁定。
+- [x] 将实例字段初始化下沉到生成 `.cpp` 构造函数，避免跨脚本头文件循环和不完整类型访问。
+- [x] 将 GodotSteam 注册的 `Steam` 识别为第三方引擎单例，通过运行时 `Engine` 单例表调用。
+- [x] 使用 AppleClang 与 Windows MSVC 的 C++17 工具链和 Godot 4.5 godot-cpp 完成全部生成
+  代码编译及动态库链接。
+- [x] 普通 Godot 4.5.2 Windows 进程可发现 Visual Studio/Build Tools 并初始化 `vcvars`，无需
+  客户从 Developer Command Prompt 启动编辑器。
+- [x] 导出转换保留场景层级、owner、持久信号连接、Unicode NodePath 和 `%UniqueNode` 语义；
+  继承场景与嵌套 PackedScene 的脚本覆盖、显式 `script = null` 和连接归属均按 SceneState 链
+  转换，不重复展开或重复序列化连接。
+- [x] 普通实例字段注册为原生脚本属性，跨脚本动态读写 `open_bag`、`delet_pressing`、
+  `stuff_list`、`can_buy` 等字段不再因只注册 `@export` 字段而失败。
+- [x] Variant 动态左值按完整访问链只求值一次，并在修改叶节点后逐层反向回写；Dungeon Rush 的
+  78 处活动多段赋值候选已统一审计，包含
+  主菜单 `position.y`、激光/碰撞体 `scale.x`、武器朝向以及
+  `Main.props_data[key].exist/strengthen/exist_times`、符文等级等对象和值类型/容器混合路径均进入
+  同一生成逻辑，不再只修改临时 `Vector2`、`Color` 或 Dictionary 元素副本。
+- [x] Release 导出只携带 4,206,592 B（约 4.01 MiB）的项目原生库；AOT PCK 1953 个文件和
+  331 个场景/资源的审计违规数为 0，compiler、SDK 和 fallback 均未进入成品。
+- [x] 场景替换采用“先创建并复制全部节点、全部成功后再交换”的事务；Godot 动态 metadata
+  单独复制，任何普通存储属性缺失都会阻断，不会交付部分转换场景。
+- [x] Godot 4.5 导出缓存使用转换修订与项目构建 ID 隔离，失败导出留下的旧 `.scn` 不会在修复后
+  被复用；该问题由 PCK 全资源加载门禁真实检出。
+- [x] 生成的预加载缓存和脚本静态存储在 scene 级 terminator 中按注册逆序释放；Windows 成品
+  直接运行关卡 1800 帧后退出，Resource、RID、脚本和服务器生命周期诊断均为 0。
+- [x] Windows Release 成品通过 DPI 感知的桌面交互门禁：等待黑屏和工作室启动画面结束后，
+  主菜单非 UI 背景区域在 0.8 秒内产生 11.80 的连续帧差值；设置开关、进入关卡、移动、翻滚、
+  攻击、背包开关、暂停冻结、暂停内设置、恢复、退出到主菜单、再次进入关卡和再次移动均产生
+  预期画面变化，所有阶段窗口均响应。
+- [x] 菜单音乐和关卡内背包 UI 音效均检测到非零 Windows 音频峰值，会话未静音且音量非零；
+  完整运行日志中的脚本、NodePath、动态属性/调用、重复连接和资源加载错误均为 0。
+- [x] 修复客户场景中暂停后菜单继承可暂停处理模式导致按钮不接收输入的问题，暂停设置与退出
+  均通过真实鼠标命中测试。
+- [ ] 尚未建立解释执行版与 AOT 版的完整行为 oracle，也未走完正式战斗波次、存档、联网和
+  长时间游戏流程，因此不能把本次 C5 项目交付门禁表述为完整 C4 语义认证。
+
+## Castle Defense 4.5 商业项目门禁
+
+`build/castle_defense` 是第二个本地商业项目语料，不进入公开发行包。项目包含 178 个外部脚本
+与 2 个场景内嵌脚本。它暴露的问题不是用项目专用分支绕过，而是收敛为以下编译器、导出器和
+运行时通用契约：
+
+- [x] 180 / 180 个编译单元生成 C++17 并链接为 release 项目库；8 个 Node Autoload 在字段
+  初始化前登记 `ObjectID`，消除原生节点尚未命名或挂入 SceneTree 时读取前置 Autoload 的崩溃。
+- [x] 代码生成缓存改为 v3 manifest 和自动契约指纹，分离实现、公开 ABI、脚本引用和第三方
+  provider ABI。前端、语义、IR、后端、runtime、公共头文件或 API 表变化都会拒绝不兼容旧 C++。
+- [x] 项目原有 `spawn_enemy()` 实际只被 fire-and-forget 调用，却声明动态返回并返回对象；按
+  Godot 4.5 的 GDS4103 规则直接改为 `-> void` 并删除无消费方的返回值，不在编译器里屏蔽告警。
+- [x] `Array[TimelineAction]` 与同名 `.tres` 嵌入脚本曾使元素类型退化为 Variant；项目全局
+  `class_name` 现在优先于路径显示名，泛型元素类型进入真实依赖图，且有 ABI 精确失效回归。
+- [x] Godot 4.4/4.5 不再启用会尝试反序列化每个导出文件的全局 resource customizer；导出器
+  在 `_export_file` 只处理 `.tscn/.scn/.tres/.res`，并只读取 SceneState 或
+  `PROPERTY_USAGE_STORAGE` 声明的序列化值，避免触发与当前对象形态无关的可选 getter。
+- [x] 资源图转换递归处理内嵌 Resource、Array、Dictionary 和 PackedScene，用对象身份表保留
+  自引用、循环与共享子资源；场景替换按 SceneState 精确保留继承覆盖、owner、分组、metadata
+  及持久连接的 flags、binds 与 unbind。
+- [x] C++ 后端区分 godot-cpp 的 `Node::get_node<T>()` 与非模板
+  `Node::get_node_or_null()`，并用生成代码回归测试锁定，避免真实项目编译阶段才暴露模板 API
+  误用。
+- [x] release 导出摘要为 201 个场景、201 个脚本节点、37 个资源和 1279 个存储属性；AOT PCK
+  为 38,931,144 B；审计器先清除宿主残留的全部架构项目库，再隔离审计 1557 个包内文件、加载
+  288 个场景/资源、发现 1 个项目动态库，违规数为 0。
+- [x] macOS Universal 2 导出将 Godot 的 `universal` 导出扫描目标与最终进程的
+  `arm64`/`x86_64` 运行 feature 分离；compiler 与项目描述符在导出期间事务式切换并恢复，
+  单个项目 dylib 同时含两种切片，连续导出没有架构选择警告。
+- [x] 官方 Godot 4.5.2 AOT 运行退出码为 0，脚本、资源和 GDExtension 加载错误为 0；强制短时
+  退出残留的 2 个 BGM 音频资源在原始 GDScript 版同样存在，不归类为 AOT 差异。
+- [x] 外置 QA 以全新用户目录执行 19 个断言和 5 个输入动作，覆盖主菜单 BGM、解谜未解锁
+  提示、普通模式进入、教程初始化、暂停与恢复，失败为 0；90 帧 AOT 画面捕获包含完整主界面和
+  连续动效。QA 文件仅位于根 `build/`，不会污染客户源码或 PCK。
+- [ ] 尚未覆盖完整战斗波次、所有塔/装备组合、存档升级、长时间压力和解释器/AOT 逐帧 oracle；
+  因此该项目通过的是当前 C5 交付路径，不代表 C4/C6 已整体完成。
+
+## 商业兼容等级
+
+| 等级 | 验收内容 | 当前状态 |
+|---|---|---|
+| C0 词法 | Token、源码范围、非法输入和错误恢复 | 🟡 已覆盖常用语法，字符串与 Unicode 未完整 |
+| C1 语法 | AST、优先级、结合性、声明和控制结构 | 🟡 内部类和 lambda 主路径已实现；仍缺嵌套内部类、复杂模式和完整协程表达式 |
+| C2 语义 | 名字解析、类型、作用域、项目符号和版本能力 | 🟡 四个官方项目主路径通过 |
+| C3 生成 | 有效 C++17、稳定求值顺序、GDExtension ABI | 🟡 四个官方项目原生链接通过 |
+| C4 运行 | 值、错误、副作用、信号和生命周期与 Godot 差分一致 | 🟡 固定 4.5.2 oracle 已在三桌面平台通过，完整语言、4.4/4.6/4.7、移动端与长时间矩阵未完成 |
+| C5 交付 | 场景/资源替换、Autoload、导出、源码剥离和失败回滚 | 🟡 示例与 Dungeon Rush Windows 4.5 闭环已建立，任意项目未认证 |
+| C6 商业认证 | 全平台 CI、性能预算、压力测试、升级和回滚承诺 | ⛔ 未达到 |
+
+## 最新版 GDScript 语言能力
+
+### 词法、字面量和声明
+
+| 能力 | 状态 | 已实现边界与剩余缺口 |
+|---|---|---|
+| 缩进、换行、注释、括号内换行 | ✅ | 生成 `INDENT`/`DEDENT`，显式 `\` 续行有错误检查 |
+| 十进制、浮点、科学计数法、数字分隔符 | ✅ | 检查连续、尾随和分段下划线 |
+| 十六进制与二进制整数 | ✅ | 支持 `0x`/`0X`、`0b`/`0B` 及分隔符检查 |
+| 单引号/双引号字符串 | 🟡 | 常用转义可用；原始字符串、三引号和完整 Unicode 转义未实现 |
+| `StringName`、`NodePath` 字面量 | ✅ | 支持 `&"name"` 和 `^"path"` |
+| 节点/唯一节点简写 | ✅ | 支持 `$Path`、`$"Path"` 和 `%UniqueNode` |
+| Unicode 标识符 | 🟡 | 非 ASCII 输入未实现与 Godot 完全相同的 Unicode 分类和规范化 |
+| `extends`、`class_name` | ✅ | 支持引擎类型、项目全局类、`res://` 与相对脚本路径 |
+| `var`、`const`、`:=`、静态字段 | ✅ | 字段和局部声明、类型推断、常量写保护和 C++17 静态字段已接通 |
+| 普通/静态函数、参数、默认值、返回类型 | ✅ | 包含参数检查和具体返回类型的全路径返回分析 |
+| 信号声明 | 🟡 | 生成 `ADD_SIGNAL`，支持常用发射、方法引用和顶层等待路径；连接生命周期尚无完整差分 |
+| 命名与匿名枚举 | ✅ | 常量表达式、跨脚本/继承访问、Inspector 枚举 hint 和 `match` 已接通；匿名枚举值与普通常量使用独立符号种类 |
+| 内部类 `class` | 🟡 | 顶层内部类的字段、枚举、信号、方法、`_init`、强类型 `Ref<T>` 构造、ClassDB 注册和项目缓存身份已贯通；嵌套内部类会明确拒绝 |
+| lambda 与捕获 | 🟡 | 支持多行 `func(...):` 表达式、类型/默认参数、返回类型、值捕获、参数数量检查和生命周期受检原生 `CallableCustom`；递归 lambda、lambda 内 `await` 与完整捕获差分尚未认证 |
+
+### 类型、表达式和调用
+
+| 能力 | 状态 | 已实现边界与剩余缺口 |
+|---|---|---|
+| 基础类型和 `Variant` | ✅ | `bool`、`int`、`float`、字符串、值类型、对象和动态值进入类型化 IR |
+| `Array[T]` | 🟡 | 类型语法、声明、参数、返回和迭代转换可用；尚未生成真正的 `TypedArray<T>` ABI |
+| `Dictionary[K, V]` | 🟡 | 键值类型被保留并参与赋值检查；运行容器仍使用 `godot::Dictionary` |
+| 数组/字典字面量 | ✅ | 生成顺序稳定的原生集合构造 |
+| 调用参数求值顺序 | ✅ | 函数、方法、工具函数、动态方法和 Callable 参数均先按源码顺序保存临时值 |
+| 成员、属性和下标 | ✅ | 静态 API 走直接调用，动态值集中走受检 `Variant` runtime |
+| 引擎对象 `.new()` | ✅ | 区分 Object 与 RefCounted，分别生成裸对象或 `Ref<T>` |
+| 项目脚本 `.new()` | ✅ | 校验 `_init` 参数并生成强类型原生实例 |
+| `preload`/`load` | 🟡 | 项目 `.gd` 字面量路径、普通资源和动态 `load` 主路径可用；成员预加载、`const preload` 与脚本静态存储会在 Godot scene 级终止前释放，完整 Resource 语义仍未差分 |
+| 算术、比较、位运算、移位、幂 | ✅ | 由版本化内建运算符表校验；动态值走 `Variant::evaluate` |
+| `and`/`or`/`not` 与 `&&`/`||`/`!` | ✅ | 静态和动态路径均保留短路；RefCounted 真值使用 `Ref::is_valid()` |
+| `in` | ✅ | 由静态运算符表或动态 `Variant` 路径处理 |
+| `is` / `is not` | ✅ | 支持引擎类型和项目脚本类型，`not` 优先级按 GDScript 解析；尚未做完整流敏感类型收窄 |
+| `as` | ✅ | 支持引擎对象、RefCounted 与项目脚本对象转换；对象降型生成受检 `Object::cast_to` |
+| 三元表达式 | ✅ | 支持 `value if condition else fallback` 和结果类型合并 |
+| 复合赋值 | ✅ | 支持算术、幂、位与移位复合赋值，并先验证对应运算符 |
+| 嵌套值属性写回 | ✅ | 动态对象属性、Array/Dictionary 下标和值类型成员使用单次求值访问链并逐层反向回写；已在 Godot 中运行验证 `Node2D.position.y`、脚本成员/局部 Variant `Color.a`、`Transform3D → Vector3.x` 和 `Array → Dictionary → Color.a`，逐值类型差分矩阵仍归入完整 oracle 工作 |
+| Callable | 🟡 | 脚本方法引用、继承的引擎方法、原生 lambda、`.call(...)` 和 `.bind(...)` 主路径已实现；完整 bind/unbind 与捕获/连接生命周期差分未认证 |
+
+### 控制流和高级语义
+
+| 能力 | 状态 | 已实现边界与剩余缺口 |
+|---|---|---|
+| `if`/`elif`/`else` | ✅ | 作用域、控制流合并和部分不可达检查已实现 |
+| `while` | ✅ | 支持循环控制和 `while true` 的返回分析 |
+| `for`、显式迭代变量类型 | 🟡 | int、Array、Dictionary、String、动态迭代协议和十种 PackedArray 均可用；同步 `range()` 与 PackedArray 已生成类型化零临时 Array/零 Variant 迭代器循环，异步续体和真正类型化容器 ABI 仍待完成 |
+| `return`/`pass`/`break`/`continue` | ✅ | 检查循环位置和返回类型 |
+| `assert` | ✅ | debug/development 保留，release 移除断言且不提前求值消息 |
+| 基本 `match` | ✅ | 常量、多备选、通配符、`var` 绑定和 `when` 守卫可用 |
+| 集合/嵌套/rest `match` 模式 | ⛔ | 复杂模式 AST 与 lowering 未实现 |
+| 属性 `get`/`set` 块 | ✅ | backing 字段、递归保护、ClassDB 属性和自定义访问器已接通 |
+| `set = method`/`get = method` 绑定形式 | ✅ | 支持同行与缩进布局，验证方法存在性、静态性、参数和返回类型，并避免绑定方法递归访问属性 |
+| `super` 与父方法显式调用 | 🟡 | `super.method(args)` 已对引擎父类和项目脚本父类生成限定 C++ 调用；裸 `super()` 构造链和父属性仍未实现 |
+| 引擎虚函数覆盖 | 🟡 | 使用 API 虚函数表、精确 C++ `override` 和 const bridge 检查；仍需覆盖全部虚函数与平台 ABI 差分矩阵 |
+| `await`/协程 | 🟡 | 支持实例方法顶层以及 `if`、`for`、`while` 内的 `await Signal`，使用一次性连接和 `ObjectID` 取消失效对象；不含跨挂起局部状态的长链会从 MIR 生成扁平程序计数器状态机，37 挂起点商业脚本已通过 AppleClang/MSVC 原生链接和 Godot 顺序恢复回归。显式非 `void` 返回契约、`_init`、静态函数、lambda、`match` 内等待和一般 await 表达式仍会拒绝；异步循环局部状态、`break`/`continue` 仍待完整协程帧与差分 |
+| `breakpoint` | ⛔ | 尚无语句节点和调试器桥接 |
+| RPC | ⛔ | `@rpc` 明确拒绝，不做静默降级 |
+
+## 注解能力
+
+| 注解范围 | 状态 | 当前支持 |
+|---|---|---|
+| 基础导出 | ✅ | `@export` |
+| 数值、枚举、标志 | ✅ | `@export_range`、`@export_enum`、`@export_flags` |
+| 路径 | ✅ | `@export_file`、`@export_global_file`、`@export_dir`、`@export_global_dir` |
+| 文本、颜色、节点路径 | ✅ | `@export_multiline`、`@export_color_no_alpha`、`@export_node_path` |
+| Inspector 分组 | ✅ | `@export_group`、`@export_subgroup`、`@export_category` |
+| 生命周期 | ✅ | `@onready`，并在 `_ready` 用户代码之前初始化；必要时自动生成 `_ready` |
+| 警告控制 | 🟡 | 支持常用 `@warning_ignore("...")` 位置，但没有完整 warning 状态栈 |
+| 工具、抽象、图标、静态卸载 | ⛔ | `@tool`、`@abstract`、`@icon`、`@static_unload` 未实现 |
+| 网络 | ⛔ | `@rpc` 未实现 |
+
+- [x] 支持的导出注解检查参数数量、参数字面量类型和字段可序列化类型。
+- [x] 未支持注解产生诊断，不会被无声丢弃。
+- [ ] 仍需从 Godot 4.7 注解注册表生成完整位置、参数和版本测试矩阵。
+
+## GDScript 标准库与版本能力表
+
+语言标准库包括全局工具函数、语言常量、全局枚举、内建 `Variant` 类型及其构造器、方法、
+成员、常量和运算符。引擎对象类与单例也被版本化索引，但不计入下表的语言标准库数量。
+
+| Godot 4.7 数据 | 官方表项 | 当前编译器接入 | 状态 |
+|---|---:|---|---|
+| 非空内建类型 | 38 | 全部索引并可解析 | 🟡 缺逐类型运行差分 |
+| 内建类型方法 | 999 | 全部索引，执行参数数量/类型检查 | 🟡 缺逐重载运行矩阵 |
+| 内建构造器 | 156 | 全部索引并进行重载匹配 | 🟡 |
+| 内建成员 | 62 | 全部索引，常用直接成员可生成 | 🟡 |
+| 内建常量 | 210 | 全部索引，常用值类型常量可生成 | 🟡 |
+| 内建运算符 | 749 | 全部进入静态语义检查和返回类型推导 | ✅ 编译链完成 |
+| 全局工具函数 | 114 | 全部进入名字解析、参数检查和 `UtilityFunctions` 生成路径 | 🟡 缺 114 项原生/运行矩阵 |
+| 全局枚举 | 22 类、517 个值 | 全部进入名字解析和代码生成 | 🟡 缺逐项运行矩阵 |
+| 全局整数常量 | 11 | 4.7 表项全部索引 | 🟡 缺逐项矩阵 |
+| GDScript 语言常量 | `PI`、`TAU`、`INF`、`NAN` | 专门解析并生成 | ✅ |
+| 语言辅助函数 | `range`、`len`、`load`、`preload` | 专用语义和 runtime 实现 | 🟡 |
+
+版本规则：
+
+- [x] `--target-godot 4.4|4.5|4.6|4.7` 只使用对应能力表；引用目标版本不存在的 API 会在语义阶段失败。
+- [x] `--target-godot 4.7` 使用 4.7 类型、方法、属性、单例、工具函数、枚举、常量和运算符表。
+- [x] 前端只维护最新版 GDScript 语法；目标 API 版本独立选择，可把最新版纯语法降低为只依赖
+  Godot 4.4 的代码，不维护 4.4～4.7 多套 parser 方言。
+- [ ] 每个标准库表项仍需自动生成“合法参数、非法参数、边界值、原生编译、4.4～4.7 运行”测试。
+
+## 项目级 AOT 能力
+
+| 能力 | 状态 | 当前实现 |
+|---|---|---|
+| 全项目脚本扫描 | ✅ | 排除插件生成目录，稳定排序并构建内容哈希 |
+| `class_name` 和脚本路径继承 | ✅ | 建图、循环检测、父类优先生成和原生头文件依赖 |
+| 跨脚本字段、方法、常量和枚举 | ✅ | 建立签名表并验证静态/实例访问和参数 |
+| 跨脚本构造 | ✅ | `_init` 签名进入项目符号图，生成强类型 C++ 实例 |
+| 内部类与 lambda | 🟡 | 内部类生成独立稳定原生类型并先于宿主注册；lambda 生成带参数/宿主生命周期检查的 `CallableCustom`；嵌套内部类和高级闭包仍待差分 |
+| 未命名脚本原生身份 | ✅ | 以规范化完整资源路径和稳定摘要命名；不同目录同名脚本不会发生 C++ 类名或头文件碰撞 |
+| 重复全局类保护 | ✅ | 重复 `class_name` 在提交生成产物前以项目诊断拒绝 |
+| 显式父方法调用 | ✅ | 符号图记录直接父类，`super.method(...)` 只分派到已解析父实现 |
+| 场景节点脚本成员 | 🟡 | 保留 API 表校验后，对引擎静态类型上未知的场景脚本属性/方法走受检动态分派 |
+| Autoload 名字解析 | ✅ | 解析 `project.godot` 的 `[autoload]`；`.tscn` 解析根节点脚本；原生构造在字段初始化前登记 `ObjectID`，正常走 SceneTree、启动窗口回退注册表 |
+| 第三方引擎单例 | 🟡 | GodotSteam `Steam` 等不在官方 API JSON 中的 PascalCase GDExtension 单例通过 `Engine` 运行时表查找并走动态调用；发布前仍需显式依赖清单和拼写诊断 |
+| 第三方 GDExtension 类型 | 🟡 | 原生库由 Godot 原样加载，addon GDScript 与其他脚本一样 AOT；编辑器内从 ClassDB 自动采集父类、属性、实例/静态方法、信号、常量、强类型命名枚举和 bitfield，CLI 可用 Runtime 清单；`extends` 第三方扩展类尚未完成，跨库 Native 清单会安全拒绝 |
+| Autoload 缓存失效 | ✅ | Autoload 别名进入符号图哈希，配置变化不会复用错误代码 |
+| 增量生成正确性 | ✅ | manifest v3 为每个脚本分别保存实现哈希、公开 ABI 哈希和依赖边；编译器代码生成契约或 schema 不匹配时安全全量重建 |
+| 精确增量失效 | ✅ | 方法体变化只重建自身；公开签名、Inspector 元数据或常量契约变化只传播到实际引用方；第三方桥接只失效引用对应供应商的脚本，C++ 对象再按真实 include/depfile 失效 |
+| 原生对象缓存身份 | ✅ | API、平台、架构、profile、构建策略修订和编译器绝对路径共同校验，配置变化强制重编译 |
+| 跨平台 UTF-8 路径 | ✅ | 项目资源/脚本、Autoload、场景、CMake、原生命令和桥接锁显式转换；Windows 中文目录与 `.import` UID 冷热生成回归通过 |
+| 事务式编译 | ✅ | 语义或生成失败时不提交新的 manifest 和不完整输出 |
+| 生成原生工程 | ✅ | 单一根 CMake 生成逻辑，项目产物落入插件目录约定位置 |
+| 原生 ABI 校验 | 🟡 | 构造器、引擎方法、属性访问器与工具函数在重载选择后保留 `real_t`/定宽整数 meta 并生成显式 ABI 转换；仍缺全部 API 与平台运行矩阵 |
+| 场景/资源脚本替换 | 🟡 | Dungeon Rush 与 Castle Defense 已覆盖继承/嵌套场景、持久连接，以及序列化 Resource/容器/循环/共享/内嵌 PackedScene 图；运行期动态图和全平台仍未认证 |
+| Godot 内运行差分 | 🟡 | 固定 4.5.2 GDScript/AOT oracle 已在 macOS、Linux、Windows 覆盖值、边界整数、嵌套写回、lambda、match、字符串、信号及 13 类性能路径；Dungeon Rush/Castle 另有 AOT 黑盒门禁，完整语言、引擎版本和移动端仍未覆盖 |
+| 无源码发布 | 🟡 | 示例项目三桌面 PCK/完整发行物、Android arm64 APK、Dungeon Rush Windows 和 Castle Defense macOS 已通过源码、compiler、SDK、生成物零泄漏审计；iOS、Web、AAB 和其他架构尚未覆盖 |
+
+Autoload 当前生成了编译期强类型访问和运行时查找能力，并在实例字段初始化前登记只含
+`ObjectID` 的启动映射，解决前置 Autoload 尚未完全挂入 SceneTree 时的构造期读取。导出器只有在目标库构建、原生类加载、
+场景/资源替换和运行时描述符准备全部成功后才剥离 `.gd`；任一步失败都会保留脚本，商业预设
+默认阻断。只有显式允许 source fallback 或关闭剥离时才交付普通 GDScript 包。Dungeon Rush
+已验证成功、属性缺失失败和陈旧导出缓存三条路径，Castle Defense 进一步验证了多 Autoload
+启动顺序与嵌套资源图；但其他项目仍必须按同样门禁验收，不能只以
+“原生库链接成功”推断源码可以安全删除。
+
+## 官方复杂项目门禁
+
+官方语料由 [test/compatibility/official_projects.json](../test/compatibility/official_projects.json)
+固定版本，由 [tools/fetch_compatibility_corpus.py](../tools/fetch_compatibility_corpus.py) 获取，且只
+允许放在根目录 `build/` 下。执行器
+[tools/run_compatibility_corpus.py](../tools/run_compatibility_corpus.py) 分三层验证：
+
+1. 每个 `.gd` 脱离项目单独编译，用于发现纯语言和诊断回退；
+2. 整个 Godot 项目编译，用于验证项目符号、继承、Autoload 和资源路径；
+3. 只要项目编译成功，就强制配置并编译生成的 CMake 工程，原生编译或链接失败均为 CI 硬失败。
+
+当前基线已经写入 manifest，任何项目的单文件成功数低于 5、9、5、3，或四个项目中任一项目的
+全项目转译、原生配置、C++17 编译或动态库链接失败，CI 都会报兼容性回归。rhythm game 已通过
+内部类、lambda、跨脚本枚举、Inspector category 和 RefCounted 脚本工厂路径，并升级为原生硬
+门禁。成功率只能向上调整，不能用降低阈值掩盖回归。
+
+| 官方项目 | 单文件编译 | 全项目转译 | 原生动态库 | 当前硬门禁 |
+|---|---:|---|---|---|
+| 3D platformer | 5 / 8 | ✅ | ✅ | ✅ |
+| 3D voxel | 9 / 12 | ✅ | ✅ | ✅ |
+| rhythm game | 5 / 12 | ✅ | ✅ | ✅ |
+| role playing game | 3 / 14 | ✅ | ✅ | ✅ |
+
+本地复现：
+
+```bash
+cmake --preset dev -DGDPP_ENABLE_OFFICIAL_CORPUS_TESTS=ON
+cmake --build --preset dev
+ctest --preset dev --output-on-failure
+```
+
+报告生成在 `build/dev/compatibility/results/report.json`。官方源码、生成 C++、CMake 缓存、对象和
+动态库均属于构建产物，不进入 Git。
+
+## 低版本运行最新版语法
+
+GDPP 自己解析源码，前端始终跟进当前声明支持的最新版稳定 GDScript。纯语法糖可以在编译期
+降低后运行于 Godot 4.4；Godot 4.4 不需要认识原始最新版语法。但引擎 API 和运行时行为不能靠
+parser 伪造。
+
+| 最新版语言能力 | 4.4 目标策略 | 结论 |
+|---|---|---|
+| 三元、符号逻辑、幂、类型化声明等纯语法 | 生成 C++17 或 4.4 已有 Variant 操作 | ✅ 可行 |
+| `range`、`len` 等可等价模拟行为 | GDPP runtime shim | 🟡 已实现主路径，待差分 |
+| 4.5～4.7 新增引擎类、方法或枚举 | 4.4 能力表在编译期拒绝 | ✅ 安全失败 |
+| 可以基于 4.4 基础 API 实现的未来标准库能力 | 明确版本化 shim | 🟡 逐项实现 |
+| 无法等价降低的最新版行为 | 稳定诊断并拒绝 | ✅ 策略明确 |
+| 原始高版本 `.gd` 仍进入发布包 | 4.4 会调用自己的 parser | ⛔ 不可接受 |
+
+- [x] 单一最新版语法前端和目标 SDK/API 表是两个独立维度，不为旧 Godot 目标保留多套语法表。
+- [x] 目标版本在语义分析、代码生成、godot-cpp 配置和扩展描述符中保持一致。
+- [ ] 建立“当前最新版语法 → 4.4 原生库 → Godot 4.4 实际运行”的独立 CI 套件；最新版基线
+  更新时同一套门禁直接前移，不新增旧语法模式。
+- [ ] 为每个 shim 记录 runtime ABI、最低 Godot 版本、差分用例和性能预算。
+
+## 语言核心架构状态
+
+| 架构能力 | 当前状态 | 结论 |
+|---|---|---|
+| Lexer → Parser → AST → Semantic → Typed IR → C++ 分层 | ✅ | 核心不依赖 Godot，阶段失败不会提交半成品 |
+| 单一最新版官方语法策略 | ✅ | 不维护 4.4～4.7 多套 parser；Godot 版本只约束目标 API/SDK/ABI |
+| GDPP 扩展登记模型 | 🟡 | `LanguageFeatureRegistry` 已集中登记最新版注解的目标、参数范围和行为类别；增强特性的成熟度、lowering、shim 与 runtime ABI 尚待扩充 |
+| 强类型 AST 节点与统一 visitor | ✅ | 表达式、语句和 match pattern 已由 `std::variant` 强类型载荷存储；旧 kind/operand API 只作为只读迁移适配器 |
+| 分层 HIR/MIR 与显式 CFG | ✅ | 方法、访问器、内部类和 lambda 均生成基本块、前驱、终止指令、挂起边和副作用分类，并在后端前验证 |
+| 长协程有界 lowering | ✅ | 安全子集的长 `await` 链由 MIR 直接生成扁平状态机；复杂跨挂起局部变量仍由结构化路径处理，不误报为一般协程帧完成 |
+| 标准库 intrinsic 注册表 | ✅ | `IntrinsicRegistry` 集中登记 `range`、`len`、`load`、`preload` 的签名、返回类型与 lowering 身份 |
+| 语义与后端模块化 | 🟡 | 阶段边界清晰，但 semantic/codegen 实现文件已过大，尚未按职责拆分 |
+| 精确脚本/对象依赖图 | ✅ | v3 manifest 保存实际脚本/桥接引用边，公开 ABI 与实现哈希分离；NativeBuilder 使用真实头文件依赖，不把全项目符号图作为每个脚本共同输入 |
+
+这些状态区分“核心架构已经进入主链”和“高级优化器已经完成”。强类型 AST、显式 CFG/MIR 和
+精确增量已经落地；SSA/所有权数据流、semantic/codegen 职责拆分及更广的运行矩阵仍未完成。
+新增语法必须继续走统一注册、语义、HIR/MIR、验证和后端链路，不能向大型 switch 追加项目
+专用旁路。
+
+## 性能与正确性门禁
+
+当前生成器已经优先生成直接 C++，动态值才进入集中式 Variant runtime。固定 Godot 4.5.2
+矩阵已形成可重复基准，但范围仍不足以支持“任意游戏都超高性能”的宣传。
+
+- [x] 静态引擎方法、属性、项目字段和项目方法优先生成直接 C++ 调用。
+- [x] 动态运算、方法、属性、下标和迭代集中在 `gdpp::runtime`，便于统一优化和审计。
+- [x] 调用参数先按源码顺序保存，避免依赖 C++17 参数求值顺序。
+- [x] 顶层 Signal 等待不轮询、不阻塞线程；生成一次性 Callable 续体，并以 `ObjectID` 检查宿主生命周期。
+- [x] lambda 生成 `CallableCustom`，在调用边界检查参数数量，并以 `ObjectID` 阻止已释放宿主回调。
+- [x] 项目使用内容哈希、实际引用图、自动代码生成契约指纹和目标 API 进行增量失效。
+- [x] 区分脚本实现哈希、公开 ABI ID 和项目内容 Build ID，方法体修改不再重命名原生类。
+- [x] 使用脚本引用图和真实 C++ include/depfile 精确失效，取消每个对象对全部生成头文件的依赖。
+- [x] 建立 13 类固定 GDScript/AOT 工作负载，以 AB/BA 交替执行比较行为、启动、峰值 RSS、
+  当前每平台 360 个计时帧和完整发行目录；Godot 版本/CPU/样本/分位数进入 JSON 报告，CI
+  强制执行预算。
+- [x] 强类型数值、分支、Array/PackedArray、向量、对象属性、字符串、方法、Callable、Variant、
+  信号和分配工作负载在三平台本轮均快于 GDScript；Linux `Dictionary` 约慢 4%，保留为已知
+  热路径。首轮 Windows 信号慢 43.81% 已通过直接发射与 `StringName` 缓存修复，而非放宽预算。
+- [ ] 持久化 AST/符号摘要，缓存命中不重新解析，缓存未命中不重复解析同一文件。
+- [ ] 为 lexer、parser、semantic、IR、codegen、原生构建和 runtime 分别建立基准。
+- [ ] 静态数值热路径必须证明无 Variant 装箱、堆分配和字符串方法查找。
+- [ ] 在现有 GDScript/GDPP AOT 双方 oracle 上增加手写 godot-cpp 第三方基线。
+- [ ] 建立 ASan、UBSan、长时间运行、场景重复加载和多线程构建门禁。
+
+建议的 Stable 预算在基准设施完成后启用，当前不代表已达到：
+
+| 指标 | Stable 目标 |
+|---|---:|
+| 5,000 行文件前端验证 P95 | ≤ 100 ms |
+| 100,000 行项目无变更检查 P95 | ≤ 500 ms |
+| 100,000 行冷前端分析与 C++ 生成 P95 | ≤ 3 s |
+| 静态 CPU 基准相对手写 godot-cpp | 几何平均不慢于 1.25 倍 |
+| 引擎调用密集基准相对手写 godot-cpp | 额外开销 ≤ 10% |
+| 已发布基准的单版本回退 | ≤ 5% |
+
+## `.gdpp` 编辑器语言
+
+Tree-sitter 不是编译或运行 `.gdpp` 的必要条件。GDPP 已有 lexer、parser、AST、语义和项目符号
+系统，编辑器支持应复用这套前端，避免高亮器与实际编译器维护两套语法。
+
+| 编辑器能力 | 状态 | 计划接口 |
+|---|---|---|
+| 独立 `.gdpp` 注册 | ⛔ | `ScriptLanguageExtension` |
+| 脚本资源与实例 | ⛔ | `ScriptExtension` |
+| loader/saver | ⛔ | 自定义 ResourceFormatLoader/Saver |
+| 实时诊断 | ⛔ | 复用 compiler parser/semantic |
+| 补全、定义和文档 | ⛔ | 项目符号图 + 目标版本 API 表 |
+| 外部 IDE | ⛔ | LSP；Tree-sitter 仅作为可选编辑器语法包 |
+
+- [x] 安装插件不会让 Godot 4.4 内置 GDScript parser 自动理解未来语法。
+- [x] 仅引入 Tree-sitter 不能解决脚本资源、补全、运行、导出和 AOT 类映射。
+- [ ] 先完成 `.gd` 兼容模式的运行差分，再让 `.gdpp` 承载明确登记、分级发布的增强语法；
+  GDPP 扩展可以独立演进，但不复制多套官方语法版本。
+
+## 下一阶段阻断项
+
+- [ ] P0：把已运行的 Godot 4.5.2 固定 oracle 扩展到 4.4～4.7、三桌面平台、错误顺序、完整
+  场景生命周期和协程，不为缺失目标复用其他版本结果。
+- [ ] P0：完成场景、Resource、Autoload 与导出配置的原生类替换，成功后才允许剥离源码。
+- [x] 已完成：官方 API 构造器、普通方法、属性访问器和工具函数的参数 meta 进入重载结果并生成
+  `real_t`、float/double 与定宽整数显式 ABI 转换，严格 C++ 编译不依赖隐式窄化。
+- [ ] P0：从 API meta 生成精确的虚函数 C++ ABI，包括 int32/uint64、enum/bitfield、const、引用和
+  返回类型 thunk。
+- [ ] P0：为 114 个工具函数、38 个内建类型、749 个运算符生成版本化原生编译与运行矩阵。
+- [x] 已完成：旧式访问器绑定、显式父方法调用、同名未命名脚本隔离和安全对象降型，RPG 已进入项目级原生硬门禁。
+- [x] 已完成：实现非构造 `void` 实例方法的 Signal await 续体、一次性连接、对象释放取消语义，
+  并对安全长链生成有界 MIR 状态机，消除深层嵌套 lambda 的 MSVC 编译内存爆炸。
+- [x] 已完成：实现内部类与 lambda 主路径，官方 rhythm game 12 / 12 项目转译并进入原生动态库硬门禁。
+- [x] 已完成：项目脚本静态方法 ClassDB 注册，以及跨脚本和继承匿名枚举值的独立符号解析与
+  C++ 生成；二者均有项目级严格原生编译回归。
+- [ ] P1：完成跨挂起活跃变量分析与显式协程帧，把 `await` 扩展到返回值、一般表达式、复杂
+  异步循环和 `match`。
+- [x] P1：实现十种 PackedArray 的静态可迭代检查、元素类型推断和代码生成。
+- [x] P1：实现同步 PackedArray 和 `range()` 专用零装箱/零临时 Array 循环。
+- [ ] P1：实现异步续体中的 PackedArray 专用循环、剩余迭代协议和真正的类型化容器 ABI。
+- [x] P1：建立固定运行性能、行为 oracle、日志黑名单、包体统计和 CI 预算。
+- [ ] P1：继续建立 fuzz、sanitizer、长时间压力和完整包内容白名单测试。
+- [ ] P2：完成 `.gdpp` 的 ScriptLanguage/ScriptExtension、调试和 LSP。
+
+在 C4 运行差分与 C5 无源码交付闭环完成前，对外应使用“已支持文档列明的 GDScript 子集，并可
+将通过项目编译的脚本生成原生 GDExtension”这一表述；不得使用“完整兼容任意 GDScript”、
+“绝对无法逆向”或没有公开基准支撑的“超高性能”。
