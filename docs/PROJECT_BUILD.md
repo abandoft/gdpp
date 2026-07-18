@@ -5,7 +5,7 @@
 正式用户只需 Godot 与目标平台 C++ 工具链。插件不会调用 CMake、Python、Ninja、SCons，
 也不会在用户机器上生成或编译 godot-cpp。
 
-| 平台 | 必需工具链 | 产物最低系统 |
+| 平台 | 必需工具链 | 原生插件与 target pack 编译基线 |
 |---|---|---|
 | Windows x86_64 | MSVC Build Tools（编译器、链接器、Windows SDK） | Windows 10 |
 | macOS arm64 | Xcode Command Line Tools | macOS 11.0 |
@@ -13,6 +13,10 @@
 | Android arm64-v8a | Android NDK r28+ | Android 9 / API 28 |
 | iOS arm64 | macOS 上的完整 Xcode与对应 GDPP target pack | iOS 16.0 |
 | Web wasm32 | Emscripten | 无固定浏览器版本下限 |
+
+这里的系统版本是原生插件、项目库依赖和 target pack 的编译 ABI 契约，不是导出测试预设。
+`example/export_presets.cfg` 与 CI 的导出测试不写入 Android `min_sdk`、iOS 最低版本或 macOS
+deployment target，而是继承所安装的官方 Godot 导出模板设置；回归测试会拒绝重新加入这些覆盖项。
 
 Android arm64-v8a、iOS 和 Web wasm32 已接入自动导出；Android x86_64 仍属于平台矩阵里程碑。
 Web 需要匹配 Godot 小版本和线程模式的 target pack，详见 [Web 支持](WEB.md)；iOS 需要包含
@@ -156,6 +160,13 @@ GDPP 公开构建 profile 与产物角色固定如下：
 跨脚本字段访问器和静态函数调用，并校验继承赋值、参数数量及参数类型。成员签名表摘要进入
 所有脚本缓存键，因此父脚本只改变 ABI、使用方源码不变时，使用方仍会重新语义分析和生成。
 
+协程身份也是公开 ABI 的一部分。项目扫描先建立保守摘要，再以完整语义分析迭代到固定点，因而
+`await 42` 这类立即表达式不会把普通 `int` 方法误标为原生协程；真实挂起方法则以 `Variant`
+入口返回立即结果或每次调用独立的完成 Signal。已知协程调用缺少 `await` 会在提交生成清单前以
+GDS4132 失败。同步基类方法被异步派生方法覆盖时，派生实现使用独立 C++ 符号，ClassDB 仍发布
+原 GDScript 名称；基类类型接收者改走动态派发，避免 C++ 仅返回类型不同的非法覆盖。协程身份
+改变会重命名目标原生类并只使真实依赖方失效，单纯协程方法体修改仍复用公开 ABI。
+
 跨脚本常量使用 `Other.CONST`，命名枚举使用 `Other.State.MEMBER`，匿名枚举值使用
 `Other.MEMBER`，三者在符号表中保持不同种类；限定枚举类型可出现在字段、参数和返回值中。
 枚举数值同时用于 C++ 常量、`match` 和 Inspector hint。项目脚本静态方法会注册到 ClassDB，
@@ -166,7 +177,9 @@ GDPP 公开构建 profile 与产物角色固定如下：
 
 断言按构建 profile 隔离：`development` 和 `debug` 定义 `DEBUG_ENABLED`，会执行
 `assert(condition, message?)` 并在失败时报告原脚本位置；`release` 定义 `NDEBUG`，生成
-C++ 中的断言块会被预处理器完全移除，条件与消息表达式也不会求值。
+C++ 中的断言块会被预处理器完全移除，条件与消息表达式也不会求值。条件和消息都允许 Signal
+`await`：调试构建先恢复条件，只有失败时才连接并恢复消息，成功时直接进入唯一的后续业务续体；
+Release 的实际 C++ 预处理门禁会验证两类表达式、错误报告和 Signal 连接均不存在。
 
 ## 单描述符导出事务与失败安全运行时
 
