@@ -261,6 +261,78 @@ TEST_CASE("moving a globally named script preserves reused generated outputs") {
     REQUIRE(std::filesystem::is_regular_file(options.output_directory / "generated" / source));
 }
 
+TEST_CASE("project compiler transactionally replaces renamed and incompatible generated outputs") {
+    const auto root = fixture_root("project-renamed-generated-output");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "widget.gd", "extends Node\nfunc value() -> int:\n    return 1\n");
+    const gdpp::ProjectCompiler compiler;
+    const auto options = project_options(root);
+
+    const auto initial = compiler.compile(options);
+    REQUIRE(initial.success);
+    REQUIRE_EQ(initial.scripts.size(), std::size_t{1});
+    const auto old_header = initial.scripts.front().header_file_name;
+    const auto old_source = initial.scripts.front().source_file_name;
+    REQUIRE(old_header.find("path_widget_") == 0);
+    write_text(options.output_directory / "generated/orphan.gd.hpp", "orphan");
+    write_text(options.output_directory / "generated/orphan.gd.cpp", "orphan");
+
+    auto incompatible_manifest = read_text(options.output_directory / "manifest.txt");
+    const auto header_end = incompatible_manifest.find('\n');
+    REQUIRE(header_end != std::string::npos);
+    const auto fingerprint_begin = incompatible_manifest.rfind(' ', header_end);
+    REQUIRE(fingerprint_begin != std::string::npos);
+    incompatible_manifest.replace(fingerprint_begin + 1U, header_end - fingerprint_begin - 1U,
+                                  "incompatible-codegen-fingerprint");
+    write_text(options.output_directory / "manifest.txt", incompatible_manifest);
+    write_text(root / "widget.gd",
+               "extends Node\nclass_name RenamedWidget\nfunc value() -> int:\n    return 2\n");
+
+    const auto renamed = compiler.compile(options);
+
+    REQUIRE(renamed.success);
+    REQUIRE_EQ(renamed.compiled_count, std::size_t{1});
+    REQUIRE_EQ(renamed.cache_hit_count, std::size_t{0});
+    REQUIRE_EQ(renamed.removed_count, std::size_t{1});
+    REQUIRE_EQ(renamed.scripts.front().header_file_name, std::string{"renamed_widget.gd.hpp"});
+    REQUIRE_EQ(renamed.scripts.front().source_file_name, std::string{"renamed_widget.gd.cpp"});
+    REQUIRE(!std::filesystem::exists(options.output_directory / "generated" / old_header));
+    REQUIRE(!std::filesystem::exists(options.output_directory / "generated" / old_source));
+    REQUIRE(!std::filesystem::exists(options.output_directory / "generated/orphan.gd.hpp"));
+    REQUIRE(!std::filesystem::exists(options.output_directory / "generated/orphan.gd.cpp"));
+    const auto generated_cmake = read_text(options.output_directory / "CMakeLists.txt");
+    REQUIRE(generated_cmake.find(old_source) == std::string::npos);
+    REQUIRE(generated_cmake.find("renamed_widget.gd.cpp") != std::string::npos);
+}
+
+TEST_CASE("project compiler never follows generated manifest paths outside its owned directory") {
+    const auto root = fixture_root("project-manifest-path-confinement");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "safe.gd", "extends Node\nclass_name SafeManifestScript\n");
+    const gdpp::ProjectCompiler compiler;
+    const auto options = project_options(root);
+    const auto initial = compiler.compile(options);
+    REQUIRE(initial.success);
+
+    const auto sentinel = options.output_directory / "sentinel.gd.hpp";
+    write_text(sentinel, "must remain");
+    auto manifest = read_text(options.output_directory / "manifest.txt");
+    const auto safe_name = std::string{"safe_manifest_script.gd.hpp"};
+    const auto header = manifest.find(safe_name);
+    REQUIRE(header != std::string::npos);
+    manifest.replace(header, safe_name.size(), "../sentinel.gd.hpp");
+    write_text(options.output_directory / "manifest.txt", manifest);
+
+    const auto rebuilt = compiler.compile(options);
+
+    REQUIRE(rebuilt.success);
+    REQUIRE_EQ(rebuilt.compiled_count, std::size_t{1});
+    REQUIRE(std::filesystem::is_regular_file(sentinel));
+    REQUIRE_EQ(read_text(sentinel), std::string{"must remain"});
+}
+
 TEST_CASE("project compiler registers internal classes and includes complete enum owners") {
     const auto root = fixture_root("project-internal-class-lambda-enum");
     std::error_code error;
