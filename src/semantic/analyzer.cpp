@@ -263,6 +263,11 @@ Type SemanticModel::type_of(const ast::Statement& statement) const {
     return found == local_types_.end() ? unknown_type : found->second;
 }
 
+IterationPlan SemanticModel::iteration_plan_of(const ast::Statement& statement) const {
+    const auto found = iteration_plans_.find(&statement);
+    return found == iteration_plans_.end() ? IterationPlan{} : found->second;
+}
+
 Type SemanticModel::type_of(const ast::MatchPattern& pattern) const {
     const auto found = match_pattern_types_.find(&pattern);
     return found == match_pattern_types_.end() ? unknown_type : found->second;
@@ -573,15 +578,23 @@ Type SemanticAnalyzer::container_element_type(const Type& container, SourceSpan 
         return {TypeKind::string, "String"};
     if (container.is_packed_array())
         return packed_array_element_type(container);
-    if (container.kind != TypeKind::array)
-        return variant_type;
-    constexpr std::string_view prefix{"Array["};
-    if (container.name.size() <= prefix.size() ||
-        container.name.compare(0, prefix.size(), prefix) != 0 || container.name.back() != ']') {
-        return variant_type;
+    if (container.kind == TypeKind::array) {
+        const auto arguments = generic_type_arguments(container.name, "Array", 1);
+        return arguments ? type_from_name(arguments->front(), span) : variant_type;
     }
-    return type_from_name(
-        container.name.substr(prefix.size(), container.name.size() - prefix.size() - 1), span);
+    if (container.kind == TypeKind::dictionary) {
+        const auto arguments = generic_type_arguments(container.name, "Dictionary", 2);
+        return arguments ? type_from_name(arguments->at(1), span) : variant_type;
+    }
+    return variant_type;
+}
+
+Type SemanticAnalyzer::iteration_element_type(const Type& container, const SourceSpan span) {
+    if (container.kind == TypeKind::dictionary) {
+        const auto arguments = generic_type_arguments(container.name, "Dictionary", 2);
+        return arguments ? type_from_name(arguments->front(), span) : variant_type;
+    }
+    return container_element_type(container, span);
 }
 
 Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expression,
@@ -2737,7 +2750,16 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         }
         ++loop_depth_;
         scopes_.emplace_back();
-        const auto inferred_element_type = container_element_type(iterable, statement.span);
+        const auto inferred_element_type = iteration_element_type(iterable, statement.span);
+        bool intrinsic_range = false;
+        if (statement.condition()->kind() == ast::ExpressionKind::call &&
+            statement.condition()->operand_count() >= 1) {
+            const auto* resolution = model_.api_resolution_of(*statement.condition()->operand(0));
+            intrinsic_range = resolution && resolution->kind == ApiResolutionKind::intrinsic &&
+                              resolution->intrinsic == IntrinsicKind::range;
+        }
+        model_.iteration_plans_[&statement] =
+            make_iteration_plan(iterable, inferred_element_type, intrinsic_range);
         const auto element_type = statement.type()
                                       ? type_from_name(*statement.type(), statement.span)
                                       : inferred_element_type;

@@ -4,6 +4,7 @@
 #include "gdpp/frontend/ast.hpp"
 #include "gdpp/semantic/godot_api.hpp"
 #include "gdpp/semantic/intrinsics.hpp"
+#include "gdpp/semantic/iteration.hpp"
 #include "gdpp/semantic/rpc.hpp"
 #include "gdpp/semantic/script_symbols.hpp"
 #include "gdpp/semantic/type.hpp"
@@ -118,6 +119,7 @@ class SemanticModel final {
     [[nodiscard]] Type type_of(const ast::VariableDeclaration& declaration) const;
     [[nodiscard]] Type property_type_of(const ast::VariableDeclaration& declaration) const;
     [[nodiscard]] Type type_of(const ast::Statement& statement) const;
+    [[nodiscard]] IterationPlan iteration_plan_of(const ast::Statement& statement) const;
     [[nodiscard]] Type type_of(const ast::MatchPattern& pattern) const;
     [[nodiscard]] Type type_of(const ast::Parameter& parameter) const;
     [[nodiscard]] Type return_type_of(const ast::FunctionDeclaration& function) const;
@@ -146,6 +148,7 @@ class SemanticModel final {
     std::unordered_map<const ast::VariableDeclaration*, Type> variable_types_;
     std::unordered_map<const ast::VariableDeclaration*, Type> property_types_;
     std::unordered_map<const ast::Statement*, Type> local_types_;
+    std::unordered_map<const ast::Statement*, IterationPlan> iteration_plans_;
     std::unordered_map<const ast::MatchPattern*, Type> match_pattern_types_;
     std::unordered_map<const ast::Parameter*, Type> parameter_types_;
     std::unordered_map<const ast::FunctionDeclaration*, Type> function_return_types_;
@@ -208,6 +211,7 @@ class SemanticAnalyzer final {
     [[nodiscard]] bool is_assignment_target(const ast::Expression& expression) const noexcept;
     [[nodiscard]] Type type_from_name(const std::string& name, SourceSpan span = {});
     [[nodiscard]] Type container_element_type(const Type& container, SourceSpan span = {});
+    [[nodiscard]] Type iteration_element_type(const Type& container, SourceSpan span = {});
     [[nodiscard]] Type declared_or_inferred(const std::optional<std::string>& annotation,
                                             const ast::ExpressionPtr& initializer);
     void require_assignable(const Type& target, const Type& source, SourceSpan span,
