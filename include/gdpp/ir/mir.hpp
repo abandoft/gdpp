@@ -56,11 +56,24 @@ enum class TerminatorKind : std::uint8_t {
     suspend,
 };
 
+// A branch target pair is not sufficient to describe why control splits. Match-pattern and
+// iterator-protocol branches do not evaluate `condition` as a truthy GDScript expression, so
+// optimization passes must not infer their semantics from the expression payload.
+enum class BranchRole : std::uint8_t {
+    none,
+    condition,
+    iterator_protocol,
+    match_pattern,
+    match_guard,
+    assertion,
+};
+
 struct Terminator {
     TerminatorKind kind{TerminatorKind::invalid};
     const ir::Expression* condition{nullptr};
     std::vector<BlockId> targets;
     SourceSpan span{};
+    BranchRole branch_role{BranchRole::none};
 };
 
 struct BasicBlock {

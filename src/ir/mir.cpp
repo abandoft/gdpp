@@ -50,8 +50,10 @@ class FunctionBuilder final {
     }
 
     void terminate(mir::BlockId block, mir::TerminatorKind kind, std::vector<mir::BlockId> targets,
-                   const ir::Expression* condition, SourceSpan span) {
-        function_.blocks[block].terminator = {kind, condition, std::move(targets), span};
+                   const ir::Expression* condition, SourceSpan span,
+                   mir::BranchRole branch_role = mir::BranchRole::none) {
+        function_.blocks[block].terminator = {kind, condition, std::move(targets), span,
+                                              branch_role};
     }
 
     void append(mir::BlockId block, mir::InstructionKind kind, mir::Effect effects,
@@ -75,7 +77,7 @@ class FunctionBuilder final {
         const auto else_block = add_block();
         const auto join_block = add_block();
         terminate(current, mir::TerminatorKind::branch, {then_block, else_block},
-                  statement.condition.get(), statement.span);
+                  statement.condition.get(), statement.span, mir::BranchRole::condition);
         const auto then_end = lower_statements(statement.body, then_block, loop);
         if (open(then_end))
             terminate(then_end, mir::TerminatorKind::jump, {join_block}, nullptr, statement.span);
@@ -97,7 +99,8 @@ class FunctionBuilder final {
                    statement);
         }
         terminate(condition_block, mir::TerminatorKind::branch, {body_block, after_block},
-                  statement.condition.get(), statement.span);
+                  statement.condition.get(), statement.span,
+                  iterator_loop ? mir::BranchRole::iterator_protocol : mir::BranchRole::condition);
         const auto body_end =
             lower_statements(statement.body, body_block, {after_block, condition_block});
         if (open(body_end))
@@ -122,13 +125,13 @@ class FunctionBuilder final {
             append(test_block, mir::InstructionKind::match_test,
                    mir::Effect::reads_state | mir::Effect::may_fail, branch);
             terminate(test_block, mir::TerminatorKind::branch, {pattern_block, fallback},
-                      statement.condition.get(), branch.span);
+                      statement.condition.get(), branch.span, mir::BranchRole::match_pattern);
             auto guard_end = lower_statements(branch.guard_prefix, pattern_block, loop);
             auto branch_block = guard_end;
             if (open(guard_end) && branch.expression) {
                 branch_block = add_block();
                 terminate(guard_end, mir::TerminatorKind::branch, {branch_block, fallback},
-                          branch.expression.get(), branch.span);
+                          branch.expression.get(), branch.span, mir::BranchRole::match_guard);
             }
             const auto branch_end = lower_statements(branch.body, branch_block, loop);
             if (open(branch_end))
@@ -165,7 +168,7 @@ class FunctionBuilder final {
                 const auto success = add_block();
                 const auto failure = add_block();
                 terminate(condition_end, mir::TerminatorKind::branch, {success, failure},
-                          statement.condition.get(), statement.span);
+                          statement.condition.get(), statement.span, mir::BranchRole::assertion);
                 const auto message_end =
                     lower_statements(statement.assert_message_prefix, failure, loop);
                 if (open(message_end)) {
@@ -426,6 +429,16 @@ bool MirVerifier::verify(const mir::Module& module) const {
                  target_count == 0);
             if (!valid_target_count) {
                 diagnostics_.error("GDS5103", "MIR block has an invalid or unterminated edge set",
+                                   block.terminator.span);
+                valid = false;
+            }
+            const bool branch_contract_valid =
+                block.terminator.kind == mir::TerminatorKind::branch
+                    ? block.terminator.condition != nullptr &&
+                          block.terminator.branch_role != mir::BranchRole::none
+                    : block.terminator.branch_role == mir::BranchRole::none;
+            if (!branch_contract_valid) {
+                diagnostics_.error("GDS5108", "MIR branch has an invalid semantic role",
                                    block.terminator.span);
                 valid = false;
             }
