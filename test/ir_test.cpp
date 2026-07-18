@@ -65,6 +65,70 @@ TEST_CASE("typed IR owns resolved declaration and expression types") {
     REQUIRE(verifier.verify(module));
 }
 
+TEST_CASE("typed IR preserves semantic iteration plans") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module =
+        lower_source("func visit(values: Array[int], labels: Dictionary[String, int]) -> void:\n"
+                     "    for value in values:\n"
+                     "        pass\n"
+                     "    for key in labels:\n"
+                     "        pass\n"
+                     "    for character in \"A🙂B\":\n"
+                     "        pass\n",
+                     diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(module.functions.front().body.size(), std::size_t{3});
+    REQUIRE_EQ(module.functions.front().body[0].iteration.strategy,
+               gdpp::IterationStrategy::indexed_array);
+    REQUIRE_EQ(module.functions.front().body[0].iteration.element_type,
+               (gdpp::Type{gdpp::TypeKind::integer, "int"}));
+    REQUIRE_EQ(module.functions.front().body[1].iteration.strategy,
+               gdpp::IterationStrategy::dictionary_protocol);
+    REQUIRE_EQ(module.functions.front().body[1].iteration.element_type,
+               (gdpp::Type{gdpp::TypeKind::string, "String"}));
+    REQUIRE_EQ(module.functions.front().body[2].iteration.strategy,
+               gdpp::IterationStrategy::indexed_string);
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+}
+
+TEST_CASE("IR verifier rejects mismatched iteration plans") {
+    gdpp::DiagnosticBag diagnostics;
+    auto module = lower_source("func visit(values: Array[int]) -> void:\n"
+                               "    for value in values:\n"
+                               "        pass\n",
+                               diagnostics);
+    REQUIRE(!diagnostics.has_errors());
+    module.functions.front().body.front().iteration.strategy =
+        gdpp::IterationStrategy::indexed_string;
+
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(!verifier.verify(module));
+    REQUIRE(diagnostics.has_errors());
+}
+
+TEST_CASE("IR verifier rejects missing and misplaced iteration plans") {
+    gdpp::DiagnosticBag missing_diagnostics;
+    auto missing = lower_source("func visit(values: Array[int]) -> void:\n"
+                                "    for value in values:\n"
+                                "        pass\n",
+                                missing_diagnostics);
+    REQUIRE(!missing_diagnostics.has_errors());
+    missing.functions.front().body.front().iteration = {};
+    gdpp::IrVerifier missing_verifier{missing_diagnostics};
+    REQUIRE(!missing_verifier.verify(missing));
+
+    gdpp::DiagnosticBag misplaced_diagnostics;
+    auto misplaced = lower_source("func value() -> void:\n    var answer := 42\n",
+                                  misplaced_diagnostics);
+    REQUIRE(!misplaced_diagnostics.has_errors());
+    misplaced.functions.front().body.front().iteration =
+        {gdpp::IterationStrategy::integer_count, {gdpp::TypeKind::integer, "int"}};
+    gdpp::IrVerifier misplaced_verifier{misplaced_diagnostics};
+    REQUIRE(!misplaced_verifier.verify(misplaced));
+}
+
 TEST_CASE("typed IR preserves dynamic method and property dispatch") {
     gdpp::DiagnosticBag diagnostics;
     const auto module = lower_source("func invoke(target: Variant) -> Variant:\n"
