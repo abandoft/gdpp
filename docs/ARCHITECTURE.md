@@ -203,8 +203,10 @@ GDPP 自身使用 CMake、Python 和 godot-cpp 生成器，以保证开发构建
 - C++ 后端只接受验证通过的类型化 IR。
 - 动态成员 IR 必须显式区分方法和属性；生成代码必须按 GDScript 顺序且只求值一次接收者、
   参数、键和复合赋值旧值。
-- Variant `for` 必须将迭代器推进放在循环更新边，确保 `continue` 与普通落出路径行为一致；
-  Callable 参数必须先按源码顺序物化，再执行 `.call(...)`。
+- 每个 `for` 必须携带经 verifier 验证的 `IterationPlan`。String 使用单码点快照，Array 与
+  PackedArray 的同步快速路径引用原容器并逐轮读取实时长度，Dictionary/Variant 使用三阶段协议；
+  迭代器推进必须位于循环更新边，确保容器变更、`continue` 与普通落出路径行为一致。
+- Callable 参数必须先按源码顺序物化，再执行 `.call(...)`。
 - 用户侧构建命令使用参数数组，不经过 shell 字符串拼接。
 - Godot 资源、项目清单、桥接锁、CMake 文本和进程参数统一使用 UTF-8；文件系统路径只在
   `path_from_utf8`/`path_to_utf8` 边界转换，不能依赖 Windows 活动代码页。
