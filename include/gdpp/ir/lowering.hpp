@@ -14,6 +14,7 @@ class IrLowerer final {
 
   private:
     [[nodiscard]] ir::ExpressionPtr lower_expression(const ast::Expression& expression) const;
+    [[nodiscard]] ir::MatchPattern lower_match_pattern(const ast::MatchPattern& pattern) const;
     [[nodiscard]] ir::Statement lower_statement(const ast::Statement& statement) const;
     [[nodiscard]] ir::Parameter lower_parameter(const ast::Parameter& parameter) const;
     [[nodiscard]] ir::Class lower_class(const ast::ClassDeclaration& declaration) const;
@@ -28,6 +29,7 @@ class IrVerifier final {
 
   private:
     [[nodiscard]] bool verify_expression(const ir::Expression& expression);
+    [[nodiscard]] bool verify_match_pattern(const ir::MatchPattern& pattern);
     [[nodiscard]] bool verify_statement(const ir::Statement& statement);
     [[nodiscard]] bool verify_class(const ir::Class& declaration);
 

@@ -18,6 +18,7 @@ enum class ExpressionKind {
     literal,
     identifier,
     unary,
+    await_expression,
     binary,
     call,
     member,
@@ -43,6 +44,7 @@ enum class ResolutionKind {
     script_type,
     script_autoload,
     script_constant,
+    local_constant,
     script_enum_type,
     script_resource,
     script_constructor,
@@ -81,6 +83,7 @@ struct Expression {
     std::string getter;
     std::string setter;
     bool direct_access{false};
+    bool coroutine_call{false};
     std::int64_t indexed_argument{-1};
     IntrinsicKind intrinsic{IntrinsicKind::none};
     std::vector<std::unique_ptr<Expression>> operands;
@@ -107,12 +110,15 @@ enum class StatementKind {
     continue_statement,
 };
 
-enum class MatchPatternKind { value, wildcard, binding };
+enum class MatchPatternKind { value, wildcard, binding, rest, array, dictionary };
 
 struct MatchPattern {
     MatchPatternKind kind{MatchPatternKind::value};
     std::string name;
+    Type type;
     ExpressionPtr expression;
+    std::vector<MatchPattern> elements;
+    std::vector<ExpressionPtr> keys;
     SourceSpan span{};
 };
 
@@ -122,10 +128,14 @@ struct Statement {
     std::string name;
     Type declared_type;
     std::string operation;
+    bool is_constant{false};
     ExpressionPtr expression;
     ExpressionPtr condition;
     std::vector<Statement> body;
     std::vector<Statement> else_body;
+    std::vector<Statement> guard_prefix;
+    std::vector<Statement> assert_condition_prefix;
+    std::vector<Statement> assert_message_prefix;
     std::vector<MatchPattern> patterns;
 };
 
@@ -194,14 +204,17 @@ struct Function {
     Type return_type;
     std::vector<Statement> body;
     bool is_static{false};
+    bool is_coroutine{false};
     SourceSpan span{};
 };
 
 struct LambdaExpression {
+    std::string name;
     std::vector<Parameter> parameters;
     Type return_type;
     std::vector<Statement> body;
     bool owner_bound{false};
+    bool is_coroutine{false};
     SourceSpan span{};
 };
 

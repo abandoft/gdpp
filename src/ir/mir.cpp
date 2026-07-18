@@ -8,6 +8,14 @@
 namespace gdpp {
 namespace {
 
+bool await_can_suspend(const ir::Statement& statement) {
+    if (!statement.expression)
+        return false;
+    const auto& type = statement.expression->type;
+    return statement.expression->coroutine_call || type.is_dynamic() ||
+           (type.kind == TypeKind::builtin && type.name == "Signal");
+}
+
 class FunctionBuilder final {
   public:
     FunctionBuilder(std::string name, mir::FunctionRole role, SourceSpan span)
@@ -100,16 +108,28 @@ class FunctionBuilder final {
 
     [[nodiscard]] mir::BlockId lower_match(const ir::Statement& statement, mir::BlockId current,
                                            LoopTargets loop) {
+        if (statement.body.empty()) {
+            append(current, mir::InstructionKind::match_test,
+                   mir::Effect::reads_state | mir::Effect::may_fail, statement);
+            return current;
+        }
         const auto join_block = add_block();
         auto test_block = current;
         for (std::size_t index = 0; index < statement.body.size(); ++index) {
             const auto& branch = statement.body[index];
-            const auto branch_block = add_block();
+            const auto pattern_block = add_block();
             const auto fallback = index + 1 < statement.body.size() ? add_block() : join_block;
             append(test_block, mir::InstructionKind::match_test,
                    mir::Effect::reads_state | mir::Effect::may_fail, branch);
-            terminate(test_block, mir::TerminatorKind::branch, {branch_block, fallback},
+            terminate(test_block, mir::TerminatorKind::branch, {pattern_block, fallback},
                       statement.condition.get(), branch.span);
+            auto guard_end = lower_statements(branch.guard_prefix, pattern_block, loop);
+            auto branch_block = guard_end;
+            if (open(guard_end) && branch.expression) {
+                branch_block = add_block();
+                terminate(guard_end, mir::TerminatorKind::branch, {branch_block, fallback},
+                          branch.expression.get(), branch.span);
+            }
             const auto branch_end = lower_statements(branch.body, branch_block, loop);
             if (open(branch_end))
                 terminate(branch_end, mir::TerminatorKind::jump, {join_block}, nullptr,
@@ -136,6 +156,25 @@ class FunctionBuilder final {
                    statement);
             return current;
         case ir::StatementKind::assert_statement:
+            if (!statement.assert_condition_prefix.empty() ||
+                !statement.assert_message_prefix.empty()) {
+                const auto condition_end =
+                    lower_statements(statement.assert_condition_prefix, current, loop);
+                if (!open(condition_end))
+                    return mir::invalid_block;
+                const auto success = add_block();
+                const auto failure = add_block();
+                terminate(condition_end, mir::TerminatorKind::branch, {success, failure},
+                          statement.condition.get(), statement.span);
+                const auto message_end =
+                    lower_statements(statement.assert_message_prefix, failure, loop);
+                if (open(message_end)) {
+                    append(message_end, mir::InstructionKind::assert_condition,
+                           mir::Effect::reads_state | mir::Effect::may_fail, statement);
+                    terminate(message_end, mir::TerminatorKind::stop, {}, nullptr, statement.span);
+                }
+                return success;
+            }
             append(current, mir::InstructionKind::assert_condition,
                    mir::Effect::reads_state | mir::Effect::may_fail, statement);
             return current;
@@ -161,6 +200,14 @@ class FunctionBuilder final {
             return lower_match(statement, current, loop);
         case ir::StatementKind::await_statement:
         case ir::StatementKind::await_variable: {
+            if (!await_can_suspend(statement)) {
+                append(current,
+                       statement.kind == ir::StatementKind::await_variable
+                           ? mir::InstructionKind::declare_variable
+                           : mir::InstructionKind::evaluate,
+                       mir::Effect::reads_state | mir::Effect::may_fail, statement);
+                return current;
+            }
             append(current, mir::InstructionKind::suspend_value,
                    mir::Effect::reads_state | mir::Effect::writes_state |
                        mir::Effect::may_allocate | mir::Effect::suspends,
@@ -236,6 +283,18 @@ class FunctionBuilder final {
 void collect_expression_lambdas(const ir::Expression& expression, std::string_view owner,
                                 std::size_t& lambda_index, std::vector<mir::Function>& output);
 
+void collect_pattern_lambdas(const ir::MatchPattern& pattern, std::string_view owner,
+                             std::size_t& lambda_index, std::vector<mir::Function>& output) {
+    if (pattern.expression)
+        collect_expression_lambdas(*pattern.expression, owner, lambda_index, output);
+    for (const auto& key : pattern.keys) {
+        if (key)
+            collect_expression_lambdas(*key, owner, lambda_index, output);
+    }
+    for (const auto& element : pattern.elements)
+        collect_pattern_lambdas(element, owner, lambda_index, output);
+}
+
 void collect_statement_lambdas(const std::vector<ir::Statement>& statements, std::string_view owner,
                                std::size_t& lambda_index, std::vector<mir::Function>& output) {
     for (const auto& statement : statements) {
@@ -243,12 +302,13 @@ void collect_statement_lambdas(const std::vector<ir::Statement>& statements, std
             collect_expression_lambdas(*statement.expression, owner, lambda_index, output);
         if (statement.condition)
             collect_expression_lambdas(*statement.condition, owner, lambda_index, output);
-        for (const auto& pattern : statement.patterns) {
-            if (pattern.expression)
-                collect_expression_lambdas(*pattern.expression, owner, lambda_index, output);
-        }
+        for (const auto& pattern : statement.patterns)
+            collect_pattern_lambdas(pattern, owner, lambda_index, output);
         collect_statement_lambdas(statement.body, owner, lambda_index, output);
         collect_statement_lambdas(statement.else_body, owner, lambda_index, output);
+        collect_statement_lambdas(statement.guard_prefix, owner, lambda_index, output);
+        collect_statement_lambdas(statement.assert_condition_prefix, owner, lambda_index, output);
+        collect_statement_lambdas(statement.assert_message_prefix, owner, lambda_index, output);
     }
 }
 

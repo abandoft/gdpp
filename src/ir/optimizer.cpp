@@ -5,6 +5,7 @@
 #include <cmath>
 #include <iomanip>
 #include <limits>
+#include <locale>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -46,11 +47,20 @@ std::optional<std::int64_t> integer_value(const ir::Expression& expression) {
 
 std::optional<double> floating_value(const ir::Expression& expression) {
     const auto value = normalized_number(expression);
-    try {
-        return std::stod(value);
-    } catch (...) {
+    if (value == "inf" || value == "+inf")
+        return std::numeric_limits<double>::infinity();
+    if (value == "-inf")
+        return -std::numeric_limits<double>::infinity();
+    if (value == "nan" || value == "+nan" || value == "-nan")
+        return std::numeric_limits<double>::quiet_NaN();
+
+    std::istringstream input{value};
+    input.imbue(std::locale::classic());
+    double parsed = 0.0;
+    input >> parsed;
+    if (input.fail())
         return std::nullopt;
-    }
+    return parsed;
 }
 
 std::optional<std::int64_t> checked_add(const std::int64_t left, const std::int64_t right) {
@@ -84,9 +94,20 @@ std::optional<std::int64_t> checked_multiply(const std::int64_t left, const std:
 }
 
 std::string floating_text(double value) {
+    if (std::isnan(value))
+        return "nan";
+    if (std::isinf(value))
+        return std::signbit(value) ? "-inf" : "inf";
+    if (value == 0.0 && std::signbit(value))
+        return "-0.0";
+
     std::ostringstream output;
+    output.imbue(std::locale::classic());
     output << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
-    return output.str();
+    auto text = output.str();
+    if (text.find_first_of(".eE") == std::string::npos)
+        text += ".0";
+    return text;
 }
 
 void replace_literal(ir::Expression& expression, ir::LiteralKind literal_kind, Type type,
@@ -286,12 +307,13 @@ void IrOptimizer::optimize_statements(std::vector<ir::Statement>& statements,
             optimize_expression(*statement.expression, stats);
         if (statement.condition)
             optimize_expression(*statement.condition, stats);
-        for (auto& pattern : statement.patterns) {
-            if (pattern.expression)
-                optimize_expression(*pattern.expression, stats);
-        }
+        for (auto& pattern : statement.patterns)
+            optimize_match_pattern(pattern, stats);
         optimize_statements(statement.body, stats);
         optimize_statements(statement.else_body, stats);
+        optimize_statements(statement.guard_prefix, stats);
+        optimize_statements(statement.assert_condition_prefix, stats);
+        optimize_statements(statement.assert_message_prefix, stats);
     }
 
     const auto before_passes = statements.size();
@@ -310,6 +332,18 @@ void IrOptimizer::optimize_statements(std::vector<ir::Statement>& statements,
         stats.statements_removed += statements.size() - keep;
         statements.erase(statements.begin() + static_cast<std::ptrdiff_t>(keep), statements.end());
     }
+}
+
+void IrOptimizer::optimize_match_pattern(ir::MatchPattern& pattern,
+                                         OptimizationStats& stats) const {
+    if (pattern.expression)
+        optimize_expression(*pattern.expression, stats);
+    for (auto& key : pattern.keys) {
+        if (key)
+            optimize_expression(*key, stats);
+    }
+    for (auto& element : pattern.elements)
+        optimize_match_pattern(element, stats);
 }
 
 OptimizationStats IrOptimizer::optimize(ir::Module& module) const {

@@ -17,6 +17,7 @@ class IrOptimizer final {
 
   private:
     void optimize_expression(ir::Expression& expression, OptimizationStats& stats) const;
+    void optimize_match_pattern(ir::MatchPattern& pattern, OptimizationStats& stats) const;
     void optimize_statements(std::vector<ir::Statement>& statements,
                              OptimizationStats& stats) const;
     void optimize_class(ir::Class& declaration, OptimizationStats& stats) const;
