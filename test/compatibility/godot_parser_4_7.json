@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "repository": {
+    "name": "godotengine/godot",
+    "url": "https://github.com/godotengine/godot.git",
+    "commit": "5b4e0cb0fd279832bbdd69fed5354d4e5ad26f88",
+    "license_file": "LICENSE.txt",
+    "license": "MIT",
+    "sparse_paths": [
+      "modules/gdscript/tests/scripts/parser"
+    ],
+    "required_files": [
+      "modules/gdscript/tests/scripts/parser/features/match.gd",
+      "modules/gdscript/tests/scripts/parser/errors/lambda_standalone.gd"
+    ]
+  },
+  "parser_corpus": {
+    "root": "modules/gdscript/tests/scripts/parser",
+    "valid_directories": [
+      "features",
+      "warnings"
+    ],
+    "invalid_directories": [
+      "errors"
+    ],
+    "expected_valid_scripts": 114,
+    "expected_invalid_scripts": 76
+  }
+}

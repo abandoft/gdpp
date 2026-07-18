@@ -135,5 +135,51 @@ if(GDPP_BUILD_CLI)
             gdpp.compatibility.official_projects
             PROPERTIES FIXTURES_REQUIRED official_compatibility_corpus TIMEOUT 1200
         )
+
+        set(GDPP_PARSER_CORPUS_MANIFEST
+            "${PROJECT_SOURCE_DIR}/test/compatibility/godot_parser_4_7.json")
+        set(GDPP_PARSER_CORPUS_DIRECTORY
+            "${PROJECT_BINARY_DIR}/compatibility/godot-parser-4.7")
+        set(GDPP_PARSER_CORPUS_OUTPUT
+            "${PROJECT_BINARY_DIR}/compatibility/parser-results")
+        add_test(
+            NAME gdpp.compatibility.fetch_parser_4_7
+            COMMAND
+                "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tools/fetch_compatibility_corpus.py"
+                --manifest "${GDPP_PARSER_CORPUS_MANIFEST}"
+                --destination "${GDPP_PARSER_CORPUS_DIRECTORY}"
+                --build-root "${PROJECT_SOURCE_DIR}/build"
+        )
+        set_tests_properties(
+            gdpp.compatibility.fetch_parser_4_7
+            PROPERTIES FIXTURES_SETUP official_parser_4_7_corpus TIMEOUT 180
+        )
+        add_test(
+            NAME gdpp.compatibility.parser_4_7
+            COMMAND
+                "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tools/run_parser_corpus.py"
+                --manifest "${GDPP_PARSER_CORPUS_MANIFEST}"
+                --corpus "${GDPP_PARSER_CORPUS_DIRECTORY}"
+                --compiler "$<TARGET_FILE:gdpp>"
+                --output "${GDPP_PARSER_CORPUS_OUTPUT}"
+                --build-root "${PROJECT_SOURCE_DIR}/build"
+                --target-godot 4.7
+        )
+        set_tests_properties(
+            gdpp.compatibility.parser_4_7
+            PROPERTIES FIXTURES_REQUIRED official_parser_4_7_corpus TIMEOUT 180
+        )
     endif()
+endif()
+
+# CMake's configure-time environment does not automatically propagate to CTest.  Keep Python
+# imports performed by fixtures from writing __pycache__ into the checked-in tools directory.
+get_property(GDPP_CONFIGURED_TESTS DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY TESTS)
+if(GDPP_CONFIGURED_TESTS)
+    set_tests_properties(
+        ${GDPP_CONFIGURED_TESTS}
+        PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+    )
 endif()

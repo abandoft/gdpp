@@ -43,6 +43,37 @@ def current_commit(destination: Path) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def sparse_paths(manifest: dict) -> list[str]:
+    repository = manifest["repository"]
+    paths = [repository["license_file"]]
+    configured_paths = repository.get("sparse_paths")
+    if configured_paths is not None:
+        if not isinstance(configured_paths, list) or not configured_paths:
+            raise RuntimeError("repository.sparse_paths must be a non-empty array")
+        paths.extend(configured_paths)
+    else:
+        paths.extend(project["path"] for project in manifest.get("projects", []))
+    return list(dict.fromkeys(paths))
+
+
+def validate_checkout(destination: Path, manifest: dict) -> None:
+    repository = manifest["repository"]
+    actual_commit = current_commit(destination)
+    if actual_commit != repository["commit"]:
+        raise RuntimeError(
+            f"corpus commit mismatch: expected {repository['commit']}, got {actual_commit}"
+        )
+    if not (destination / repository["license_file"]).is_file():
+        raise RuntimeError("official corpus license file is missing")
+    for required_file in repository.get("required_files", []):
+        if not (destination / required_file).is_file():
+            raise RuntimeError(f"official corpus required file is missing: {required_file}")
+    for project in manifest.get("projects", []):
+        project_root = destination / project["path"]
+        if not (project_root / "project.godot").is_file():
+            raise RuntimeError(f"Godot project is missing project.godot: {project['path']}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
@@ -56,6 +87,7 @@ def main() -> int:
     ensure_build_destination(destination, args.build_root)
 
     if current_commit(destination) == repository["commit"]:
+        validate_checkout(destination, manifest)
         print(f"official compatibility corpus already present at {destination}")
         return 0
 
@@ -69,9 +101,8 @@ def main() -> int:
     run(["git", "config", "remote.origin.promisor", "true"], destination)
     run(["git", "config", "remote.origin.partialCloneFilter", "blob:none"], destination)
     run(["git", "sparse-checkout", "init", "--cone"], destination)
-    sparse_paths = [repository["license_file"]]
-    sparse_paths.extend(project["path"] for project in manifest["projects"])
-    run(["git", "sparse-checkout", "set", "--"] + sparse_paths, destination)
+    checkout_paths = sparse_paths(manifest)
+    run(["git", "sparse-checkout", "set", "--"] + checkout_paths, destination)
     run(
         [
             "git",
@@ -86,15 +117,8 @@ def main() -> int:
     )
     run(["git", "checkout", "--quiet", "--detach", "FETCH_HEAD"], destination)
 
+    validate_checkout(destination, manifest)
     actual_commit = current_commit(destination)
-    if actual_commit != repository["commit"]:
-        raise RuntimeError(f"corpus commit mismatch: expected {repository['commit']}, got {actual_commit}")
-    if not (destination / repository["license_file"]).is_file():
-        raise RuntimeError("official corpus license file is missing")
-    for project in manifest["projects"]:
-        project_root = destination / project["path"]
-        if not (project_root / "project.godot").is_file():
-            raise RuntimeError(f"Godot project is missing project.godot: {project['path']}")
 
     print(f"fetched {repository['name']} at {actual_commit} into {destination}")
     return 0

@@ -29,11 +29,15 @@ PR 或手动发布
 | `quality.yml` | C++ 格式、Actions 语义、权限、Action SHA、仓库与产物卫生 | 总门禁调用 | ✅ | ✅ | 无 |
 | `core.yml` | AppleClang/GCC/MSVC 编译器核心构建与单元测试 | 总门禁调用 | ✅ | ✅ | 无 |
 | `native-integration.yml` | 三桌面 compiler GDExtension、SDK、生成代码和直接原生构建 | 总门禁调用 | ✅ | ✅ | 无 |
-| `godot-compatibility.yml` | Godot 4.4～4.7 导出/运行差分及固定官方项目语料 | 总门禁调用 | ✅ | ✅ | 无 |
+| `godot-compatibility.yml` | Godot 4.4～4.7 导出/运行差分、固定官方项目与 4.7 parser 合法/非法语料 | 总门禁调用 | ✅ | ✅ | 无 |
 | `android.yml` | Android arm64 target pack 与二进制 APK 构建/审计 | 总门禁调用 | ✅ | ✅ | 无 |
 | `web.yml` | Web 双线程 target pack、Wasm/PCK 审计与 Chromium 运行 | 总门禁调用 | ✅ | ✅ | 无 |
 | `ios.yml` | iOS 16 设备/模拟器 target pack、XCFramework 与 Xcode 构建 | 总门禁调用 | ✅ | ✅ | 无 |
 | `release.yml` | 全量门禁、12 包构建、哈希、CHANGELOG 与不可变 GitHub Release | ✅ | ✅ | 否 | 仅 `publish` 作业 |
+
+最低系统版本只在 compiler、宿主 SDK、移动 target pack 的构建任务和发行包 ABI 审计中校验。
+Android APK、iOS Xcode 工程、macOS 及其他平台的导出测试不覆盖官方导出模板的最低版本；它们只
+验证 AOT 导出、无源码封装、原生库加载和运行结果。
 
 ## PR 与分支保护
 
@@ -42,7 +46,8 @@ PR 总是展开完整测试和发布包矩阵，但永远不会创建标签或 R
 20 个发布组件任务和 12 个 ZIP 任务，任何失败或跳过都会让汇总检查失败。
 
 `godot-compatibility.yml` 仍可手动选择 `all`、单个精确 Godot 维护版本或
-`official-corpus`，用于缩短故障诊断时间；总门禁固定传入 `all`。4.4 分支使用 4.4.1，插件
+`official-corpus`，用于缩短故障诊断时间；该任务同时固定 Godot 4.7 stable 的 114 个合法和
+76 个非法 parser 脚本，并保存逐文件阶段报告。总门禁固定传入 `all`。4.4 分支使用 4.4.1，插件
 描述符和目标 ABI 最低版本仍为 4.4。
 
 ## 正式发布
