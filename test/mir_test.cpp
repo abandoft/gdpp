@@ -64,6 +64,33 @@ TEST_CASE("MIR builds explicit branches loops returns and suspension edges") {
                         }));
 }
 
+TEST_CASE("MIR suspends for a typed coroutine call with a scalar logical result") {
+    gdpp::ir::Module hir;
+    gdpp::ir::Function function;
+    function.name = "consume";
+    function.is_coroutine = true;
+
+    gdpp::ir::Statement await;
+    await.kind = gdpp::ir::StatementKind::await_variable;
+    await.name = "value";
+    await.declared_type = {gdpp::TypeKind::integer, "int"};
+    await.expression = std::make_unique<gdpp::ir::Expression>();
+    await.expression->kind = gdpp::ir::ExpressionKind::call;
+    await.expression->type = {gdpp::TypeKind::integer, "int"};
+    await.expression->coroutine_call = true;
+    function.body.push_back(std::move(await));
+    hir.functions.push_back(std::move(function));
+
+    const auto mir = gdpp::MirLowerer{}.lower(hir);
+    gdpp::DiagnosticBag diagnostics;
+    REQUIRE(gdpp::MirVerifier{diagnostics}.verify(mir));
+    REQUIRE(mir.functions.front().suspends);
+    REQUIRE(std::any_of(mir.functions.front().blocks.begin(), mir.functions.front().blocks.end(),
+                        [](const gdpp::mir::BasicBlock& block) {
+                            return block.terminator.kind == gdpp::mir::TerminatorKind::suspend;
+                        }));
+}
+
 TEST_CASE("MIR covers accessors internal methods and lambdas") {
     gdpp::ir::Module hir;
     hir.class_name = "Owners";
@@ -100,6 +127,86 @@ TEST_CASE("MIR covers accessors internal methods and lambdas") {
     REQUIRE(std::any_of(mir.functions.begin(), mir.functions.end(), [](const auto& item) {
         return item.role == gdpp::mir::FunctionRole::lambda;
     }));
+}
+
+TEST_CASE("MIR places awaited match guards between pattern tests and branch bodies") {
+    gdpp::ir::Module hir;
+    gdpp::ir::Function function;
+    function.name = "run";
+
+    gdpp::ir::Statement match;
+    match.kind = gdpp::ir::StatementKind::match_statement;
+    match.condition = literal("1");
+    gdpp::ir::Statement branch;
+    branch.kind = gdpp::ir::StatementKind::match_branch;
+    gdpp::ir::MatchPattern wildcard;
+    wildcard.kind = gdpp::ir::MatchPatternKind::wildcard;
+    branch.patterns.push_back(std::move(wildcard));
+    branch.expression = literal();
+    gdpp::ir::Statement await;
+    await.kind = gdpp::ir::StatementKind::await_variable;
+    await.name = "guard";
+    await.expression = literal();
+    await.expression->type = {gdpp::TypeKind::builtin, "Signal"};
+    branch.guard_prefix.push_back(std::move(await));
+    branch.body.push_back(marker(gdpp::ir::StatementKind::pass_statement));
+    match.body.push_back(std::move(branch));
+    function.body.push_back(std::move(match));
+    hir.functions.push_back(std::move(function));
+
+    const auto mir = gdpp::MirLowerer{}.lower(hir);
+    gdpp::DiagnosticBag diagnostics;
+    REQUIRE(gdpp::MirVerifier{diagnostics}.verify(mir));
+    REQUIRE(mir.functions.front().suspends);
+    REQUIRE(std::any_of(mir.functions.front().blocks.begin(), mir.functions.front().blocks.end(),
+                        [](const gdpp::mir::BasicBlock& block) {
+                            return block.terminator.kind == gdpp::mir::TerminatorKind::suspend;
+                        }));
+    REQUIRE(std::count_if(mir.functions.front().blocks.begin(), mir.functions.front().blocks.end(),
+                          [](const gdpp::mir::BasicBlock& block) {
+                              return block.terminator.kind == gdpp::mir::TerminatorKind::branch;
+                          }) >= 2);
+}
+
+TEST_CASE("MIR keeps awaited assert messages on the failure-only edge") {
+    gdpp::ir::Module hir;
+    gdpp::ir::Function function;
+    function.name = "validate";
+
+    gdpp::ir::Statement assertion;
+    assertion.kind = gdpp::ir::StatementKind::assert_statement;
+    assertion.condition = literal();
+    assertion.expression = literal();
+    gdpp::ir::Statement condition_await;
+    condition_await.kind = gdpp::ir::StatementKind::await_variable;
+    condition_await.name = "condition";
+    condition_await.expression = literal();
+    condition_await.expression->type = {gdpp::TypeKind::builtin, "Signal"};
+    assertion.assert_condition_prefix.push_back(std::move(condition_await));
+    gdpp::ir::Statement message_await;
+    message_await.kind = gdpp::ir::StatementKind::await_variable;
+    message_await.name = "message";
+    message_await.expression = literal();
+    message_await.expression->type = {gdpp::TypeKind::builtin, "Signal"};
+    assertion.assert_message_prefix.push_back(std::move(message_await));
+    function.body.push_back(std::move(assertion));
+    function.body.push_back(marker(gdpp::ir::StatementKind::pass_statement));
+    hir.functions.push_back(std::move(function));
+
+    const auto mir = gdpp::MirLowerer{}.lower(hir);
+    gdpp::DiagnosticBag diagnostics;
+    REQUIRE(gdpp::MirVerifier{diagnostics}.verify(mir));
+    REQUIRE(mir.functions.front().suspends);
+    REQUIRE_EQ(static_cast<std::size_t>(std::count_if(
+                   mir.functions.front().blocks.begin(), mir.functions.front().blocks.end(),
+                   [](const gdpp::mir::BasicBlock& block) {
+                       return block.terminator.kind == gdpp::mir::TerminatorKind::suspend;
+                   })),
+               std::size_t{2});
+    REQUIRE(std::any_of(mir.functions.front().blocks.begin(), mir.functions.front().blocks.end(),
+                        [](const gdpp::mir::BasicBlock& block) {
+                            return block.terminator.kind == gdpp::mir::TerminatorKind::stop;
+                        }));
 }
 
 TEST_CASE("MIR verifier rejects corrupt edge and predecessor metadata") {

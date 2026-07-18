@@ -22,6 +22,32 @@ gdpp::ir::Module lower_source(const std::string& text, gdpp::DiagnosticBag& diag
     return lowerer.lower(script);
 }
 
+bool contains_await_expression(const gdpp::ir::Expression& expression) {
+    if (expression.kind == gdpp::ir::ExpressionKind::await_expression)
+        return true;
+    return std::any_of(expression.operands.begin(), expression.operands.end(),
+                       [](const auto& operand) { return contains_await_expression(*operand); });
+}
+
+bool contains_await_expression(const gdpp::ir::Statement& statement) {
+    if ((statement.expression && contains_await_expression(*statement.expression)) ||
+        (statement.condition && contains_await_expression(*statement.condition))) {
+        return true;
+    }
+    return std::any_of(statement.body.begin(), statement.body.end(),
+                       [](const auto& child) { return contains_await_expression(child); }) ||
+           std::any_of(statement.else_body.begin(), statement.else_body.end(),
+                       [](const auto& child) { return contains_await_expression(child); }) ||
+           std::any_of(statement.guard_prefix.begin(), statement.guard_prefix.end(),
+                       [](const auto& child) { return contains_await_expression(child); }) ||
+           std::any_of(statement.assert_condition_prefix.begin(),
+                       statement.assert_condition_prefix.end(),
+                       [](const auto& child) { return contains_await_expression(child); }) ||
+           std::any_of(statement.assert_message_prefix.begin(),
+                       statement.assert_message_prefix.end(),
+                       [](const auto& child) { return contains_await_expression(child); });
+}
+
 } // namespace
 
 TEST_CASE("typed IR owns resolved declaration and expression types") {
@@ -53,6 +79,25 @@ TEST_CASE("typed IR preserves dynamic method and property dispatch") {
     const auto& property = *module.functions[1].body.front().expression;
     REQUIRE_EQ(property.kind, gdpp::ir::ExpressionKind::member);
     REQUIRE_EQ(property.resolution, gdpp::ir::ResolutionKind::dynamic_property);
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+}
+
+TEST_CASE("typed IR distinguishes local constants from class constants") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module = lower_source("const ROOT = \"res://\"\n"
+                                     "func path() -> String:\n"
+                                     "    const FILE = ROOT + \"scene.tscn\"\n"
+                                     "    return FILE\n",
+                                     diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(module.fields.front().initializer->kind, gdpp::ir::ExpressionKind::literal);
+    const auto& local_initializer = *module.functions.front().body.front().expression;
+    REQUIRE_EQ(local_initializer.operands.front()->resolution,
+               gdpp::ir::ResolutionKind::script_constant);
+    REQUIRE_EQ(module.functions.front().body.back().expression->resolution,
+               gdpp::ir::ResolutionKind::local_constant);
     gdpp::IrVerifier verifier{diagnostics};
     REQUIRE(verifier.verify(module));
 }
@@ -121,6 +166,26 @@ TEST_CASE("IR optimizer preserves exact int64 values above double precision") {
     const auto& value = *module.functions.front().body.front().expression;
     REQUIRE_EQ(value.literal_kind, gdpp::ir::LiteralKind::integer);
     REQUIRE_EQ(value.value, std::string{"9007199254740995"});
+}
+
+TEST_CASE("IR optimizer preserves nonfinite and signed-zero floating contracts") {
+    gdpp::DiagnosticBag diagnostics;
+    auto module = lower_source("func invalid_difference() -> float:\n"
+                               "    return 1e400 - 1e400\n"
+                               "func signed_zero() -> float:\n"
+                               "    return -0.0\n",
+                               diagnostics);
+    REQUIRE(!diagnostics.has_errors());
+
+    const auto stats = gdpp::IrOptimizer{}.optimize(module);
+
+    REQUIRE_EQ(stats.constants_folded, std::size_t{2});
+    const auto& difference = *module.functions.at(0).body.front().expression;
+    const auto& zero = *module.functions.at(1).body.front().expression;
+    REQUIRE_EQ(difference.literal_kind, gdpp::ir::LiteralKind::floating);
+    REQUIRE_EQ(difference.value, std::string{"nan"});
+    REQUIRE_EQ(zero.literal_kind, gdpp::ir::LiteralKind::floating);
+    REQUIRE_EQ(zero.value, std::string{"-0.0"});
 }
 
 TEST_CASE("IR verifier rejects structurally invalid collection IR") {
@@ -211,6 +276,34 @@ TEST_CASE("typed IR preserves match patterns guards and branch scopes") {
     REQUIRE(verifier.verify(module));
 }
 
+TEST_CASE("typed IR recursively owns structural match patterns and binding types") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module = lower_source("func classify(value: Variant) -> int:\n"
+                                     "    match value:\n"
+                                     "        [1, {\"hp\": var hp, ..}, var tail]:\n"
+                                     "            return hp\n"
+                                     "        _:\n"
+                                     "            return -1\n"
+                                     "func empty_match() -> void:\n"
+                                     "    match 0:\n"
+                                     "        pass\n",
+                                     diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    const auto& match = module.functions.front().body.front();
+    const auto& root = match.body.front().patterns.front();
+    REQUIRE_EQ(root.kind, gdpp::ir::MatchPatternKind::array);
+    REQUIRE_EQ(root.elements.size(), std::size_t{3});
+    REQUIRE_EQ(root.elements.at(1).kind, gdpp::ir::MatchPatternKind::dictionary);
+    REQUIRE_EQ(root.elements.at(1).keys.size(), std::size_t{2});
+    REQUIRE_EQ(root.elements.at(1).elements.front().kind, gdpp::ir::MatchPatternKind::binding);
+    REQUIRE_EQ(root.elements.at(1).elements.front().type.kind, gdpp::TypeKind::variant);
+    REQUIRE_EQ(root.elements.at(1).elements.back().kind, gdpp::ir::MatchPatternKind::rest);
+    REQUIRE(module.functions.at(1).body.front().body.empty());
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+}
+
 TEST_CASE("typed IR preserves assert condition and optional message") {
     gdpp::DiagnosticBag diagnostics;
     const auto module = lower_source("func validate(value: int) -> int:\n"
@@ -223,6 +316,32 @@ TEST_CASE("typed IR preserves assert condition and optional message") {
     REQUIRE_EQ(assertion.kind, gdpp::ir::StatementKind::assert_statement);
     REQUIRE_EQ(assertion.condition->type.kind, gdpp::TypeKind::boolean);
     REQUIRE_EQ(assertion.expression->type.kind, gdpp::TypeKind::string);
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+}
+
+TEST_CASE("typed IR isolates debug-only awaited assert operands") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module =
+        lower_source("signal condition_ready\n"
+                     "signal message_ready\n"
+                     "func validate() -> void:\n"
+                     "    assert(await condition_ready, str(await message_ready))\n",
+                     diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    const auto& assertion = module.functions.front().body.front();
+    REQUIRE_EQ(assertion.kind, gdpp::ir::StatementKind::assert_statement);
+    REQUIRE(!assertion.assert_condition_prefix.empty());
+    REQUIRE(!assertion.assert_message_prefix.empty());
+    REQUIRE(std::none_of(
+        assertion.assert_condition_prefix.begin(), assertion.assert_condition_prefix.end(),
+        [](const auto& statement) { return contains_await_expression(statement); }));
+    REQUIRE(
+        std::none_of(assertion.assert_message_prefix.begin(), assertion.assert_message_prefix.end(),
+                     [](const auto& statement) { return contains_await_expression(statement); }));
+    REQUIRE(!contains_await_expression(*assertion.condition));
+    REQUIRE(!contains_await_expression(*assertion.expression));
     gdpp::IrVerifier verifier{diagnostics};
     REQUIRE(verifier.verify(module));
 }
@@ -245,6 +364,29 @@ TEST_CASE("typed IR preserves signal await suspension points") {
     REQUIRE(verifier.verify(module));
 }
 
+TEST_CASE("typed IR preserves coroutine ABI and call-site suspension metadata") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module = lower_source("signal resumed\n"
+                                     "func produce() -> int:\n"
+                                     "    await resumed\n"
+                                     "    return 42\n"
+                                     "func consume() -> int:\n"
+                                     "    return await produce()\n",
+                                     diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(module.functions.size(), std::size_t{2});
+    REQUIRE(module.functions.at(0).is_coroutine);
+    REQUIRE(module.functions.at(1).is_coroutine);
+    const auto& await_result = module.functions.at(1).body.front();
+    REQUIRE_EQ(await_result.kind, gdpp::ir::StatementKind::await_variable);
+    REQUIRE(await_result.expression != nullptr);
+    REQUIRE_EQ(await_result.expression->kind, gdpp::ir::ExpressionKind::call);
+    REQUIRE(await_result.expression->coroutine_call);
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+}
+
 TEST_CASE("typed IR preserves a local initialized from an awaited signal") {
     gdpp::DiagnosticBag diagnostics;
     const auto module = lower_source("signal selected(value: String)\n"
@@ -257,6 +399,95 @@ TEST_CASE("typed IR preserves a local initialized from an awaited signal") {
     REQUIRE_EQ(module.functions.front().body.front().kind, gdpp::ir::StatementKind::await_variable);
     REQUIRE_EQ(module.functions.front().body.front().name, std::string{"value"});
     REQUIRE_EQ(module.functions.front().body.front().declared_type.kind, gdpp::TypeKind::variant);
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+}
+
+TEST_CASE("typed IR A-normalizes await expressions without changing evaluation order") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module = lower_source("signal selected(value: int)\n"
+                                     "func side(value: int) -> int:\n"
+                                     "    return value\n"
+                                     "func run() -> void:\n"
+                                     "    var total: int = side(10) + await selected\n"
+                                     "    print(side(20), await selected, side(30), total)\n"
+                                     "    if await selected:\n"
+                                     "        print(total)\n",
+                                     diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    const auto& body = module.functions.at(1).body;
+    REQUIRE_EQ(body.at(0).kind, gdpp::ir::StatementKind::variable);
+    REQUIRE(body.at(0).name.find("@gdpp-await-value-") == 0);
+    REQUIRE_EQ(body.at(1).kind, gdpp::ir::StatementKind::await_variable);
+    REQUIRE_EQ(body.at(2).kind, gdpp::ir::StatementKind::variable);
+    REQUIRE_EQ(body.at(3).kind, gdpp::ir::StatementKind::variable);
+    REQUIRE_EQ(body.at(4).kind, gdpp::ir::StatementKind::await_variable);
+    REQUIRE_EQ(body.at(5).kind, gdpp::ir::StatementKind::expression);
+    REQUIRE_EQ(body.at(6).kind, gdpp::ir::StatementKind::await_variable);
+    REQUIRE_EQ(body.at(7).kind, gdpp::ir::StatementKind::if_statement);
+    REQUIRE(std::none_of(body.begin(), body.end(), [](const auto& statement) {
+        return contains_await_expression(statement);
+    }));
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+}
+
+TEST_CASE("typed IR preserves lazy await branches and reevaluated loop conditions") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module = lower_source("signal selected(value)\n"
+                                     "func run() -> void:\n"
+                                     "    var logical = false and await selected\n"
+                                     "    var choice = (await selected) if await selected else "
+                                     "await selected\n"
+                                     "    while await selected:\n"
+                                     "        if await selected:\n"
+                                     "            continue\n"
+                                     "        break\n",
+                                     diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    const auto& body = module.functions.front().body;
+    REQUIRE(std::any_of(body.begin(), body.end(), [](const auto& statement) {
+        return statement.kind == gdpp::ir::StatementKind::if_statement;
+    }));
+    const auto loop = std::find_if(body.begin(), body.end(), [](const auto& statement) {
+        return statement.kind == gdpp::ir::StatementKind::while_statement;
+    });
+    REQUIRE(loop != body.end());
+    REQUIRE(!loop->body.empty());
+    REQUIRE(std::none_of(body.begin(), body.end(), [](const auto& statement) {
+        return contains_await_expression(statement);
+    }));
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+}
+
+TEST_CASE("typed IR isolates awaited match guards after pattern binding") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module = lower_source("signal selected\n"
+                                     "func run(value: int) -> void:\n"
+                                     "    match value:\n"
+                                     "        var captured when captured > 0 and await selected:\n"
+                                     "            await selected\n"
+                                     "        _:\n"
+                                     "            pass\n",
+                                     diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    const auto& match = module.functions.front().body.front();
+    REQUIRE_EQ(match.kind, gdpp::ir::StatementKind::match_statement);
+    REQUIRE_EQ(match.body.front().kind, gdpp::ir::StatementKind::match_branch);
+    REQUIRE(!match.body.front().guard_prefix.empty());
+    REQUIRE(match.body.front().expression != nullptr);
+    REQUIRE(
+        std::none_of(match.body.front().guard_prefix.begin(), match.body.front().guard_prefix.end(),
+                     [](const auto& statement) { return contains_await_expression(statement); }));
+    REQUIRE(std::any_of(match.body.front().guard_prefix.begin(),
+                        match.body.front().guard_prefix.end(), [](const auto& statement) {
+                            return statement.kind == gdpp::ir::StatementKind::if_statement ||
+                                   statement.kind == gdpp::ir::StatementKind::await_variable;
+                        }));
     gdpp::IrVerifier verifier{diagnostics};
     REQUIRE(verifier.verify(module));
 }
