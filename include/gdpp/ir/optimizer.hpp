@@ -9,6 +9,7 @@ namespace gdpp {
 struct OptimizationStats {
     std::size_t constants_folded{0};
     std::size_t statements_removed{0};
+    std::size_t branches_simplified{0};
 };
 
 class IrOptimizer final {

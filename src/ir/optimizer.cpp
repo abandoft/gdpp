@@ -125,6 +125,25 @@ bool is_terminal(ir::StatementKind kind) {
            kind == ir::StatementKind::continue_statement;
 }
 
+std::optional<bool> boolean_literal(const ir::Expression* expression) {
+    if (!expression || expression->kind != ir::ExpressionKind::literal ||
+        expression->literal_kind != ir::LiteralKind::boolean) {
+        return std::nullopt;
+    }
+    return expression->value == "true";
+}
+
+std::size_t statement_tree_size(const ir::Statement& statement) {
+    const auto count = [](const std::vector<ir::Statement>& statements) {
+        std::size_t result = statements.size();
+        for (const auto& child : statements)
+            result += statement_tree_size(child) - 1U;
+        return result;
+    };
+    return 1U + count(statement.body) + count(statement.else_body) + count(statement.guard_prefix) +
+           count(statement.assert_condition_prefix) + count(statement.assert_message_prefix);
+}
+
 } // namespace
 
 void IrOptimizer::optimize_expression(ir::Expression& expression, OptimizationStats& stats) const {
@@ -302,18 +321,35 @@ void IrOptimizer::optimize_class(ir::Class& declaration, OptimizationStats& stat
 
 void IrOptimizer::optimize_statements(std::vector<ir::Statement>& statements,
                                       OptimizationStats& stats) const {
-    for (auto& statement : statements) {
+    for (auto iterator = statements.begin(); iterator != statements.end();) {
+        auto& statement = *iterator;
         if (statement.expression)
             optimize_expression(*statement.expression, stats);
         if (statement.condition)
             optimize_expression(*statement.condition, stats);
         for (auto& pattern : statement.patterns)
             optimize_match_pattern(pattern, stats);
+
+        const auto condition = boolean_literal(statement.condition.get());
+        if (statement.kind == ir::StatementKind::while_statement && condition && !*condition) {
+            stats.statements_removed += statement_tree_size(statement);
+            ++stats.branches_simplified;
+            iterator = statements.erase(iterator);
+            continue;
+        }
+        if (statement.kind == ir::StatementKind::if_statement && condition) {
+            auto& discarded = *condition ? statement.else_body : statement.body;
+            for (const auto& child : discarded)
+                stats.statements_removed += statement_tree_size(child);
+            discarded.clear();
+            ++stats.branches_simplified;
+        }
         optimize_statements(statement.body, stats);
         optimize_statements(statement.else_body, stats);
         optimize_statements(statement.guard_prefix, stats);
         optimize_statements(statement.assert_condition_prefix, stats);
         optimize_statements(statement.assert_message_prefix, stats);
+        ++iterator;
     }
 
     const auto before_passes = statements.size();

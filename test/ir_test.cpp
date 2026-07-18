@@ -174,6 +174,29 @@ TEST_CASE("IR optimizer folds constants and removes unreachable statements") {
     REQUIRE_EQ(value.value, std::string{"42"});
 }
 
+TEST_CASE("IR optimizer removes dead literal control-flow bodies before code generation") {
+    gdpp::DiagnosticBag diagnostics;
+    auto module = lower_source("func choose() -> int:\n"
+                               "    if 20 + 22 == 42:\n"
+                               "        return 7\n"
+                               "    else:\n"
+                               "        print(\"dead-branch\")\n"
+                               "        return 9\n"
+                               "func skip_loop() -> void:\n"
+                               "    while false:\n"
+                               "        print(\"dead-loop\")\n",
+                               diagnostics);
+    REQUIRE(!diagnostics.has_errors());
+
+    const auto stats = gdpp::IrOptimizer{}.optimize(module);
+
+    REQUIRE_EQ(stats.constants_folded, std::size_t{2});
+    REQUIRE_EQ(stats.branches_simplified, std::size_t{2});
+    REQUIRE_EQ(stats.statements_removed, std::size_t{4});
+    REQUIRE(module.functions.front().body.front().else_body.empty());
+    REQUIRE(module.functions.back().body.empty());
+}
+
 TEST_CASE("IR optimizer preserves exact int64 values above double precision") {
     gdpp::DiagnosticBag diagnostics;
     auto module = lower_source("func exact() -> int:\n"
