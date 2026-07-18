@@ -8,6 +8,8 @@
 #include "gdpp/ir/optimizer.hpp"
 #include "gdpp/semantic/analyzer.hpp"
 
+#include <algorithm>
+
 namespace {
 
 gdpp::ir::Module lower_source(const std::string& text, gdpp::DiagnosticBag& diagnostics) {

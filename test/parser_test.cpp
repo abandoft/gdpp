@@ -5,6 +5,8 @@
 #include "gdpp/frontend/lexer.hpp"
 #include "gdpp/frontend/parser.hpp"
 
+#include <algorithm>
+
 TEST_CASE("parser builds declarations and structured function body") {
     const gdpp::SourceFile source{"player.gd", "extends Node\n"
                                                "class_name Player\n"

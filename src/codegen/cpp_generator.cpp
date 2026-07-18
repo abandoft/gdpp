@@ -3076,11 +3076,12 @@ std::string CodeGenerator::emit_async_statements(
                                             loop_control);
             result += indent(indentation + 1) + "};\n";
 
-            const auto prefix_suspends = [this](const std::vector<ir::Statement>& statements) {
-                return std::any_of(statements.begin(), statements.end(), [this](const auto& child) {
-                    return statement_contains_await(child);
-                });
-            };
+            const auto prefix_suspends =
+                [this](const std::vector<ir::Statement>& prefix_statements) {
+                    return std::any_of(
+                        prefix_statements.begin(), prefix_statements.end(),
+                        [this](const auto& child) { return statement_contains_await(child); });
+                };
             const auto condition_continuation =
                 continuation_context || prefix_suspends(statement.assert_condition_prefix);
             const auto failure = emit_assert_failure(statement, 0, true);
