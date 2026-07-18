@@ -228,6 +228,7 @@ class SemanticAnalyzer final {
     std::unordered_set<std::string> accessor_fields_;
     std::unordered_set<std::string> static_fields_;
     std::unordered_set<std::string> current_accessor_fields_;
+    std::unordered_set<std::string> active_warning_ignores_;
     std::unordered_map<std::string, std::unordered_set<std::string>> bound_accessor_fields_;
     std::unordered_map<std::string, const ast::FunctionDeclaration*> functions_;
     std::unordered_map<std::string, ScriptInnerClassSymbol> local_inner_classes_;

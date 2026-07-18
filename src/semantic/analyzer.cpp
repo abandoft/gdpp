@@ -14,6 +14,32 @@ const Type unknown_type{TypeKind::unknown, "unknown"};
 const Type variant_type{TypeKind::variant, "Variant"};
 const Type void_type{TypeKind::void_type, "void"};
 
+class WarningIgnoreScope final {
+  public:
+    WarningIgnoreScope(std::unordered_set<std::string>& active,
+                       const std::vector<ast::Annotation>& annotations)
+        : active_(active), previous_(active) {
+        for (const auto& annotation : annotations) {
+            if (annotation.name != "warning_ignore")
+                continue;
+            for (const auto& argument : annotation.arguments) {
+                if (argument->kind() == ast::ExpressionKind::literal &&
+                    argument->literal_kind() == ast::LiteralKind::string) {
+                    active_.insert(argument->value());
+                }
+            }
+        }
+    }
+
+    ~WarningIgnoreScope() { active_ = std::move(previous_); }
+    WarningIgnoreScope(const WarningIgnoreScope&) = delete;
+    WarningIgnoreScope& operator=(const WarningIgnoreScope&) = delete;
+
+  private:
+    std::unordered_set<std::string>& active_;
+    std::unordered_set<std::string> previous_;
+};
+
 bool is_number_literal(const ast::Expression& expression) {
     if (expression.kind() == ast::ExpressionKind::literal) {
         return expression.literal_kind() == ast::LiteralKind::integer ||
@@ -986,7 +1012,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                "an AOT function containing await must currently return void",
                                expression.span);
         }
-        if (!can_suspend)
+        if (!can_suspend && active_warning_ignores_.count("redundant_await") == 0U &&
+            active_warning_ignores_.count("GDS4093") == 0U)
             diagnostics_.warning("GDS4093", "await operand does not suspend", expression.span);
         result = can_suspend ? variant_type : awaited;
         break;
@@ -2497,6 +2524,7 @@ bool SemanticAnalyzer::is_assignment_target(const ast::Expression& expression) c
 }
 
 SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Statement& statement) {
+    const WarningIgnoreScope warning_scope{active_warning_ignores_, statement.annotations};
     switch (statement.kind()) {
     case ast::StatementKind::expression: {
         const auto* previous_discarded_expression = discarded_expression_;

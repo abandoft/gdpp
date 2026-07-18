@@ -1016,6 +1016,10 @@ TEST_CASE("compiler supports structured awaits and rejects unsafe coroutine cont
                                                                   "    await resumed\n");
     const auto nonsignal = compiler.compile("bad_await.gd", "func run() -> void:\n"
                                                             "    await 42\n");
+    const auto ignored =
+        compiler.compile("ignored_await.gd", "func run() -> void:\n"
+                                             "    @warning_ignore(\"redundant_await\")\n"
+                                             "    await 42\n");
     const auto initializer = compiler.compile("init_await.gd", "signal resumed\n"
                                                                "func _init() -> void:\n"
                                                                "    await resumed\n");
@@ -1036,6 +1040,10 @@ TEST_CASE("compiler supports structured awaits and rejects unsafe coroutine cont
                             return diagnostic.severity == gdpp::DiagnosticSeverity::warning &&
                                    diagnostic.code == "GDS4093";
                         }));
+    REQUIRE(ignored.success);
+    REQUIRE(std::none_of(
+        ignored.diagnostics.begin(), ignored.diagnostics.end(),
+        [](const gdpp::Diagnostic& diagnostic) { return diagnostic.code == "GDS4093"; }));
     REQUIRE(!initializer.success);
     bool found_initializer_await = false;
     for (const auto& diagnostic : initializer.diagnostics)

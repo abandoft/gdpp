@@ -113,6 +113,7 @@ func run_match(value: int) -> void:
 
 
 func immediate_match(value: int) -> int:
+    @warning_ignore("redundant_await")
     match value:
         1 when await true:
             return 10
