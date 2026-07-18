@@ -63,6 +63,7 @@ std::string metrics_json(const std::filesystem::path& source, const gdpp::Compil
            << "    \"hir_lower\": " << value.hir_lower_ns << ",\n"
            << "    \"optimize\": " << value.optimize_ns << ",\n"
            << "    \"mir_lower_verify\": " << value.mir_lower_verify_ns << ",\n"
+           << "    \"mir_optimize\": " << value.mir_optimize_ns << ",\n"
            << "    \"codegen\": " << value.codegen_ns << "\n  },\n"
            << "  \"counts\": {\n"
            << "    \"tokens\": " << value.token_count << ",\n"
@@ -211,6 +212,9 @@ int main(int argc, char** argv) {
     std::cout << "compiled " << gdpp::path_to_utf8(input_path) << " -> "
               << gdpp::path_to_utf8(source_path) << " (" << result.optimization.constants_folded
               << " constants folded, " << result.optimization.statements_removed
-              << " statements removed)\n";
+              << " statements removed, " << result.optimization.branches_simplified
+              << " HIR branches simplified, " << result.mir_optimization.branches_simplified
+              << " MIR branches simplified, " << result.mir_optimization.blocks_removed
+              << " MIR blocks removed)\n";
     return 0;
 }
