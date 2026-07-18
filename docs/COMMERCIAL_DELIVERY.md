@@ -13,11 +13,14 @@ ZIP 中只保留所选目标版本的一套 SDK；不会因为目标 SDK 是 4.7
 target pack。iOS 构建仍要求 Xcode，只能从 macOS 宿主执行。Web target pack 由 Web 专用流程
 独立交付，不混入这 12 个标准移动导出包。
 
-| ZIP 宿主 | 宿主导出最低版本 | 随包移动目标 |
+| ZIP 宿主 | 宿主二进制编译基线 | 随包移动 target pack 编译基线 |
 |---|---|---|
 | `windows-x64` | Windows 10 | Android arm64，Android 9 / API 28 |
 | `linux-x64` | Ubuntu 22.04 / glibc 2.35 | Android arm64，Android 9 / API 28 |
 | `mac-arm64` | macOS 11.0 | Android arm64，Android 9 / API 28；iOS arm64，iOS 16 |
+
+这些版本只描述 GDPP 预编译原生组件的 ABI 下限。自动导出测试不在项目预设中再次设置系统最低
+版本，而是使用对应 Godot 官方导出模板的默认配置，避免把插件构建基线误写成客户游戏的导出策略。
 
 `binary/` 同时是本机最终动态库输出目录。制作插件发行包前，受保护的清理脚本会删除
 `addons/gdpp/build/` 和 `binary/gdpp_project.*`，保留 compiler 与 fallback。fallback 是开发期
