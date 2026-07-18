@@ -2,6 +2,7 @@
 
 #include "gdpp/core/source.hpp"
 #include "gdpp/semantic/intrinsics.hpp"
+#include "gdpp/semantic/iteration.hpp"
 #include "gdpp/semantic/rpc.hpp"
 #include "gdpp/semantic/type.hpp"
 
@@ -130,6 +131,7 @@ struct Statement {
     Type declared_type;
     std::string operation;
     bool is_constant{false};
+    IterationPlan iteration;
     ExpressionPtr expression;
     ExpressionPtr condition;
     std::vector<Statement> body;

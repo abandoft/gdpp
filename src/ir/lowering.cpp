@@ -578,6 +578,8 @@ ir::Statement IrLowerer::lower_statement(const ast::Statement& statement) const 
                                 : Type{TypeKind::unknown, "unknown"};
     lowered.operation = statement.operation();
     lowered.is_constant = statement.is_constant();
+    if (statement.kind() == ast::StatementKind::for_statement)
+        lowered.iteration = semantic_.iteration_plan_of(statement);
     if (statement.expression())
         lowered.expression = lower_expression(*statement.expression());
     if (statement.condition())
@@ -1071,6 +1073,55 @@ bool IrVerifier::verify_statement(const ir::Statement& statement) {
     case ir::StatementKind::break_statement:
     case ir::StatementKind::continue_statement:
         break;
+    }
+    if (statement.kind == ir::StatementKind::for_statement) {
+        if (!statement.iteration.valid()) {
+            diagnostics_.error("GDS5035", "for-loop IR is missing its iteration plan",
+                               statement.span);
+            valid = false;
+        } else if (statement.condition) {
+            const auto& iterable = statement.condition->type;
+            bool strategy_matches = false;
+            switch (statement.iteration.strategy) {
+            case IterationStrategy::dynamic_protocol:
+                strategy_matches = iterable.is_dynamic();
+                break;
+            case IterationStrategy::integer_count:
+                strategy_matches = iterable.kind == TypeKind::integer;
+                break;
+            case IterationStrategy::intrinsic_range:
+                strategy_matches =
+                    statement.condition->kind == ir::ExpressionKind::call &&
+                    !statement.condition->operands.empty() &&
+                    statement.condition->operands.front()->resolution ==
+                        ir::ResolutionKind::intrinsic &&
+                    statement.condition->operands.front()->intrinsic == IntrinsicKind::range;
+                break;
+            case IterationStrategy::indexed_string:
+                strategy_matches = iterable.kind == TypeKind::string;
+                break;
+            case IterationStrategy::indexed_array:
+                strategy_matches = iterable.kind == TypeKind::array;
+                break;
+            case IterationStrategy::indexed_packed_array:
+                strategy_matches = iterable.is_packed_array();
+                break;
+            case IterationStrategy::dictionary_protocol:
+                strategy_matches = iterable.kind == TypeKind::dictionary;
+                break;
+            case IterationStrategy::none:
+                break;
+            }
+            if (!strategy_matches) {
+                diagnostics_.error("GDS5036",
+                                   "for-loop iteration plan does not match its iterable type",
+                                   statement.span);
+                valid = false;
+            }
+        }
+    } else if (statement.iteration.strategy != IterationStrategy::none) {
+        diagnostics_.error("GDS5037", "non-loop IR contains an iteration plan", statement.span);
+        valid = false;
     }
     if (statement.kind == ir::StatementKind::assignment && !statement.condition) {
         diagnostics_.error("GDS5007", "assignment IR is missing its target", statement.span);
