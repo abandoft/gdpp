@@ -16,6 +16,14 @@ func _native_class_for(source_path: String) -> StringName:
     return &""
 
 
+func _coroutine_signal_count(instance: Object) -> int:
+    var count := 0
+    for signal_info: Dictionary in instance.get_signal_list():
+        if str(signal_info.get("name", "")).begins_with("__gdpp_coroutine_completed_"):
+            count += 1
+    return count
+
+
 func _run() -> void:
     var player_class := _native_class_for("player.gd")
     var hello_class := _native_class_for("hello.gd")
@@ -24,6 +32,7 @@ func _run() -> void:
     var cross_b_class := _native_class_for("cross_ref_b.gd")
     var required_init_class := _native_class_for("required_initializer.gd")
     var long_await_class := _native_class_for("long_await_chain.gd")
+    var await_expression_class := _native_class_for("await_expression_case.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -32,6 +41,7 @@ func _run() -> void:
         or cross_b_class.is_empty()
         or required_init_class.is_empty()
         or long_await_class.is_empty()
+        or await_expression_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
@@ -73,6 +83,254 @@ func _run() -> void:
             return
     coroutine.free()
 
+    var await_expression: Object = ClassDB.instantiate(await_expression_class)
+    if await_expression == null:
+        push_error("Generated await-expression class is unavailable")
+        quit(1)
+        return
+    await_expression.call("run")
+    if await_expression.get("trace") != [10]:
+        push_error("Await expression evaluated its left operand in the wrong order")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", 5)
+    if await_expression.get("trace") != [10, 15, 20]:
+        push_error("Await expression did not restore its first result")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", 7)
+    if (
+        await_expression.get("trace") != [10, 15, 20, 30]
+        or await_expression.get("values") != [20, 7, 30, 15]
+    ):
+        push_error("Await expression lost argument ordering or captured locals")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", true)
+    if await_expression.get("trace") != [10, 15, 20, 30, 40]:
+        push_error("Await expression did not resume an if condition")
+        quit(1)
+        return
+
+    await_expression.call("run_control_flow")
+    if await_expression.get("control_trace") != [1]:
+        push_error("Await short-circuit evaluated an operand out of order")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", true)
+    if await_expression.get("control_trace") != [1, 10, 0, -20, 2, 20]:
+        push_error("Await short-circuit evaluated a skipped signal operand")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", false)
+    if await_expression.get("control_trace") != [1, 10, 0, -20, 2, 20, 30, 30]:
+        push_error("Await conditional evaluated the unselected true branch")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", true)
+    await_expression.emit_signal("selected", 40)
+    if await_expression.get("control_trace") != [1, 10, 0, -20, 2, 20, 30, 30, 40]:
+        push_error("Await conditional lost its selected true-branch result")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", true)
+    if await_expression.get("control_trace").back() != 101:
+        push_error("Await while condition did not enter its first iteration")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", true)
+    if (
+        await_expression.get("control_trace").back() != 102
+        or await_expression.get("control_result") != [true, false, true, 30, 40, 2]
+    ):
+        push_error(
+            "Await loop break/continue or condition reevaluation is invalid: trace=%s result=%s"
+            % [
+                await_expression.get("control_trace"),
+                await_expression.get("control_result"),
+            ]
+        )
+        quit(1)
+        return
+
+    await_expression.call("run_parameter_loop", 0)
+    await_expression.emit_signal("selected", true)
+    if await_expression.get("parameter_result") != -1:
+        push_error("Await loop completed before its parameter reached the recovery edge")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", true)
+    if await_expression.get("parameter_result") != 2:
+        push_error("Await loop lost a function parameter across suspension")
+        quit(1)
+        return
+
+    await_expression.set("awaited_property", 0)
+    await_expression.emit_signal("selected", true)
+    if await_expression.get("awaited_property") != 0:
+        push_error("Await property setter completed before its recovery edge")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", true)
+    if await_expression.get("awaited_property") != 2:
+        push_error("Await property setter lost its entry parameter across suspension")
+        quit(1)
+        return
+
+
+    await_expression.call("run_match", 2)
+    if await_expression.get("match_trace") != [102, 20]:
+        push_error("Await match guard ran before binding or evaluated its selector repeatedly")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", false)
+    if (
+        await_expression.get("match_trace") != [102, 20, 20, 200, 999]
+        or await_expression.get("match_result") != 20
+    ):
+        push_error("A false awaited match guard did not continue at the next branch")
+        quit(1)
+        return
+
+    await_expression.call("run_match", 3)
+    await_expression.emit_signal("selected", true)
+    if (
+        await_expression.get("match_trace") != [103, 30, 3]
+        or await_expression.get("match_result") != -1
+    ):
+        push_error("Await match body ran out of order or skipped its suspension")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", true)
+    if (
+        await_expression.get("match_trace") != [103, 30, 3, 999]
+        or await_expression.get("match_result") != 3
+    ):
+        push_error("Await match body did not resume into the outer continuation")
+        quit(1)
+        return
+    if (
+        await_expression.call("immediate_match", 1) != 10
+        or await_expression.call("immediate_match", 2) != 20
+    ):
+        push_error("A non-suspending awaited match guard changed return semantics")
+        quit(1)
+        return
+
+    await_expression.call("run_assert_success")
+    await_expression.emit_signal("selected", true)
+    if await_expression.get("assert_trace") != [1]:
+        push_error("A successful awaited assert evaluated its lazy message or lost continuation")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", "unused message")
+    if await_expression.get("assert_trace") != [1]:
+        push_error("A successful awaited assert left a message signal callback connected")
+        quit(1)
+        return
+
+    await_expression.call("run_assert_failure")
+    await_expression.emit_signal("selected", false)
+    if await_expression.get("assert_trace") != []:
+        push_error("A failed awaited assert entered its business continuation before the message")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", "expected failure")
+    if await_expression.get("assert_trace") != []:
+        push_error("A failed awaited assert continued after reporting its lazy message")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", "unused message")
+    if await_expression.get("assert_trace") != []:
+        push_error("A failed awaited assert left a signal callback connected")
+        quit(1)
+        return
+
+    await_expression.call("reset_coroutine_values")
+    var first_pending: Variant = await_expression.call("consume_produced", 10)
+    var second_pending: Variant = await_expression.call("consume_produced", 20)
+    if (
+        typeof(first_pending) != TYPE_SIGNAL
+        or typeof(second_pending) != TYPE_SIGNAL
+        or first_pending == second_pending
+        or _coroutine_signal_count(await_expression) != 4
+    ):
+        push_error("Concurrent native coroutines did not expose isolated completion signals")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", 0)
+    if (
+        await_expression.get("coroutine_values") != [11, 21]
+        or _coroutine_signal_count(await_expression) != 0
+    ):
+        push_error("Concurrent native coroutine results collided or leaked user signals")
+        quit(1)
+        return
+
+    var void_pending: Variant = await_expression.call("consume_void")
+    if typeof(void_pending) != TYPE_SIGNAL or _coroutine_signal_count(await_expression) != 2:
+        push_error("A void native coroutine did not expose its pending completion")
+        quit(1)
+        return
+    await_expression.emit_signal("selected", 0)
+    if (
+        await_expression.get("coroutine_values") != [11, 21, null]
+        or _coroutine_signal_count(await_expression) != 0
+    ):
+        push_error("Awaiting a void native coroutine did not resume with null")
+        quit(1)
+        return
+
+    var immediate_result: Variant = await_expression.call("consume_maybe_immediate", true)
+    if (
+        immediate_result != null
+        or await_expression.get("coroutine_values") != [11, 21, null, 11]
+        or _coroutine_signal_count(await_expression) != 0
+    ):
+        push_error("A synchronously completed native coroutine did not return directly")
+        quit(1)
+        return
+
+    await_expression.call_deferred("emit_signal", &"selected", 0)
+    var gdscript_awaited_value: Variant = await await_expression.call(
+        "produce_after_signal", 30
+    )
+    if gdscript_awaited_value != 31:
+        push_error(
+            "GDScript could not await a value returned by a native coroutine: value=%s"
+            % gdscript_awaited_value
+        )
+        quit(1)
+        return
+    await process_frame
+    if _coroutine_signal_count(await_expression) != 0:
+        push_error("A GDScript-awaited native coroutine leaked its completion signal")
+        quit(1)
+        return
+
+    await_expression.call_deferred("emit_signal", &"selected", 0)
+    var gdscript_awaited_void: Variant = await await_expression.call(
+        "produce_void_after_signal"
+    )
+    if gdscript_awaited_void != null:
+        push_error("GDScript could not await a void native coroutine")
+        quit(1)
+        return
+    await process_frame
+    if _coroutine_signal_count(await_expression) != 0:
+        push_error("A void native coroutine leaked its completion signal")
+        quit(1)
+        return
+
+    var gdscript_immediate: Variant = await await_expression.call(
+        "produce_maybe_immediate", true
+    )
+    if gdscript_immediate != 11 or _coroutine_signal_count(await_expression) != 0:
+        push_error("GDScript await changed an immediate native coroutine result")
+        quit(1)
+        return
+    await_expression = null
+
     var inherited: Object = ClassDB.instantiate(inheritance_class)
     if (
         inherited == null
@@ -100,6 +358,28 @@ func _run() -> void:
         != "IDLE:0,ACTIVE:4,BOOST:8"
     ):
         push_error("Cross-script enum Inspector metadata is invalid")
+        inherited.free()
+        quit(1)
+        return
+    inherited.call_deferred("emit_signal", &"override_resumed")
+    var overridden_result: Variant = await inherited.call("await_overridden_answer")
+    if overridden_result != 42:
+        push_error("An ABI-changing coroutine override did not resume its local caller")
+        inherited.free()
+        quit(1)
+        return
+    inherited.call_deferred("emit_signal", &"override_resumed")
+    var base_dispatched_result: Variant = await inherited.call(
+        "await_overridden_through_base", inherited
+    )
+    if base_dispatched_result != 42:
+        push_error("A base-typed call did not dynamically dispatch to its coroutine override")
+        inherited.free()
+        quit(1)
+        return
+    await process_frame
+    if _coroutine_signal_count(inherited) != 0:
+        push_error("Coroutine override completion signals were not reclaimed")
         inherited.free()
         quit(1)
         return
@@ -290,6 +570,7 @@ func _run() -> void:
         or exported.call("classify_mode", 99) != "unknown"
         or exported.call("classify_dynamic", "ready") != "ok"
         or exported.call("classify_dynamic", 42) != "other"
+        or exported.call("validate_latest_literals") != true
         or exported.call("is_node", exported) != true
         or exported.call("is_node", "not a node") != false
         or exported.call("is_string", "ready") != true

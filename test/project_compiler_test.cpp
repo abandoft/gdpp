@@ -317,6 +317,56 @@ TEST_CASE("project compiler registers internal classes and includes complete enu
     REQUIRE_EQ(cached_consumer->inner_class_names, consumer->inner_class_names);
 }
 
+TEST_CASE("project compiler preserves nested internal class identities across cache hits") {
+    const auto root = fixture_root("project-nested-internal-classes");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "factory.gd", "extends Node\n"
+                                    "class Container:\n"
+                                    "    class Base:\n"
+                                    "        const base_value := 40\n"
+                                    "    class Derived extends Base:\n"
+                                    "        func value() -> int:\n"
+                                    "            return base_value + 2\n"
+                                    "func create() -> int:\n"
+                                    "    return Container.Derived.new().value()\n");
+
+    const gdpp::ProjectCompiler compiler;
+    const auto options = project_options(root);
+    const auto result = compiler.compile(options);
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.scripts.size(), std::size_t{1});
+    REQUIRE_EQ(result.scripts.front().inner_class_names.size(), std::size_t{3});
+    const auto& inner_names = result.scripts.front().inner_class_names;
+    const auto has_suffix = [](const std::string& name, const std::string_view suffix) {
+        return name.size() >= suffix.size() &&
+               name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+    const auto base = std::find_if(inner_names.begin(), inner_names.end(),
+                                   [&](const auto& name) { return has_suffix(name, "__Base"); });
+    const auto derived =
+        std::find_if(inner_names.begin(), inner_names.end(),
+                     [&](const auto& name) { return has_suffix(name, "__Derived"); });
+    REQUIRE(base != inner_names.end());
+    REQUIRE(derived != inner_names.end());
+    REQUIRE(std::none_of(inner_names.begin(), inner_names.end(),
+                         [](const auto& name) { return name.find('.') != std::string::npos; }));
+
+    const auto header =
+        read_text(options.output_directory / "generated" / result.scripts.front().header_file_name);
+    REQUIRE(header.find("class " + *derived + " : public " + *base) != std::string::npos);
+    const auto registration = read_text(options.output_directory / "register_types.cpp");
+    REQUIRE(registration.find("GDREGISTER_CLASS(" + *base + ")") <
+            registration.find("GDREGISTER_CLASS(" + *derived + ")"));
+
+    const auto cached = compiler.compile(options);
+    REQUIRE(cached.success);
+    REQUIRE_EQ(cached.compiled_count, std::size_t{0});
+    REQUIRE_EQ(cached.cache_hit_count, std::size_t{1});
+    REQUIRE_EQ(cached.scripts.front().inner_class_names, inner_names);
+}
+
 TEST_CASE("onready dependencies remain forward declarations and do not create header cycles") {
     const auto root = fixture_root("project-onready-header-cycle");
     std::error_code error;
@@ -1069,6 +1119,141 @@ TEST_CASE("project symbol signature changes invalidate dependent script caches")
                         }));
 }
 
+TEST_CASE("project coroutine ABI changes invalidate callers and require cross-script await") {
+    const auto root = fixture_root("project-coroutine-abi-cache");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    const auto synchronous_producer = "extends RefCounted\nclass_name CoroutineProducer\n"
+                                      "signal resumed\n"
+                                      "func produce() -> int:\n    return 1\n";
+    const auto asynchronous_producer = "extends RefCounted\nclass_name CoroutineProducer\n"
+                                       "signal resumed\n"
+                                       "func produce() -> int:\n    await resumed\n    return 1\n";
+    const auto direct_consumer = "extends RefCounted\nclass_name CoroutineConsumer\n"
+                                 "var producer: CoroutineProducer\n"
+                                 "func consume() -> int:\n    return producer.produce()\n";
+    const auto awaited_consumer = "extends RefCounted\nclass_name CoroutineConsumer\n"
+                                  "var producer: CoroutineProducer\n"
+                                  "func consume() -> int:\n    return await producer.produce()\n";
+    write_text(root / "producer.gd", synchronous_producer);
+    write_text(root / "consumer.gd", direct_consumer);
+    const auto options = project_options(root);
+    const gdpp::ProjectCompiler compiler;
+    const auto initial = compiler.compile(options);
+    REQUIRE(initial.success);
+    REQUIRE_EQ(initial.compiled_count, std::size_t{2});
+    const auto committed_manifest = read_text(options.output_directory / "manifest.txt");
+
+    write_text(root / "producer.gd", asynchronous_producer);
+    const auto missing_await = compiler.compile(options);
+    REQUIRE(!missing_await.success);
+    REQUIRE_EQ(read_text(options.output_directory / "manifest.txt"), committed_manifest);
+    REQUIRE(std::any_of(missing_await.diagnostics.begin(), missing_await.diagnostics.end(),
+                        [](const gdpp::ProjectDiagnostic& diagnostic) {
+                            return diagnostic.diagnostic.code == "GDS4132";
+                        }));
+
+    write_text(root / "consumer.gd", awaited_consumer);
+    const auto migrated = compiler.compile(options);
+    REQUIRE(migrated.success);
+    REQUIRE_EQ(migrated.compiled_count, std::size_t{2});
+    REQUIRE_EQ(migrated.cache_hit_count, std::size_t{0});
+    REQUIRE(native_class_for(migrated, "producer.gd") != native_class_for(initial, "producer.gd"));
+    const auto consumer =
+        std::find_if(migrated.scripts.begin(), migrated.scripts.end(), [](const auto& script) {
+            return script.relative_path.filename() == "consumer.gd";
+        });
+    REQUIRE(consumer != migrated.scripts.end());
+    REQUIRE_EQ(consumer->dependencies, std::vector<std::string>{"producer.gd"});
+    const auto generated =
+        read_text(options.output_directory / "generated" / consumer->source_file_name);
+    REQUIRE(generated.find(".get_type() != godot::Variant::SIGNAL") != std::string::npos);
+    REQUIRE(generated.find("gdpp::runtime::await_result(") != std::string::npos);
+
+    write_text(root / "producer.gd", "extends RefCounted\nclass_name CoroutineProducer\n"
+                                     "signal resumed\n"
+                                     "func produce() -> int:\n    await resumed\n    return 2\n");
+    const auto implementation_change = compiler.compile(options);
+    REQUIRE(implementation_change.success);
+    REQUIRE_EQ(implementation_change.compiled_count, std::size_t{1});
+    REQUIRE_EQ(implementation_change.cache_hit_count, std::size_t{1});
+}
+
+TEST_CASE("project compiler isolates coroutine overrides behind dynamic script dispatch") {
+    const auto root = fixture_root("project-coroutine-override");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "base.gd", "extends RefCounted\nclass_name CoroutineOverrideBase\n"
+                                 "signal resumed\n"
+                                 "func answer() -> int:\n    return -1\n");
+    write_text(root / "child.gd",
+               "extends CoroutineOverrideBase\nclass_name CoroutineOverrideChild\n"
+               "func answer() -> int:\n    await resumed\n    return 42\n"
+               "func local_answer() -> int:\n    return await answer()\n"
+               "func base_typed_answer(value: CoroutineOverrideBase) -> int:\n"
+               "    return await value.answer()\n");
+    const auto options = project_options(root);
+
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    const auto child =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path.filename() == "child.gd";
+        });
+    REQUIRE(child != result.scripts.end());
+    const auto header = read_text(options.output_directory / "generated" / child->header_file_name);
+    const auto source = read_text(options.output_directory / "generated" / child->source_file_name);
+    REQUIRE(header.find("godot::Variant _gdpp_native_override_answer()") != std::string::npos);
+    REQUIRE(source.find("godot::D_METHOD(\"answer\"), &" + child->class_name +
+                        "::_gdpp_native_override_answer") != std::string::npos);
+    REQUIRE(source.find("_gdpp_native_override_answer()") != std::string::npos);
+    REQUIRE(source.find("gdpp::runtime::call_dynamic(") != std::string::npos);
+}
+
+TEST_CASE("project symbol refinement keeps immediate await functions on their typed ABI") {
+    const auto root = fixture_root("project-immediate-await-abi");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "producer.gd", "extends RefCounted\nclass_name ImmediateAwaitProducer\n"
+                                     "func answer() -> int:\n    return await 42\n");
+    write_text(root / "consumer.gd", "extends RefCounted\nclass_name ImmediateAwaitConsumer\n"
+                                     "var producer: ImmediateAwaitProducer\n"
+                                     "func answer() -> int:\n    return producer.answer()\n");
+    const auto options = project_options(root);
+
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    const auto producer =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path.filename() == "producer.gd";
+        });
+    REQUIRE(producer != result.scripts.end());
+    const auto header =
+        read_text(options.output_directory / "generated" / producer->header_file_name);
+    REQUIRE(header.find("virtual int64_t answer()") != std::string::npos);
+    REQUIRE(header.find("godot::Variant answer()") == std::string::npos);
+}
+
+TEST_CASE("project compilation permits detached coroutine calls") {
+    const auto root = fixture_root("project-detached-coroutine");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "worker.gd", "extends RefCounted\nclass_name DetachedWorker\n"
+                                   "signal resumed\n"
+                                   "func run() -> void:\n    await resumed\n");
+    write_text(root / "launcher.gd", "extends RefCounted\nclass_name DetachedLauncher\n"
+                                     "var worker: DetachedWorker\n"
+                                     "func launch() -> void:\n    worker.run()\n");
+    const auto options = project_options(root);
+
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.compiled_count, std::size_t{2});
+}
+
 TEST_CASE("project cache invalidates only direct ABI dependents") {
     const auto root = fixture_root("project-precise-cache");
     std::error_code error;
@@ -1484,4 +1669,26 @@ TEST_CASE("project source selection compiles scripts beside native addons and ne
     const auto registration = read_text(options.output_directory / "register_types.cpp");
     REQUIRE(registration.find("GDREGISTER_ABSTRACT_CLASS(GDPPNative_RuntimeAddonBase_") !=
             std::string::npos);
+}
+
+TEST_CASE("project frontend limit failures never commit generated state") {
+    const auto root = fixture_root("project-frontend-limits");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "oversized.gd",
+               "extends Node\nclass_name OversizedInput\nfunc answer() -> int:\n    return 42\n");
+    auto options = project_options(root);
+    options.compiler.frontend_limits.max_source_bytes = 32;
+
+    const auto first = gdpp::ProjectCompiler{}.compile(options);
+    const auto second = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(!first.success);
+    REQUIRE(!second.success);
+    REQUIRE(std::any_of(first.diagnostics.begin(), first.diagnostics.end(),
+                        [](const auto& item) { return item.diagnostic.code == "GDS1010"; }));
+    REQUIRE_EQ(first.diagnostics.size(), second.diagnostics.size());
+    REQUIRE(!std::filesystem::exists(options.output_directory / "manifest.txt"));
+    REQUIRE(!std::filesystem::exists(options.output_directory / "generated"));
+    REQUIRE(!std::filesystem::exists(options.output_directory / "register_types.cpp"));
 }
