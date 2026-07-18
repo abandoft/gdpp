@@ -88,6 +88,17 @@ if(GDPP_BUILD_CLI)
         COMMAND gdpp compile "${PROJECT_SOURCE_DIR}/example/hello.gd"
                 --output "${PROJECT_BINARY_DIR}/test-output-4.7" --target-godot 4.7
     )
+    add_test(
+        NAME gdpp.assert.release_preprocess
+        COMMAND
+            "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/assert_release_preprocess_test.py"
+            --compiler "${CMAKE_CXX_COMPILER}"
+            --compiler-id "${CMAKE_CXX_COMPILER_ID}"
+            --gdpp "$<TARGET_FILE:gdpp>"
+            --fixture "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/assert_release.gd"
+            --output "${PROJECT_BINARY_DIR}/assert-release-preprocess"
+    )
 
     if(GDPP_ENABLE_OFFICIAL_CORPUS_TESTS)
         set(GDPP_CORPUS_MANIFEST

@@ -16,6 +16,7 @@ if len(sys.argv) < 3:
     raise SystemExit("usage: release_packaging_test.py SOURCE_ROOT BINARY_ROOT")
 SOURCE_ROOT = Path(sys.argv.pop(1)).resolve()
 BINARY_ROOT = Path(sys.argv.pop(1)).resolve()
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(SOURCE_ROOT / "tools"))
 
 import extract_changelog  # noqa: E402

@@ -70,6 +70,18 @@ if(safe_ndk_probe EQUAL -1)
         "Optional Android NDK discovery must not query a missing directory")
 endif()
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/export_presets.cfg" export_presets)
+foreach(forbidden_export_minimum IN ITEMS
+        "gradle_build/min_sdk="
+        "application/min_ios_version="
+        "min_macos_version")
+    string(FIND "${export_presets}" "${forbidden_export_minimum}" minimum_offset)
+    if(NOT minimum_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Export fixtures must inherit the official template minimum instead of "
+            "overriding it: ${forbidden_export_minimum}")
+    endif()
+endforeach()
+
 foreach(invalid_android_option IN ITEMS
         "gradle_build/compress_native_libraries=true"
         "gradle_build/target_sdk=\"35\""
@@ -80,12 +92,6 @@ foreach(invalid_android_option IN ITEMS
             "Non-Gradle unsigned Android fixture contains invalid option: ${invalid_android_option}")
     endif()
 endforeach()
-string(FIND "${export_presets}" "gradle_build/min_sdk=" android_minimum_offset)
-if(NOT android_minimum_offset EQUAL -1)
-    message(FATAL_ERROR
-        "Android export fixture must not override the export template minimum SDK")
-endif()
-
 foreach(required_windows_option IN ITEMS
         "name=\"Windows x86_64\""
         "name=\"Windows GDScript Fallback\""
@@ -146,12 +152,6 @@ foreach(required_ios_option IN ITEMS
         message(FATAL_ERROR "iOS export fixture is missing: ${required_ios_option}")
     endif()
 endforeach()
-string(FIND "${export_presets}" "application/min_ios_version=" ios_minimum_offset)
-if(NOT ios_minimum_offset EQUAL -1)
-    message(FATAL_ERROR
-        "iOS export fixture must not override the export template minimum version")
-endif()
-
 foreach(required_ios_implementation IN ITEMS
         "func _ios_compiler() -> String:"
         "func _native_artifact_exists(path: String) -> bool:"

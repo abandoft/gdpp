@@ -128,9 +128,18 @@ TEST_CASE("Godot 4.7 metadata exposes language utilities globals enums and opera
     REQUIRE(api.builtin_operator_count() > std::size_t{500});
 
     const auto* clamp = api.find_utility_function("clampf");
+    const auto* print = api.find_utility_function("print");
+    const auto* str = api.find_utility_function("str");
+    const auto* maximum = api.find_utility_function("max");
     REQUIRE(clamp != nullptr);
     REQUIRE_EQ(clamp->required_arguments, std::uint16_t{3});
     REQUIRE_EQ(std::string_view{clamp->return_type}, std::string_view{"float"});
+    REQUIRE(print != nullptr);
+    REQUIRE(str != nullptr);
+    REQUIRE(maximum != nullptr);
+    REQUIRE_EQ(print->required_arguments, std::uint16_t{0});
+    REQUIRE_EQ(str->required_arguments, std::uint16_t{0});
+    REQUIRE_EQ(maximum->required_arguments, std::uint16_t{2});
     REQUIRE(api.find_global_constant("INT64_MAX") != nullptr);
     REQUIRE(api.has_global_enum("Side"));
     REQUIRE_EQ(api.find_global_enum_value("Side", "SIDE_LEFT")->value, std::int64_t{0});

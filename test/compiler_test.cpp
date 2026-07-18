@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <string>
+#include <string_view>
 
 TEST_CASE("compiler generates bindable GDExtension C++") {
     const std::string source = "extends Node\n"
@@ -27,6 +28,56 @@ TEST_CASE("compiler generates bindable GDExtension C++") {
     REQUIRE(result.unit.source.find("ADD_SIGNAL") != std::string::npos);
 }
 
+TEST_CASE("compiler emits recursive structural match tests with exact and rest cardinality") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "structured_match.gd", "extends RefCounted\n"
+                               "func classify(value: Variant) -> int:\n"
+                               "    match value:\n"
+                               "        [1, {\"hp\": var hp, ..}, var tail]:\n"
+                               "            return hp + tail\n"
+                               "        {\"exact\": 1}:\n"
+                               "            return 1\n"
+                               "        _:\n"
+                               "            return -1\n"
+                               "func empty_match() -> void:\n"
+                               "    match 0:\n"
+                               "        pass\n"
+                               "func named_lambda(value: int) -> int:\n"
+                               "    var operation := func double_value(input): return input * 2\n"
+                               "    return operation.call(value)\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("get_type() != godot::Variant::ARRAY") != std::string::npos);
+    REQUIRE(result.unit.source.find("get_type() != godot::Variant::DICTIONARY") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find(".size() < 1") != std::string::npos);
+    REQUIRE(result.unit.source.find(".size() != 1") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Variant _gdpp_match_bind_") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::make_local_callable") != std::string::npos);
+}
+
+TEST_CASE("compiler rejects unsafe structural match binding and dictionary key forms") {
+    const gdpp::Compiler compiler;
+    const auto conflicting =
+        compiler.compile("conflicting_match.gd", "func test(value):\n"
+                                                 "    var captured = 1\n"
+                                                 "    match value:\n"
+                                                 "        [var captured, ..]: pass\n");
+    const auto alternatives =
+        compiler.compile("alternative_match.gd", "func test(value):\n"
+                                                 "    match value:\n"
+                                                 "        [var captured], 1: pass\n");
+    const auto dynamic_key = compiler.compile("dynamic_key_match.gd", "func test(value):\n"
+                                                                      "    var key = \"hp\"\n"
+                                                                      "    match value:\n"
+                                                                      "        {key}: pass\n");
+
+    REQUIRE(!conflicting.success);
+    REQUIRE(!alternatives.success);
+    REQUIRE(!dynamic_key.success);
+}
+
 TEST_CASE("compiler generates debug-only typed assert control flow") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("res://assertions.gd",
@@ -39,8 +90,8 @@ TEST_CASE("compiler generates debug-only typed assert control flow") {
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("#ifdef DEBUG_ENABLED") != std::string::npos);
-    REQUIRE(result.unit.source.find("ERR_FAIL_COND_V_EDMSG") != std::string::npos);
-    REQUIRE(result.unit.source.find("ERR_FAIL_COND_EDMSG") != std::string::npos);
+    REQUIRE(result.unit.source.find("ERR_FAIL_V_EDMSG") != std::string::npos);
+    REQUIRE(result.unit.source.find("ERR_FAIL_EDMSG") != std::string::npos);
     REQUIRE(result.unit.source.find("Assertion failed at res://assertions.gd:3") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("positive value required") != std::string::npos);
@@ -197,6 +248,32 @@ TEST_CASE("compiler generates registered internal classes and native lambda Call
             std::string::npos);
 }
 
+TEST_CASE("compiler topologically lowers internal class inheritance and super calls") {
+    const gdpp::Compiler compiler;
+    const auto result =
+        compiler.compile("inner_inheritance.gd", "class Derived extends Base:\n"
+                                                 "    func value() -> int:\n"
+                                                 "        return super() + 1\n"
+                                                 "class Base:\n"
+                                                 "    var number: int = 4\n"
+                                                 "    func value() -> int:\n"
+                                                 "        return number\n"
+                                                 "func read() -> int:\n"
+                                                 "    return Derived.new().value()\n");
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.unit.inner_class_names.size(), std::size_t{2});
+    REQUIRE_EQ(result.unit.inner_class_names.front(),
+               std::string{"GDPPNative_InnerInheritance__Base"});
+    REQUIRE_EQ(result.unit.inner_class_names.back(),
+               std::string{"GDPPNative_InnerInheritance__Derived"});
+    REQUIRE(result.unit.header.find("class GDPPNative_InnerInheritance__Derived : public "
+                                    "GDPPNative_InnerInheritance__Base") != std::string::npos);
+    REQUIRE(result.unit.header.find("virtual int64_t value() override") != std::string::npos);
+    REQUIRE(result.unit.source.find("GDPPNative_InnerInheritance__Base::value()") !=
+            std::string::npos);
+}
+
 TEST_CASE("static lambdas support defaults without binding an instance owner") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("factory.gd", "static func make() -> Callable:\n"
@@ -255,7 +332,7 @@ TEST_CASE("compiler resolves forward constants before field initializers") {
     REQUIRE(result.unit.source.find("speed = MIN_SPEED();") == std::string::npos);
 }
 
-TEST_CASE("compiler emits void returns inside structured await continuations") {
+TEST_CASE("compiler completes coroutine state inside structured await continuations") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(
         "await_return.gd", "extends Node\n"
@@ -269,8 +346,12 @@ TEST_CASE("compiler emits void returns inside structured await continuations") {
                            "    print(\"done\")\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("if (static_cast<bool>(godot::Variant(cancelled))) {\n"
-                                    "            return;\n") != std::string::npos);
+    const auto cancelled_branch =
+        result.unit.source.find("if (static_cast<bool>(godot::Variant(cancelled))) {");
+    REQUIRE(cancelled_branch != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::complete_coroutine(", cancelled_branch) !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("return;", cancelled_branch) != std::string::npos);
     REQUIRE(result.unit.source.find("mutable -> godot::Variant {\n"
                                     "    godot::Variant value =") != std::string::npos);
     REQUIRE(result.unit.source.find("return godot::Variant(static_cast<bool>(") !=
@@ -340,17 +421,33 @@ TEST_CASE("compiler emits local signals through their owner without temporary Si
             std::string::npos);
 }
 
-TEST_CASE("compiler rejects nested internal classes transactionally") {
+TEST_CASE("compiler flattens nested internal classes with inherited members") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile("nested.gd", "class Outer:\n"
-                                                      "    class Inner:\n"
-                                                      "        var value: int\n");
+    const auto result =
+        compiler.compile("nested.gd", "class Parent:\n"
+                                      "    const parent_value := 1\n"
+                                      "    signal changed\n"
+                                      "    class Nested:\n"
+                                      "        const nested_value := 2\n"
+                                      "class Child extends Parent:\n"
+                                      "    func read() -> int:\n"
+                                      "        print(self.changed.get_name())\n"
+                                      "        return parent_value + Parent.Nested.nested_value\n"
+                                      "func create() -> int:\n"
+                                      "    return Child.new().read()\n");
 
-    REQUIRE(!result.success);
-    REQUIRE(result.unit.source.empty());
-    REQUIRE(std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
-                         [](const auto& item) { return item.code == "GDS4100"; }) !=
-            result.diagnostics.end());
+    REQUIRE(result.success);
+    REQUIRE(std::find(result.unit.inner_class_names.begin(), result.unit.inner_class_names.end(),
+                      "GDPPNative_Nested__Parent__Nested") != result.unit.inner_class_names.end());
+    REQUIRE(result.unit.header.find(
+                "class GDPPNative_Nested__Child : public GDPPNative_Nested__Parent") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("GDPPNative_Nested__Parent::parent_value") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("GDPPNative_Nested__Parent__Nested::nested_value") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Signal(this, godot::StringName(\"changed\"))") !=
+            std::string::npos);
 }
 
 TEST_CASE("compiler rejects invalid and unsupported export annotations") {
@@ -560,7 +657,8 @@ TEST_CASE("compiler lowers top-level signal awaits to lifetime-aware continuatio
             std::string::npos);
     REQUIRE(result.unit.source.find("godot::Signal(this, godot::StringName(\"resumed\"))") !=
             std::string::npos);
-    REQUIRE(result.unit.source.find("[=](const godot::Array &) mutable") != std::string::npos);
+    REQUIRE(result.unit.source.find("[=](const godot::Array &_gdpp_await_values_") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find("= captured;") != std::string::npos);
 }
 
@@ -611,6 +709,240 @@ TEST_CASE("compiler restores signal arguments for await-initialized locals") {
             std::string::npos);
 }
 
+TEST_CASE("compiler lowers await expressions through ordered continuation temporaries") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile("await_expression.gd",
+                                         "extends Node\n"
+                                         "signal selected(value: int)\n"
+                                         "func side(value: int) -> int:\n"
+                                         "    return value\n"
+                                         "func run() -> void:\n"
+                                         "    var total: int = side(10) + await selected\n"
+                                         "    print(side(20), await selected, side(30), total)\n"
+                                         "    if await selected:\n"
+                                         "        print(total)\n");
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(std::count(result.unit.source.begin(), result.unit.source.end(), '\0'),
+               std::ptrdiff_t{0});
+    const auto first_side = result.unit.source.find("static_cast<int64_t>(10)");
+    const auto first_await = result.unit.source.find("const godot::Variant _gdpp_awaitable_");
+    const auto second_side = result.unit.source.find("static_cast<int64_t>(20)");
+    const auto second_await =
+        result.unit.source.find("const godot::Variant _gdpp_awaitable_", first_await + 1);
+    const auto delayed_side = result.unit.source.find("static_cast<int64_t>(30)");
+    REQUIRE(first_side < first_await);
+    REQUIRE(second_side < second_await);
+    REQUIRE(second_await < delayed_side);
+    REQUIRE(result.unit.source.find("gdpp::runtime::await_result(") != std::string::npos);
+    REQUIRE(result.unit.source.find("unlowered await expression") == std::string::npos);
+}
+
+TEST_CASE("compiler lowers short-circuit conditional and loop-condition awaits through CFG") {
+    const gdpp::Compiler compiler;
+    const auto short_circuit =
+        compiler.compile("await_short_circuit.gd", "signal selected\n"
+                                                   "func run() -> void:\n"
+                                                   "    print(true and await selected)\n");
+    const auto conditional = compiler.compile("await_conditional.gd",
+                                              "signal selected\n"
+                                              "func run() -> void:\n"
+                                              "    print((await selected) if true else false)\n");
+    const auto loop_condition = compiler.compile("await_loop.gd", "signal selected\n"
+                                                                  "func run() -> void:\n"
+                                                                  "    var count: int = 0\n"
+                                                                  "    while await selected:\n"
+                                                                  "        count += 1\n"
+                                                                  "        if count == 1:\n"
+                                                                  "            continue\n"
+                                                                  "        break\n"
+                                                                  "    print(count)\n");
+
+    REQUIRE(short_circuit.success);
+    REQUIRE(conditional.success);
+    REQUIRE(loop_condition.success);
+    REQUIRE(short_circuit.unit.source.find("gdpp::runtime::await_signal") != std::string::npos);
+    REQUIRE(short_circuit.unit.source.find("if (static_cast<bool>(true))") != std::string::npos);
+    REQUIRE(conditional.unit.source.find("gdpp::runtime::await_signal") != std::string::npos);
+    REQUIRE(conditional.unit.source.find("unlowered await expression") == std::string::npos);
+    REQUIRE(loop_condition.unit.source.find("std::weak_ptr<std::function<void()>>") !=
+            std::string::npos);
+    REQUIRE(loop_condition.unit.source.find("_gdpp_async_keep_loop_") != std::string::npos);
+    REQUIRE(loop_condition.unit.source.find("_gdpp_async_cell_") != std::string::npos);
+}
+
+TEST_CASE("compiler lowers async iterator break and continue without a reference cycle") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile("await_for_control.gd", "signal selected\n"
+                                                                 "func run() -> void:\n"
+                                                                 "    for value in [1, 2, 3]:\n"
+                                                                 "        await selected\n"
+                                                                 "        if value == 1:\n"
+                                                                 "            continue\n"
+                                                                 "        break\n"
+                                                                 "    print(42)\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("std::weak_ptr<std::function<void()>>") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_async_keep_loop_") != std::string::npos);
+    REQUIRE(result.unit.source.find("continue;\n") == std::string::npos);
+    REQUIRE(result.unit.source.find("break;\n") == std::string::npos);
+}
+
+TEST_CASE("compiler lifts entry parameters through suspended loop recovery") {
+    const gdpp::Compiler compiler;
+    const auto function = compiler.compile("await_parameter_loop.gd",
+                                           "signal selected\n"
+                                           "func run(limit: int, count: int = 0) -> void:\n"
+                                           "    while await selected:\n"
+                                           "        count += 1\n"
+                                           "        if count < limit:\n"
+                                           "            continue\n"
+                                           "        break\n"
+                                           "    print(count)\n");
+    const auto setter = compiler.compile("await_setter_loop.gd", "signal selected\n"
+                                                                 "var score: int = 0:\n"
+                                                                 "    set(value):\n"
+                                                                 "        while await selected:\n"
+                                                                 "            value += 1\n"
+                                                                 "            if value < 2:\n"
+                                                                 "                continue\n"
+                                                                 "            break\n"
+                                                                 "        score = value\n");
+    const auto nested =
+        compiler.compile("await_nested_parameter_loop.gd", "signal selected\n"
+                                                           "class Worker:\n"
+                                                           "    signal selected\n"
+                                                           "    func run(count: int) -> void:\n"
+                                                           "        while await selected:\n"
+                                                           "            count += 1\n"
+                                                           "            break\n"
+                                                           "func make_callback():\n"
+                                                           "    return func(count: int):\n"
+                                                           "        while await selected:\n"
+                                                           "            count += 1\n"
+                                                           "            break\n");
+
+    REQUIRE(function.success);
+    REQUIRE(setter.success);
+    REQUIRE(nested.success);
+    REQUIRE(function.unit.source.find("std::make_shared<int64_t>(count)") != std::string::npos);
+    REQUIRE(function.unit.source.find("_gdpp_utility_argument_") != std::string::npos);
+    REQUIRE(function.unit.source.find(" = (*_gdpp_async_cell_") != std::string::npos);
+    REQUIRE(setter.unit.source.find("std::make_shared<int64_t>(value)") != std::string::npos);
+    REQUIRE(setter.unit.source.find("score = (*_gdpp_async_cell_") != std::string::npos);
+    const auto nested_parameter = nested.unit.source.find("std::make_shared<int64_t>(count)");
+    REQUIRE(nested_parameter != std::string::npos);
+    REQUIRE(nested.unit.source.find("std::make_shared<int64_t>(count)", nested_parameter + 1) !=
+            std::string::npos);
+}
+
+TEST_CASE("compiler resumes match guards bodies and fallthrough branches") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "await_match_guard.gd", "signal selected\n"
+                                "func run(value: int) -> void:\n"
+                                "    match value:\n"
+                                "        var captured when captured > 0 and await selected:\n"
+                                "            print(captured)\n"
+                                "            await selected\n"
+                                "        2 when await selected:\n"
+                                "            print(2)\n"
+                                "        _:\n"
+                                "            print(-1)\n"
+                                "    print(99)\n");
+    const auto immediate =
+        compiler.compile("immediate_match_guard.gd", "func classify(value: int) -> int:\n"
+                                                     "    match value:\n"
+                                                     "        1 when await true:\n"
+                                                     "            return 10\n"
+                                                     "        _:\n"
+                                                     "            return 20\n");
+
+    REQUIRE(result.success);
+    REQUIRE(immediate.success);
+    REQUIRE(result.unit.source.find("_gdpp_async_match_value_") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::await_signal") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_match_bind_") != std::string::npos);
+    REQUIRE(result.unit.source.find("unsupported structured await") == std::string::npos);
+    REQUIRE(immediate.unit.source.find("gdpp::runtime::await_signal") == std::string::npos);
+    REQUIRE(immediate.unit.source.find("static_cast<int64_t>(10)") != std::string::npos);
+    REQUIRE(immediate.unit.source.find("static_cast<int64_t>(20)") != std::string::npos);
+}
+
+TEST_CASE("compiler emits awaited match branches through one linear dispatcher") {
+    std::string source = "signal selected\nfunc run(value: int) -> void:\n    match value:\n";
+    constexpr std::size_t guarded_branches = 10;
+    for (std::size_t branch = 0; branch < guarded_branches; ++branch) {
+        source += "        " + std::to_string(branch) +
+                  " when await selected:\n            print(" + std::to_string(branch) + ")\n";
+    }
+    source += "        _:\n            print(-1)\n";
+
+    const auto result = gdpp::Compiler{}.compile("linear_await_match.gd", source);
+    const auto occurrences = [](const std::string& text, const std::string_view needle) {
+        std::size_t count = 0;
+        for (std::size_t position = 0;
+             (position = text.find(needle, position)) != std::string::npos;
+             position += needle.size()) {
+            ++count;
+        }
+        return count;
+    };
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(occurrences(result.unit.source, "gdpp::runtime::await_signal"), guarded_branches);
+    REQUIRE_EQ(occurrences(result.unit.source, "using _gdpp_async_match_dispatch_type_"),
+               std::size_t{1});
+    REQUIRE_EQ(occurrences(result.unit.source, "std::weak_ptr<_gdpp_async_match_dispatch_type_"),
+               std::size_t{1});
+    REQUIRE(result.unit.source.size() < 100'000U);
+}
+
+TEST_CASE("compiler isolates awaited assert operands and emits one shared continuation") {
+    const gdpp::Compiler compiler;
+    const auto assertion = compiler.compile(
+        "await_assert.gd", "signal condition_ready\n"
+                           "signal message_ready\n"
+                           "func run() -> void:\n"
+                           "    assert(await condition_ready, str(await message_ready))\n"
+                           "    print(\"continued\")\n");
+
+    const auto occurrences = [](const std::string& text, const std::string& needle) {
+        std::size_t count = 0;
+        for (std::size_t position = 0;
+             (position = text.find(needle, position)) != std::string::npos;
+             position += needle.size()) {
+            ++count;
+        }
+        return count;
+    };
+    REQUIRE(assertion.success);
+    REQUIRE_EQ(occurrences(assertion.unit.source, "gdpp::runtime::await_signal"), std::size_t{2});
+    REQUIRE_EQ(occurrences(assertion.unit.source, "auto _gdpp_after_assert_"), std::size_t{1});
+    const auto debug_begin = assertion.unit.source.find("#ifdef DEBUG_ENABLED");
+    const auto first_await = assertion.unit.source.find("const godot::Variant _gdpp_awaitable_");
+    const auto release_branch = assertion.unit.source.find("#else", debug_begin);
+    const auto debug_end = assertion.unit.source.find("#endif", release_branch);
+    REQUIRE(debug_begin < first_await);
+    REQUIRE(first_await < release_branch);
+    REQUIRE(release_branch < debug_end);
+    REQUIRE(assertion.unit.source.find("ERR_FAIL_EDMSG", first_await) < release_branch);
+}
+
+TEST_CASE("compiler preserves typed returns for non-suspending awaited asserts") {
+    const gdpp::Compiler compiler;
+    const auto assertion =
+        compiler.compile("immediate_assert.gd", "func run() -> int:\n"
+                                                "    assert(await true, await \"message\")\n"
+                                                "    return 7\n");
+
+    REQUIRE(assertion.success);
+    REQUIRE(assertion.unit.source.find("gdpp::runtime::await_signal") == std::string::npos);
+    REQUIRE(assertion.unit.source.find("ERR_FAIL_V_EDMSG") != std::string::npos);
+    REQUIRE(assertion.unit.source.find("return static_cast<int64_t>(7);") != std::string::npos);
+}
+
 TEST_CASE("compiler applies truthiness to typed containers with short circuiting") {
     const gdpp::Compiler compiler;
     const auto result =
@@ -650,7 +982,7 @@ TEST_CASE("compiler permits fire-and-forget awaits in dynamic lambdas") {
     REQUIRE(result.unit.source.find("gdpp::runtime::await_signal") != std::string::npos);
 }
 
-TEST_CASE("compiler warns when dynamic coroutine values become fire-and-forget") {
+TEST_CASE("compiler preserves dynamic coroutine return values through the native ABI") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("dynamic_coroutine.gd", "extends Node\n"
                                                                  "signal resumed\n"
@@ -659,11 +991,11 @@ TEST_CASE("compiler warns when dynamic coroutine values become fire-and-forget")
                                                                  "    return 42\n");
 
     REQUIRE(result.success);
-    REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
-                        [](const gdpp::Diagnostic& diagnostic) {
-                            return diagnostic.severity == gdpp::DiagnosticSeverity::warning &&
-                                   diagnostic.code == "GDS4103";
-                        }));
+    REQUIRE(result.unit.header.find("godot::Variant spawn()") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::begin_coroutine(this)") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::complete_coroutine(_gdpp_coroutine_state, "
+                                    "godot::Variant(static_cast<int64_t>(42)))") !=
+            std::string::npos);
 }
 
 TEST_CASE("compiler supports structured awaits and rejects unsafe coroutine contracts") {
@@ -692,14 +1024,61 @@ TEST_CASE("compiler supports structured awaits and rejects unsafe coroutine cont
     REQUIRE(nested.unit.source.find("std::make_shared<std::function<void()>>") !=
             std::string::npos);
     REQUIRE(nested.unit.source.find("gdpp::runtime::iter_next") != std::string::npos);
-    REQUIRE(!non_void.success);
+    REQUIRE(non_void.success);
+    REQUIRE(non_void.unit.header.find("godot::Variant run()") != std::string::npos);
+    REQUIRE(non_void.unit.source.find("gdpp::runtime::coroutine_result(") != std::string::npos);
     REQUIRE(!static_await.success);
-    REQUIRE(!nonsignal.success);
+    REQUIRE(nonsignal.success);
+    REQUIRE(nonsignal.unit.source.find("static_cast<void>(static_cast<int64_t>(42))") !=
+            std::string::npos);
+    REQUIRE(std::any_of(nonsignal.diagnostics.begin(), nonsignal.diagnostics.end(),
+                        [](const gdpp::Diagnostic& diagnostic) {
+                            return diagnostic.severity == gdpp::DiagnosticSeverity::warning &&
+                                   diagnostic.code == "GDS4093";
+                        }));
     REQUIRE(!initializer.success);
     bool found_initializer_await = false;
     for (const auto& diagnostic : initializer.diagnostics)
         found_initializer_await = found_initializer_await || diagnostic.code == "GDS4097";
     REQUIRE(found_initializer_await);
+}
+
+TEST_CASE("compiler requires consumed coroutine results to be awaited and permits detachment") {
+    const gdpp::Compiler compiler;
+    const auto direct =
+        compiler.compile("direct_coroutine.gd", "signal resumed\n"
+                                                "func produce(immediate: bool) -> int:\n"
+                                                "    if immediate:\n"
+                                                "        return 7\n"
+                                                "    await resumed\n"
+                                                "    return 8\n"
+                                                "func consume() -> int:\n"
+                                                "    return produce(true)\n");
+    const auto awaited =
+        compiler.compile("awaited_coroutine.gd", "signal resumed\n"
+                                                 "func produce(immediate: bool) -> int:\n"
+                                                 "    if immediate:\n"
+                                                 "        return 7\n"
+                                                 "    await resumed\n"
+                                                 "    return 8\n"
+                                                 "func consume() -> int:\n"
+                                                 "    return await produce(true)\n");
+    const auto detached = compiler.compile("detached_coroutine.gd", "signal resumed\n"
+                                                                    "func produce() -> void:\n"
+                                                                    "    await resumed\n"
+                                                                    "func launch() -> void:\n"
+                                                                    "    produce()\n");
+
+    REQUIRE(!direct.success);
+    REQUIRE(std::any_of(
+        direct.diagnostics.begin(), direct.diagnostics.end(),
+        [](const gdpp::Diagnostic& diagnostic) { return diagnostic.code == "GDS4132"; }));
+    REQUIRE(awaited.success);
+    REQUIRE(awaited.unit.source.find("produce(_gdpp_call_argument_") != std::string::npos);
+    REQUIRE(awaited.unit.source.find(".get_type() != godot::Variant::SIGNAL") != std::string::npos);
+    REQUIRE(awaited.unit.source.find("gdpp::runtime::await_result(") != std::string::npos);
+    REQUIRE(detached.success);
+    REQUIRE(detached.unit.source.find("produce()") != std::string::npos);
 }
 
 TEST_CASE("compiler applies GDScript truthiness to RefCounted objects") {
@@ -885,11 +1264,57 @@ TEST_CASE("compiler infers native Godot virtual signatures and escapes C++ keywo
     REQUIRE(result.unit.header.find(
                 "virtual void _input(const godot::Ref<godot::InputEvent>& event) override") !=
             std::string::npos);
-    REQUIRE(result.unit.header.find("throw_(godot::Variant value)") != std::string::npos);
+    REQUIRE(result.unit.header.find("_gdpp_id_7468726f77(godot::Variant value)") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find("D_METHOD(\"_ready\"") == std::string::npos);
     REQUIRE(result.unit.source.find("D_METHOD(\"_process\"") == std::string::npos);
     REQUIRE(result.unit.source.find("D_METHOD(\"_input\"") == std::string::npos);
     REQUIRE(result.unit.source.find("D_METHOD(\"throw\"") != std::string::npos);
+}
+
+TEST_CASE("compiler emits injective ASCII names for Unicode and C++ identifiers") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "unicode_names.gd", "extends Node\n"
+                            "enum _Anim { FLOOR, AIR }\n"
+                            "enum { GROUND }\n"
+                            "var template: int = 1\n"
+                            "var _gdpp_id_74656d706c617465: int = 2\n"
+                            "var _gdpp_enum_GROUND: int = 9\n"
+                            "var \xcf\x80: int = 3\n"
+                            "var e\xcc\x81: int = 4\n"
+                            "var \xc3\xa9: int = 5\n"
+                            "func \xe8\xae\xa1\xe7\xae\x97(\xe5\x80\xbc: int) -> int:\n"
+                            "    var anim := _Anim.FLOOR\n"
+                            "    anim = _Anim.AIR\n"
+                            "    return template + _gdpp_id_74656d706c617465 + \xcf\x80 + "
+                            "e\xcc\x81 + \xc3\xa9 + \xe5\x80\xbc + anim\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("_gdpp_id_74656d706c617465") != std::string::npos);
+    REQUIRE(
+        result.unit.header.find("_gdpp_id_5f676470705f69645f37343635366437303663363137343635") !=
+        std::string::npos);
+    REQUIRE(result.unit.header.find("_gdpp_id_cf80") != std::string::npos);
+    REQUIRE(result.unit.header.find("_gdpp_id_65cc81") != std::string::npos);
+    REQUIRE(result.unit.header.find("_gdpp_id_c3a9") != std::string::npos);
+    REQUIRE(result.unit.header.find("_gdpp_id_e8aea1e7ae97") != std::string::npos);
+    REQUIRE(result.unit.header.find("struct _gdpp_id_5f416e696d") != std::string::npos);
+    REQUIRE(result.unit.header.find("_gdpp_id_5f676470705f656e756d5f47524f554e44") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_id_5f416e696d::_gdpp_enum_FLOOR") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_id_5f416e696d::_gdpp_enum_AIR") != std::string::npos);
+    REQUIRE(std::all_of(result.unit.header.begin(), result.unit.header.end(), [](char character) {
+        return static_cast<unsigned char>(character) < 0x80U;
+    }));
+}
+
+TEST_CASE("compiler encodes numeric resource stems as native identifiers") {
+    const gdpp::Compiler compiler;
+    const auto numeric = compiler.compile("11.gd", "func run() -> void:\n    await 42\n");
+
+    REQUIRE(numeric.success);
+    REQUIRE(numeric.unit.header.find("namespace _gdpp_id_3131_gdpp_detail") != std::string::npos);
 }
 
 TEST_CASE("compiler can namespace project native classes by a build identity") {
@@ -939,6 +1364,73 @@ TEST_CASE("compiler generates typed named and anonymous enum constants") {
     REQUIRE(result.unit.source.find("State::_gdpp_enum_RUN") != std::string::npos);
     REQUIRE(result.unit.source.find("bind_integer_constant") != std::string::npos);
     REQUIRE(result.unit.source.find("IDLE:0,WALK:4,RUN:8") != std::string::npos);
+}
+
+TEST_CASE("compiler preserves canonical numeric raw triple and Unicode literals") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile("literal_contract.gd", R"gd(extends Node
+enum Values { HEX = 0xff_00, BINARY = 0b1010_0101, DECIMAL = 12_345 }
+const LEADING = .5
+const TRAILING = 4.
+const EXPONENT = 1_2.5_0e+1_0
+const OVERFLOW = 1e400
+const UNDERFLOW = 1e-4000
+const NOT_A_NUMBER = 0e400
+const ESCAPED = "\a\b\f\v\u0041\U01F600\uD83D\uDE00"
+const NUL = "A\u0000B"
+const RAW = r"\n\"quoted\"\\path"
+const TRIPLE = """first
+"quoted"
+last"""
+)gd");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("_gdpp_enum_HEX = 65280") != std::string::npos);
+    REQUIRE(result.unit.header.find("_gdpp_enum_BINARY = 165") != std::string::npos);
+    REQUIRE(result.unit.header.find("_gdpp_enum_DECIMAL = 12345") != std::string::npos);
+    REQUIRE(result.unit.source.find("const double GDPPNative_LiteralContract::LEADING = 0.5") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("const double GDPPNative_LiteralContract::TRAILING = 4.0") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("12.50e+10") != std::string::npos);
+    REQUIRE(result.unit.source.find("Math_INF") != std::string::npos);
+    REQUIRE(result.unit.source.find("Math_NAN") != std::string::npos);
+    REQUIRE(result.unit.source.find("::UNDERFLOW = 0.0") != std::string::npos);
+    REQUIRE(result.unit.source.find("0xff_00") == std::string::npos);
+    REQUIRE(result.unit.source.find("0b1010_0101") == std::string::npos);
+    REQUIRE(result.unit.source.find("\\a\\b\\f\\vA") != std::string::npos);
+    REQUIRE(result.unit.source.find(u8"😀😀") != std::string::npos);
+    REQUIRE(result.unit.source.find(u8"A�B") != std::string::npos);
+    REQUIRE(result.unit.source.find("\\000") == std::string::npos);
+    REQUIRE(result.unit.source.find("\\\\n\\\\\\\"quoted\\\\\\\"\\\\\\\\path") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("first\\n\\\"quoted\\\"\\nlast") != std::string::npos);
+    REQUIRE(result.unit.source.find('\a') == std::string::npos);
+    REQUIRE(result.unit.source.find('\b') == std::string::npos);
+    REQUIRE(result.unit.source.find('\f') == std::string::npos);
+    REQUIRE(result.unit.source.find('\v') == std::string::npos);
+    REQUIRE(std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                          [](const gdpp::Diagnostic& diagnostic) {
+                              return diagnostic.code == "GDS1007";
+                          }) == std::ptrdiff_t{1});
+    REQUIRE(std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                          [](const gdpp::Diagnostic& diagnostic) {
+                              return diagnostic.code == "GDS1008";
+                          }) == std::ptrdiff_t{1});
+}
+
+TEST_CASE("compiler rejects malformed literal source transactionally") {
+    const gdpp::Compiler compiler;
+    const auto numeric = compiler.compile("bad_number.gd", "var value := 0b102\n");
+    const auto escape = compiler.compile("bad_escape.gd", "var value := \"\\q\"\n");
+    const auto unicode = compiler.compile("bad_unicode.gd", "var value := \"\\uD800\"\n");
+
+    REQUIRE(!numeric.success);
+    REQUIRE(!escape.success);
+    REQUIRE(!unicode.success);
+    REQUIRE(numeric.unit.source.empty());
+    REQUIRE(escape.unit.source.empty());
+    REQUIRE(unicode.unit.source.empty());
 }
 
 TEST_CASE("compiler omits ambiguous native reflection entries for duplicate enum members") {
@@ -1007,22 +1499,31 @@ TEST_CASE("compiler generates single-evaluation match control flow") {
     REQUIRE(result.unit.source.find("const auto _gdpp_match_value_0 = value") != std::string::npos);
     REQUIRE(result.unit.source.find("bool _gdpp_match_done_0 = false") != std::string::npos);
     REQUIRE(result.unit.source.find("State::_gdpp_enum_IDLE") != std::string::npos);
-    REQUIRE(result.unit.source.find("auto captured = _gdpp_match_value_0") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Variant _gdpp_match_bind_") != std::string::npos);
+    REQUIRE(result.unit.source.find("int64_t captured = static_cast<int64_t>(") !=
+            std::string::npos);
     REQUIRE(
         result.unit.source.find("if (static_cast<bool>((captured == State::_gdpp_enum_RUN)))") !=
         std::string::npos);
     REQUIRE(result.unit.source.find("    return {};\n}") != std::string::npos);
 }
 
-TEST_CASE("compiler rejects nonconstant and unreachable match patterns") {
+TEST_CASE("compiler accepts identifier patterns and warns about unreachable match branches") {
     const gdpp::Compiler compiler;
-    const auto nonconstant =
+    const auto live_identifier =
         compiler.compile("nonconstant_match.gd", "func test(value: int) -> int:\n"
                                                  "    match value:\n"
                                                  "        value:\n"
                                                  "            return 1\n"
                                                  "        _:\n"
                                                  "            return 0\n");
+    const auto composite_live =
+        compiler.compile("composite_match.gd", "func test(value: int) -> int:\n"
+                                               "    match value:\n"
+                                               "        value + 1:\n"
+                                               "            return 1\n"
+                                               "        _:\n"
+                                               "            return 0\n");
     const auto unreachable =
         compiler.compile("unreachable_match.gd", "func test(value: int) -> int:\n"
                                                  "    match value:\n"
@@ -1031,9 +1532,15 @@ TEST_CASE("compiler rejects nonconstant and unreachable match patterns") {
                                                  "        1:\n"
                                                  "            return 1\n");
 
-    REQUIRE(!nonconstant.success);
-    REQUIRE(!unreachable.success);
-    REQUIRE(nonconstant.unit.source.empty());
+    REQUIRE(live_identifier.success);
+    REQUIRE(!composite_live.success);
+    REQUIRE(unreachable.success);
+    REQUIRE(composite_live.unit.source.empty());
+    REQUIRE(std::any_of(unreachable.diagnostics.begin(), unreachable.diagnostics.end(),
+                        [](const gdpp::Diagnostic& diagnostic) {
+                            return diagnostic.severity == gdpp::DiagnosticSeverity::warning &&
+                                   diagnostic.code == "GDS4044";
+                        }));
 }
 
 TEST_CASE("dynamic match values use the Variant compatibility runtime") {
@@ -1442,7 +1949,7 @@ TEST_CASE("semantic flow analysis requires concrete returns on every reachable p
     REQUIRE(found_missing_return);
 }
 
-TEST_CASE("semantic flow analysis rejects unreachable statements and partial getters") {
+TEST_CASE("semantic flow analysis warns about unreachable statements and rejects partial getters") {
     const gdpp::Compiler compiler;
     const auto unreachable = compiler.compile("unreachable.gd", "func answer() -> int:\n"
                                                                 "    return 42\n"
@@ -1460,12 +1967,14 @@ TEST_CASE("semantic flow analysis rejects unreachable statements and partial get
                                                                       "        if enabled:\n"
                                                                       "            return 1\n");
 
-    REQUIRE(!unreachable.success);
+    REQUIRE(unreachable.success);
     REQUIRE(complete_getter.success);
     REQUIRE(!partial_getter.success);
     bool found_unreachable = false;
     for (const auto& diagnostic : unreachable.diagnostics)
-        found_unreachable = found_unreachable || diagnostic.code == "GDS4069";
+        found_unreachable =
+            found_unreachable || (diagnostic.code == "GDS4069" &&
+                                  diagnostic.severity == gdpp::DiagnosticSeverity::warning);
     bool found_partial_getter = false;
     for (const auto& diagnostic : partial_getter.diagnostics)
         found_partial_getter = found_partial_getter || diagnostic.code == "GDS4050";
@@ -1501,6 +2010,54 @@ TEST_CASE("semantic analysis rejects constant writes and loop control outside lo
 
     REQUIRE(!result.success);
     REQUIRE(result.unit.header.empty());
+}
+
+TEST_CASE("local constants remain typed read-only values through native code generation") {
+    const gdpp::Compiler compiler;
+    const auto valid = compiler.compile("local_constant.gd", "extends Node\n"
+                                                             "func report() -> void:\n"
+                                                             "    const LIMIT : = 123_\n"
+                                                             "    var state := {score = LIMIT,}\n"
+                                                             "    state.return = LIMIT\n"
+                                                             "    print(state.score, LIMIT,)\n");
+    const auto invalid = compiler.compile("local_constant_write.gd", "func mutate() -> void:\n"
+                                                                     "    const LIMIT = 1\n"
+                                                                     "    LIMIT = 2\n");
+
+    REQUIRE(valid.success);
+    REQUIRE(valid.unit.source.find("const int64_t LIMIT = static_cast<int64_t>(123);") !=
+            std::string::npos);
+    REQUIRE(!invalid.success);
+    REQUIRE(invalid.unit.source.empty());
+    REQUIRE(std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4006"; }));
+}
+
+TEST_CASE("static constructors are validated and run exactly from native class binding") {
+    const gdpp::Compiler compiler;
+    const auto valid = compiler.compile("static_init.gd", "static var initialized: bool = false\n"
+                                                          "static func _static_init() -> void:\n"
+                                                          "    initialized = true\n");
+    const auto non_static = compiler.compile("non_static_init.gd", "func _static_init() -> void:\n"
+                                                                   "    pass\n");
+    const auto returning =
+        compiler.compile("returning_static_init.gd", "static func _static_init():\n"
+                                                     "    return true\n");
+    const auto loop_conflict = compiler.compile("loop_conflict.gd", "func iterate() -> void:\n"
+                                                                    "    var item = 1\n"
+                                                                    "    for item in 2:\n"
+                                                                    "        pass\n");
+
+    REQUIRE(valid.success);
+    REQUIRE(valid.unit.source.find("    _static_init();\n}") != std::string::npos);
+    REQUIRE(valid.unit.source.find("D_METHOD(\"_static_init\"") == std::string::npos);
+    REQUIRE(!non_static.success);
+    REQUIRE(!returning.success);
+    REQUIRE(!loop_conflict.success);
+    REQUIRE(std::any_of(non_static.diagnostics.begin(), non_static.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4123"; }));
+    REQUIRE(std::any_of(loop_conflict.diagnostics.begin(), loop_conflict.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4125"; }));
 }
 
 TEST_CASE("semantic analysis rejects every non-lvalue assignment target") {
@@ -1796,6 +2353,62 @@ TEST_CASE("compiler lowers Godot 4.7 global utilities constants enums and range"
     REQUIRE(result.unit.source.find("godot::UtilityFunctions::clampf") != std::string::npos);
     REQUIRE(result.unit.source.find("godot::UtilityFunctions::str") != std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::make_range") != std::string::npos);
+}
+
+TEST_CASE("compiler matches zero-arity varargs constant preload and warning ranges") {
+    gdpp::CompileOptions options;
+    options.target_version = gdpp::GodotVersion::v4_7;
+    const gdpp::Compiler compiler;
+    const auto utilities = compiler.compile("zero_varargs.gd",
+                                            "func test() -> String:\n"
+                                            "    print()\n"
+                                            "    return str()\n",
+                                            options);
+    const auto preload = compiler.compile("constant_preload.gd",
+                                          "func load_scene():\n"
+                                          "    const ROOT = \"res://effects/\"\n"
+                                          "    const PATH = ROOT + \"spark.tscn\"\n"
+                                          "    return preload(PATH)\n",
+                                          options);
+    const auto warnings = compiler.compile("warning_ranges.gd",
+                                           "@warning_ignore_start(\"unreachable_code\")\n"
+                                           "func ignored() -> void:\n"
+                                           "    return\n"
+                                           "    print(1)\n"
+                                           "@warning_ignore_restore(\"unreachable_code\")\n"
+                                           "func reported() -> void:\n"
+                                           "    return\n"
+                                           "    print(2)\n",
+                                           options);
+    const auto static_instance = compiler.compile("static_instance.gd",
+                                                  "class Worker:\n"
+                                                  "    static func run() -> void:\n"
+                                                  "        pass\n"
+                                                  "func test() -> void:\n"
+                                                  "    var worker := Worker.new()\n"
+                                                  "    worker.run()\n",
+                                                  options);
+
+    REQUIRE(utilities.success);
+    REQUIRE(preload.success);
+    REQUIRE(warnings.success);
+    REQUIRE(static_instance.success);
+    REQUIRE(utilities.unit.source.find("godot::UtilityFunctions::print(godot::String())") !=
+            std::string::npos);
+    REQUIRE(utilities.unit.source.find("return godot::String()") != std::string::npos);
+    REQUIRE(preload.unit.source.find("gdpp::runtime::load_resource(") != std::string::npos);
+    REQUIRE(preload.unit.source.find("PATH") != std::string::npos);
+    REQUIRE(preload.unit.source.find("ROOT()") == std::string::npos);
+    REQUIRE(preload.unit.source.find("PATH()") == std::string::npos);
+    REQUIRE_EQ(std::count_if(
+                   warnings.diagnostics.begin(), warnings.diagnostics.end(),
+                   [](const gdpp::Diagnostic& diagnostic) { return diagnostic.code == "GDS4069"; }),
+               std::ptrdiff_t{1});
+    REQUIRE(std::any_of(static_instance.diagnostics.begin(), static_instance.diagnostics.end(),
+                        [](const gdpp::Diagnostic& diagnostic) {
+                            return diagnostic.severity == gdpp::DiagnosticSeverity::warning &&
+                                   diagnostic.code == "GDS4130";
+                        }));
 }
 
 TEST_CASE("dynamic logical operators short circuit and utility arguments keep source order") {
