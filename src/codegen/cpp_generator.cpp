@@ -366,6 +366,59 @@ std::string godot_string_name(const std::string& value) {
     return "godot::StringName(" + godot_text_argument(value) + ")";
 }
 
+bool has_rpc_configuration(const std::vector<ir::Function>& functions) {
+    return std::any_of(functions.begin(), functions.end(),
+                       [](const ir::Function& function) { return function.rpc.has_value(); });
+}
+
+bool has_rpc_configuration(const ir::Class& declaration) {
+    return has_rpc_configuration(declaration.functions) ||
+           std::any_of(declaration.classes.begin(), declaration.classes.end(),
+                       [](const ir::Class& nested) { return has_rpc_configuration(nested); });
+}
+
+bool has_rpc_configuration(const ir::Module& module) {
+    return has_rpc_configuration(module.functions) ||
+           std::any_of(module.classes.begin(), module.classes.end(),
+                       [](const ir::Class& nested) { return has_rpc_configuration(nested); });
+}
+
+void emit_rpc_configurations(std::ostringstream& source, const std::vector<ir::Function>& functions,
+                             const std::size_t indentation) {
+    const auto prefix = indent(indentation);
+    for (const auto& function : functions) {
+        if (!function.rpc)
+            continue;
+        const auto& rpc = *function.rpc;
+        source << prefix << "{\n"
+               << prefix << "    godot::Dictionary gdpp_rpc_config;\n"
+               << prefix << "    gdpp_rpc_config[\"rpc_mode\"] = godot::MultiplayerAPI::"
+               << (rpc.permission == RpcPermission::any_peer ? "RPC_MODE_ANY_PEER"
+                                                             : "RPC_MODE_AUTHORITY")
+               << ";\n"
+               << prefix << "    gdpp_rpc_config[\"transfer_mode\"] = godot::MultiplayerPeer::";
+        switch (rpc.transfer_mode) {
+        case RpcTransferMode::unreliable:
+            source << "TRANSFER_MODE_UNRELIABLE";
+            break;
+        case RpcTransferMode::unreliable_ordered:
+            source << "TRANSFER_MODE_UNRELIABLE_ORDERED";
+            break;
+        case RpcTransferMode::reliable:
+            source << "TRANSFER_MODE_RELIABLE";
+            break;
+        }
+        source << ";\n"
+               << prefix
+               << "    gdpp_rpc_config[\"call_local\"] = " << (rpc.call_local ? "true" : "false")
+               << ";\n"
+               << prefix << "    gdpp_rpc_config[\"channel\"] = int64_t{" << rpc.channel << "};\n"
+               << prefix << "    rpc_config(" << godot_string_name(function.name)
+               << ", gdpp_rpc_config);\n"
+               << prefix << "}\n";
+    }
+}
+
 std::string godot_node_path(const std::string& value) {
     return "godot::NodePath(" + godot_text_argument(value) + ")";
 }
@@ -3890,6 +3943,8 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
         std::any_of(declaration.fields.begin(), declaration.fields.end(), [](const auto& field) {
             return !field.is_constant && !field.is_static && !field.onready && field.initializer;
         });
+    const bool has_native_rpc = has_rpc_configuration(declaration.functions) &&
+                                (godot_base == "Node" || api_.inherits(godot_base, "Node"));
     header << "class " << native_name << " : public " << base_cpp << " {\n"
            << "    GDCLASS(" << native_name << ", " << base_cpp << ")\n\n"
            << "public:\n";
@@ -3921,7 +3976,7 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
                           [](const auto& parameter) { return !parameter.default_value; });
         if (required != 0)
             header << "    " << native_name
-                   << (has_instance_initializers ? "();\n" : "() = default;\n");
+                   << (has_instance_initializers || has_native_rpc ? "();\n" : "() = default;\n");
         header << "    " << native_name << '(';
         for (std::size_t index = 0; index < initializer->parameters.size(); ++index) {
             if (index != 0)
@@ -3932,7 +3987,7 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
                 header << " = " << emit_parameter_default(parameter);
         }
         header << ");\n";
-    } else if (has_instance_initializers) {
+    } else if (has_instance_initializers || has_native_rpc) {
         header << "    " << native_name << "();\n";
     }
     header << "\nprotected:\n    static void _bind_methods();\n";
@@ -4061,6 +4116,8 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
     const auto initializer =
         std::find_if(declaration.functions.begin(), declaration.functions.end(),
                      [](const auto& function) { return function.name == "_init"; });
+    const bool has_native_rpc = has_rpc_configuration(declaration.functions) &&
+                                (godot_base == "Node" || api_.inherits(godot_base, "Node"));
     for (const auto& field : declaration.fields) {
         if (!field.is_constant)
             continue;
@@ -4155,7 +4212,7 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
             ? std::ptrdiff_t{0}
             : std::count_if(initializer->parameters.begin(), initializer->parameters.end(),
                             [](const auto& parameter) { return !parameter.default_value; });
-    if (has_instance_initializers &&
+    if ((has_instance_initializers || has_native_rpc) &&
         (initializer == declaration.functions.end() || required != 0)) {
         in_function_body_ = true;
         source << native_name << "::" << native_name << "() {\n";
@@ -4164,6 +4221,8 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         if (std::any_of(declaration.fields.begin(), declaration.fields.end(), cached_preload_field))
             source << "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n";
         emit_instance_initializers();
+        if (has_native_rpc)
+            emit_rpc_configurations(source, declaration.functions, 1);
         source << "}\n\n";
         in_function_body_ = false;
     }
@@ -4181,6 +4240,8 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         if (std::any_of(declaration.fields.begin(), declaration.fields.end(), cached_preload_field))
             source << "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n";
         emit_instance_initializers();
+        if (has_native_rpc)
+            emit_rpc_configurations(source, declaration.functions, 1);
         source << "    if (gdpp_editor_hint) return;\n";
         source << "    _init(";
         for (std::size_t index = 0; index < initializer->parameters.size(); ++index) {
@@ -4594,6 +4655,9 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         std::any_of(module.fields.begin(), module.fields.end(),
                     [](const ir::Field& field) { return field.onready; });
     const auto godot_base_type = current_script_ ? current_script_->godot_base_type : base;
+    const bool has_native_rpc =
+        has_rpc_configuration(module.functions) &&
+        (godot_base_type == "Node" || api_.inherits(godot_base_type, "Node"));
     const auto virtual_method_for = [&](const ir::Function& function) {
         if (function.is_static)
             return static_cast<const GodotMethodRecord*>(nullptr);
@@ -4798,7 +4862,9 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                           [](const ir::Parameter& parameter) { return !parameter.default_value; });
         if (required != 0)
             header << "    " << unit.class_name
-                   << (has_instance_initializers || is_autoload ? "();\n" : "() = default;\n");
+                   << (has_instance_initializers || is_autoload || has_native_rpc
+                           ? "();\n"
+                           : "() = default;\n");
         header << "    " << unit.class_name << '(';
         for (std::size_t index = 0; index < initializer->parameters.size(); ++index) {
             if (index != 0)
@@ -4809,7 +4875,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                 header << " = " << emit_parameter_default(parameter);
         }
         header << ");\n\n";
-    } else if (has_instance_initializers || is_autoload) {
+    } else if (has_instance_initializers || is_autoload || has_native_rpc) {
         header << "    " << unit.class_name << "();\n\n";
     }
     header << "protected:\n"
@@ -4918,6 +4984,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     std::ostringstream source;
     source << "// Generated by GDPP. Do not edit.\n"
            << "#include \"" << unit.header_file_name << "\"\n";
+    if (has_rpc_configuration(module)) {
+        source << "#include <godot_cpp/classes/multiplayer_api.hpp>\n"
+               << "#include <godot_cpp/classes/multiplayer_peer.hpp>\n";
+    }
     if (script_symbols_) {
         std::set<std::string> dependency_headers;
         for (const auto& native_name : native_types.resolved_native_scripts) {
@@ -5077,7 +5147,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                    << godot_string_name(current_script_->autoload_name) << ", this);\n";
         }
     };
-    if ((has_instance_initializers || is_autoload) &&
+    if ((has_instance_initializers || is_autoload || has_native_rpc) &&
         (initializer == module.functions.end() || required != 0)) {
         in_function_body_ = true;
         source << unit.class_name << "::" << unit.class_name << "() {\n";
@@ -5087,6 +5157,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         if (std::any_of(module.fields.begin(), module.fields.end(), cached_preload_field))
             source << "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n";
         emit_instance_initializers();
+        if (has_native_rpc)
+            emit_rpc_configurations(source, module.functions, 1);
         source << "}\n\n";
         in_function_body_ = false;
     }
@@ -5105,6 +5177,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         if (std::any_of(module.fields.begin(), module.fields.end(), cached_preload_field))
             source << "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n";
         emit_instance_initializers();
+        if (has_native_rpc)
+            emit_rpc_configurations(source, module.functions, 1);
         source << "    if (gdpp_editor_hint) return;\n";
         source << "    _init(";
         for (std::size_t index = 0; index < initializer->parameters.size(); ++index) {
