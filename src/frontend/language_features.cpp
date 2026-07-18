@@ -78,7 +78,7 @@ constexpr auto annotations = std::array{
     AnnotationFeature{"icon", AnnotationTarget::script, AnnotationBehavior::marker, 1, 1},
     AnnotationFeature{"onready", AnnotationTarget::field, AnnotationBehavior::marker, 0, 0},
     AnnotationFeature{"rpc", AnnotationTarget::function, AnnotationBehavior::rpc_configuration, 0,
-                      std::numeric_limits<std::uint16_t>::max()},
+                      4},
     AnnotationFeature{"static_unload", AnnotationTarget::script, AnnotationBehavior::marker, 0, 0},
     AnnotationFeature{"tool", AnnotationTarget::script, AnnotationBehavior::marker, 0, 0},
     AnnotationFeature{"warning_ignore",

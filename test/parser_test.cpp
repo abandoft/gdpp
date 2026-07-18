@@ -58,6 +58,31 @@ TEST_CASE("parser accepts latest script annotations directives and single-line s
     REQUIRE_EQ(script.functions.back().body.size(), std::size_t{2});
 }
 
+TEST_CASE("parser preserves the bounded Godot RPC annotation contract") {
+    const gdpp::SourceFile valid{"rpc.gd", "extends Node\n"
+                                           "@rpc(\"any_peer\", \"call_local\", \"reliable\", 3)\n"
+                                           "func synchronize() -> void:\n"
+                                           "    pass\n"};
+    gdpp::DiagnosticBag valid_diagnostics;
+    const auto valid_tokens = gdpp::Lexer{valid, valid_diagnostics}.scan();
+    const auto script = gdpp::Parser{valid_tokens, valid_diagnostics}.parse_script();
+
+    REQUIRE(!valid_diagnostics.has_errors());
+    REQUIRE_EQ(script.functions.front().annotations.size(), std::size_t{1});
+    REQUIRE_EQ(script.functions.front().annotations.front().arguments.size(), std::size_t{4});
+
+    const gdpp::SourceFile excessive{"invalid_rpc.gd",
+                                     "@rpc(\"authority\", \"call_remote\", \"unreliable\", 0, 1)\n"
+                                     "func synchronize() -> void:\n"
+                                     "    pass\n"};
+    gdpp::DiagnosticBag excessive_diagnostics;
+    const auto excessive_tokens = gdpp::Lexer{excessive, excessive_diagnostics}.scan();
+    (void)gdpp::Parser{excessive_tokens, excessive_diagnostics}.parse_script();
+
+    REQUIRE(std::any_of(excessive_diagnostics.items().begin(), excessive_diagnostics.items().end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS2020"; }));
+}
+
 TEST_CASE("parser rejects misplaced duplicate script annotations and warning ranges") {
     const gdpp::SourceFile source{"invalid_directives.gd",
                                   "@tool\n"
