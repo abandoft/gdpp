@@ -585,11 +585,40 @@ Type signature_type(const std::optional<std::string>& annotation,
     return {TypeKind::variant, "Variant"};
 }
 
+bool expression_contains_await(const ast::Expression& expression) {
+    if (expression.kind() == ast::ExpressionKind::await_expression)
+        return true;
+    for (std::size_t index = 0; index < expression.operand_count(); ++index) {
+        if (expression_contains_await(*expression.operand(index)))
+            return true;
+    }
+    return false;
+}
+
+bool statements_contain_await(const std::vector<ast::Statement>& statements) {
+    for (const auto& statement : statements) {
+        if ((statement.expression() && expression_contains_await(*statement.expression())) ||
+            (statement.condition() && expression_contains_await(*statement.condition())) ||
+            statements_contain_await(statement.body()) ||
+            statements_contain_await(statement.else_body())) {
+            return true;
+        }
+        for (const auto& branch : statement.match_branches()) {
+            if ((branch.guard && expression_contains_await(*branch.guard)) ||
+                statements_contain_await(branch.body)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 ScriptInnerClassSymbol inner_class_symbol(const ast::ClassDeclaration& declaration,
                                           const GodotApi& api) {
     ScriptInnerClassSymbol symbol;
     symbol.name = declaration.name;
     symbol.godot_base_type = declaration.base_type.value_or("RefCounted");
+    symbol.base_class_name = declaration.base_type.value_or("");
     for (const auto& variable : declaration.variables) {
         symbol.members.push_back(
             {variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field,
@@ -613,6 +642,7 @@ ScriptInnerClassSymbol inner_class_symbol(const ast::ClassDeclaration& declarati
         member.type = function.name == "_init" ? Type{TypeKind::void_type, "void"}
                                                : signature_type(function.return_type, nullptr, api);
         member.is_static = function.is_static;
+        member.is_coroutine = statements_contain_await(function.body);
         member.has_explicit_type = function.name == "_init" || function.return_type.has_value();
         for (const auto& parameter : function.parameters) {
             member.parameters.push_back(signature_type(parameter.type, nullptr, api));
@@ -664,6 +694,18 @@ ScriptInnerClassSymbol inner_class_symbol(const ast::ClassDeclaration& declarati
             symbol.enums.push_back(std::move(enumeration));
     }
     return symbol;
+}
+
+std::string native_inner_suffix(std::string_view qualified_name) {
+    std::string result;
+    result.reserve(qualified_name.size() + 8);
+    for (const char character : qualified_name) {
+        if (character == '.')
+            result += "__";
+        else
+            result.push_back(character);
+    }
+    return result;
 }
 
 Manifest read_manifest(const std::filesystem::path& path) {
@@ -1322,10 +1364,10 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     for (std::size_t index = 0; index < inputs.size(); ++index) {
         auto& input = inputs[index];
         const SourceFile source{input.relative, input.source};
-        DiagnosticBag diagnostics;
-        Lexer lexer{source, diagnostics};
+        DiagnosticBag diagnostics{options.compiler.frontend_limits.max_diagnostics};
+        Lexer lexer{source, diagnostics, options.compiler.frontend_limits};
         const auto tokens = lexer.scan();
-        Parser parser{tokens, diagnostics};
+        Parser parser{tokens, diagnostics, options.compiler.frontend_limits};
         input.script = parser.parse_script();
         const auto& script = input.script;
         for (const auto& diagnostic : diagnostics.items())
@@ -1368,6 +1410,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                               ? Type{TypeKind::void_type, "void"}
                               : signature_type(function.return_type, nullptr, target_api);
             member.is_static = function.is_static;
+            member.is_coroutine = statements_contain_await(function.body);
             member.has_explicit_type = function.name == "_init" || function.return_type.has_value();
             for (const auto& parameter : function.parameters) {
                 member.parameters.push_back(signature_type(parameter.type, nullptr, target_api));
@@ -1418,8 +1461,88 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             if (declaration.name)
                 input.enums.push_back(std::move(enumeration));
         }
-        for (const auto& declaration : script.classes)
-            input.inner_classes.push_back(inner_class_symbol(declaration, target_api));
+        const auto collect_inner_classes = [&](auto&& self,
+                                               const std::vector<ast::ClassDeclaration>& classes,
+                                               const std::string& parent_name) -> void {
+            for (const auto& declaration : classes) {
+                auto symbol = inner_class_symbol(declaration, target_api);
+                symbol.name =
+                    parent_name.empty() ? declaration.name : parent_name + "." + declaration.name;
+                input.inner_classes.push_back(std::move(symbol));
+                self(self, declaration.classes,
+                     parent_name.empty() ? declaration.name : parent_name + "." + declaration.name);
+            }
+        };
+        collect_inner_classes(collect_inner_classes, script.classes, {});
+        for (auto& inner : input.inner_classes) {
+            if (target_api.find_class(inner.base_class_name)) {
+                inner.godot_base_type = inner.base_class_name;
+                inner.base_class_name.clear();
+            } else if (inner.base_class_name.empty()) {
+                inner.godot_base_type = "RefCounted";
+            }
+        }
+        const auto resolve_inner_reference =
+            [&](const std::string& owner_name,
+                const std::string& reference) -> const ScriptInnerClassSymbol* {
+            if (reference.empty())
+                return nullptr;
+            const auto exact =
+                std::find_if(input.inner_classes.begin(), input.inner_classes.end(),
+                             [&](const auto& candidate) { return candidate.name == reference; });
+            if (reference.find('.') != std::string::npos)
+                return exact == input.inner_classes.end() ? nullptr : &*exact;
+
+            auto separator = owner_name.rfind('.');
+            while (separator != std::string::npos) {
+                const auto candidate_name = owner_name.substr(0, separator + 1) + reference;
+                const auto candidate =
+                    std::find_if(input.inner_classes.begin(), input.inner_classes.end(),
+                                 [&](const auto& value) { return value.name == candidate_name; });
+                if (candidate != input.inner_classes.end())
+                    return &*candidate;
+                if (separator == 0)
+                    break;
+                separator = owner_name.rfind('.', separator - 1);
+            }
+            if (exact != input.inner_classes.end())
+                return &*exact;
+
+            const ScriptInnerClassSymbol* unique = nullptr;
+            for (const auto& candidate : input.inner_classes) {
+                const auto leaf_separator = candidate.name.rfind('.');
+                const auto leaf = leaf_separator == std::string::npos
+                                      ? candidate.name
+                                      : candidate.name.substr(leaf_separator + 1);
+                if (leaf != reference)
+                    continue;
+                if (unique)
+                    return nullptr;
+                unique = &candidate;
+            }
+            return unique;
+        };
+        for (auto& inner : input.inner_classes) {
+            if (inner.base_class_name.empty())
+                continue;
+            if (const auto* base = resolve_inner_reference(inner.name, inner.base_class_name))
+                inner.base_class_name = base->name;
+        }
+        for (auto& inner : input.inner_classes) {
+            std::unordered_set<std::string> visited{inner.name};
+            auto* current = &inner;
+            while (!current->base_class_name.empty()) {
+                if (!visited.insert(current->base_class_name).second)
+                    break;
+                const auto base = std::find_if(
+                    input.inner_classes.begin(), input.inner_classes.end(),
+                    [&](const auto& value) { return value.name == current->base_class_name; });
+                if (base == input.inner_classes.end())
+                    break;
+                current = &*base;
+            }
+            inner.godot_base_type = current->godot_base_type;
+        }
         if (input.globally_named && target_api.find_class(input.script_class_name)) {
             result.diagnostics.push_back(
                 {input.path,
@@ -1775,7 +1898,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             identity << static_cast<int>(member.kind) << ':' << member.name << ':'
                      << static_cast<int>(member.type.kind) << ':' << member.type.name << ':'
                      << member.required_arguments << ':' << member.is_static << ':'
-                     << member.has_accessor << ':' << member.has_explicit_type;
+                     << member.has_accessor << ':' << member.has_explicit_type << ':'
+                     << member.is_coroutine;
             if (const auto bridge = bridge_classes.find(member.type.name);
                 bridge != bridge_classes.end()) {
                 identity << ":bridge-abi:" << bridge_contract_identity(*bridge->second.bridge);
@@ -1807,7 +1931,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                 identity << "inner-member:" << static_cast<int>(member.kind) << ':' << member.name
                          << ':' << static_cast<int>(member.type.kind) << ':' << member.type.name
                          << ':' << member.required_arguments << ':' << member.is_static << ':'
-                         << member.has_accessor;
+                         << member.has_accessor << ':' << member.is_coroutine;
                 if (const auto bridge = bridge_classes.find(member.type.name);
                     bridge != bridge_classes.end()) {
                     identity << ":bridge-abi:" << bridge_contract_identity(*bridge->second.bridge);
@@ -1903,7 +2027,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         symbol.enums = input.enums;
         symbol.inner_classes = input.inner_classes;
         for (auto& inner : symbol.inner_classes) {
-            inner.native_class_name = symbol.native_class_name + "__" + inner.name;
+            inner.native_class_name =
+                symbol.native_class_name + "__" + native_inner_suffix(inner.name);
         }
         script_symbols.add(std::move(symbol));
     }
@@ -1960,8 +2085,80 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     for (const auto& [uid, path] : resource_aliases)
         script_symbols.add_resource_alias(uid, path);
 
+    // Coroutine status is part of the native ABI, but a purely syntactic scan is necessarily
+    // conservative (`await 42` is immediate, while `await another_script.call()` depends on the
+    // callee contract). Refine the provisional symbol graph to a semantic fixed point before
+    // hashing public ABIs. Starting from the conservative graph guarantees that recursive call
+    // groups never lose a possible suspension edge.
+    std::size_t callable_count = 0;
+    const auto count_inner_callables =
+        [&](const auto& self, const std::vector<ast::ClassDeclaration>& classes) -> void {
+        for (const auto& declaration : classes) {
+            callable_count += declaration.functions.size();
+            self(self, declaration.classes);
+        }
+    };
+    for (const auto& input : inputs) {
+        callable_count += input.script.functions.size();
+        count_inner_callables(count_inner_callables, input.script.classes);
+    }
+    for (std::size_t iteration = 0; iteration <= callable_count; ++iteration) {
+        bool changed = false;
+        for (auto& input : inputs) {
+            DiagnosticBag provisional_diagnostics{options.compiler.frontend_limits.max_diagnostics};
+            SemanticAnalyzer analyzer{provisional_diagnostics, target_api, input.semantic_base_type,
+                                      &script_symbols, input.relative};
+            const auto semantic = analyzer.analyze(input.script);
+            const auto refine_members = [&](auto& members,
+                                            const std::vector<ast::FunctionDeclaration>& functions,
+                                            const std::string& inner_name) {
+                for (const auto& function : functions) {
+                    const auto member =
+                        std::find_if(members.begin(), members.end(), [&](const auto& candidate) {
+                            return candidate.kind == ScriptMemberKind::function &&
+                                   candidate.name == function.name;
+                        });
+                    if (member == members.end())
+                        continue;
+                    const auto coroutine = semantic.is_coroutine(function);
+                    if (member->is_coroutine != coroutine) {
+                        member->is_coroutine = coroutine;
+                        changed = true;
+                    }
+                    script_symbols.set_coroutine(input.relative, inner_name, function.name,
+                                                 coroutine);
+                }
+            };
+            refine_members(input.members, input.script.functions, "");
+            const auto refine_inner = [&](const auto& self,
+                                          const std::vector<ast::ClassDeclaration>& classes,
+                                          const std::string& parent) -> void {
+                for (const auto& declaration : classes) {
+                    const auto qualified =
+                        parent.empty() ? declaration.name : parent + "." + declaration.name;
+                    const auto symbol = std::find_if(
+                        input.inner_classes.begin(), input.inner_classes.end(),
+                        [&](const auto& candidate) { return candidate.name == qualified; });
+                    if (symbol != input.inner_classes.end())
+                        refine_members(symbol->members, declaration.functions, qualified);
+                    self(self, declaration.classes, qualified);
+                }
+            };
+            refine_inner(refine_inner, input.script.classes, "");
+        }
+        if (!changed)
+            break;
+    }
     for (auto& input : inputs) {
-        DiagnosticBag diagnostics;
+        input.public_abi_hash = append_public_abi(input);
+        script_symbols.update_class_identity(input.relative,
+                                             "GDPPNative_" + input.native_class_stem + "_" +
+                                                 input.public_abi_hash.substr(0, 16),
+                                             to_snake_case(input.native_class_stem) + ".gd.hpp");
+    }
+
+    for (auto& input : inputs) {
+        DiagnosticBag diagnostics{options.compiler.frontend_limits.max_diagnostics};
         SemanticAnalyzer analyzer{diagnostics, target_api, input.semantic_base_type,
                                   &script_symbols, input.relative};
         const auto semantic = analyzer.analyze(input.script);
@@ -2028,7 +2225,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         const auto expected_class_name =
             "GDPPNative_" + input.native_class_stem + "_" + input.public_abi_hash.substr(0, 16);
         for (const auto& inner : input.inner_classes) {
-            script.inner_class_names.push_back(expected_class_name + "__" + inner.name);
+            script.inner_class_names.push_back(expected_class_name + "__" +
+                                               native_inner_suffix(inner.name));
         }
         const auto cached = old_manifest.find(input.relative);
         if (cached != old_manifest.end() &&
@@ -2061,7 +2259,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                 script_options.native_base_class =
                     "GDPPNative_" + input.native_class_stem + "_" +
                     input.public_abi_hash.substr(0, 16) + "__" +
-                    input.inner_classes[*input.local_inner_base].name;
+                    native_inner_suffix(input.inner_classes[*input.local_inner_base].name);
                 script_options.native_base_header.clear();
             }
             auto compilation = compiler.compile(input.relative, input.source, script_options);
