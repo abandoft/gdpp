@@ -76,6 +76,14 @@ godot::Dictionary result_dictionary(const CompileResult& result, const SourceFil
     optimization["constants_folded"] = static_cast<int64_t>(result.optimization.constants_folded);
     optimization["statements_removed"] =
         static_cast<int64_t>(result.optimization.statements_removed);
+    optimization["hir_branches_simplified"] =
+        static_cast<int64_t>(result.optimization.branches_simplified);
+    optimization["mir_branches_simplified"] =
+        static_cast<int64_t>(result.mir_optimization.branches_simplified);
+    optimization["mir_blocks_removed"] =
+        static_cast<int64_t>(result.mir_optimization.blocks_removed);
+    optimization["mir_instructions_removed"] =
+        static_cast<int64_t>(result.mir_optimization.instructions_removed);
     output["optimization"] = optimization;
     if (result.success) {
         output["class_name"] = godot::String{result.unit.script_class_name.c_str()};
