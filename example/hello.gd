@@ -4,6 +4,26 @@ class_name HelloAot
 enum MovementMode { IDLE, WALK = 4, RUN = WALK * 2 }
 enum { DEFAULT_LIVES = 3, MAX_LIVES = DEFAULT_LIVES + 2 }
 
+const LITERAL_HEXADECIMAL = 0x7fff_ffff
+const LITERAL_BINARY = 0b1010_0101
+const LITERAL_DECIMAL = 12_345_678
+const LITERAL_MINIMUM = -9_223_372_036_854_775_808
+const LITERAL_FLOAT = 1_2.5_0e+1_0
+const LITERAL_MAXIMUM = 1.7976931348623157e308
+const LITERAL_ROUNDED_OVERFLOW = 1.7976931348623158e308
+const LITERAL_OVERFLOW = 1e400
+const LITERAL_UNDERFLOW = 1e-400
+const LITERAL_SUBNORMAL_ZERO = 1e-309
+const LITERAL_NOT_A_NUMBER = 0e400
+const LITERAL_ESCAPED = "\a\b\f\v\u0041\U01F600\uD83D\uDE00"
+const LITERAL_NUL = "A�B"
+const LITERAL_CONTINUED = "left\
+right"
+const LITERAL_RAW = r"\n\"quoted\"\\path"
+const LITERAL_TRIPLE = """first
+"quoted"
+last"""
+
 signal greeted(name: String)
 @export var greeting: String = "Hello"
 @export_range(0.0, 100.0, 0.5, "or_greater") var movement_speed: float = 10.0
@@ -109,6 +129,7 @@ func _on_ready() -> void:
         and accessor_score == 100
         and validate_accessor() == true
         and validate_inheritance() == true
+        and validate_latest_literals() == true
         and assertion_evaluation_count() == 0
     ):
         print("GDPP_EXPORTED_PROPERTIES_OK")
@@ -127,6 +148,45 @@ func _publish_web_smoke_status(status: String) -> void:
     JavaScriptBridge.eval(
         "document.documentElement.dataset.gdppStatus = '%s';" % status
     )
+
+
+func validate_latest_literals() -> bool:
+    return (
+        LITERAL_HEXADECIMAL == 2147483647
+        and LITERAL_BINARY == 165
+        and LITERAL_DECIMAL == 12345678
+        and LITERAL_MINIMUM == -9223372036854775808
+        and LITERAL_FLOAT == 125000000000.0
+        and LITERAL_MAXIMUM > 1e308
+        and not is_inf(LITERAL_MAXIMUM)
+        and is_inf(LITERAL_ROUNDED_OVERFLOW)
+        and is_inf(LITERAL_OVERFLOW)
+        and LITERAL_UNDERFLOW == 0.0
+        and LITERAL_SUBNORMAL_ZERO == 0.0
+        and is_nan(LITERAL_NOT_A_NUMBER)
+        and LITERAL_ESCAPED.length() == 7
+        and LITERAL_ESCAPED.unicode_at(0) == 7
+        and LITERAL_ESCAPED.unicode_at(4) == 65
+        and LITERAL_ESCAPED.unicode_at(5) == 0x1f600
+        and LITERAL_ESCAPED.unicode_at(6) == 0x1f600
+        and LITERAL_NUL.length() == 3
+        and LITERAL_NUL.unicode_at(0) == 65
+        and LITERAL_NUL.unicode_at(1) == 0xfffd
+        and LITERAL_NUL.unicode_at(2) == 66
+        and LITERAL_CONTINUED == "leftright"
+        and LITERAL_RAW == "\\n\\\"quoted\\\"\\\\path"
+        and LITERAL_TRIPLE == "first\n\"quoted\"\nlast"
+        and 计算标识符(6) == 21
+    )
+
+
+func 计算标识符(值: int) -> int:
+    var template := 1
+    var _gdpp_id_74656d706c617465 := 2
+    var π := 3
+    var é := 4
+    var é := 5
+    return template + _gdpp_id_74656d706c617465 + π + é + é + 值
 
 
 func _process(delta: float) -> void:

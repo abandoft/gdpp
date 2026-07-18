@@ -50,3 +50,16 @@ func required_init_answer() -> int:
     var answer := created.answer()
     created.free()
     return answer
+
+
+func overridable_answer() -> int:
+    await override_resumed
+    return 42
+
+
+func await_overridden_answer() -> int:
+    return await overridable_answer()
+
+
+func await_overridden_through_base(value: InheritanceBase) -> int:
+    return await value.overridable_answer()

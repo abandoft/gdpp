@@ -482,6 +482,7 @@ add_custom_command(
         gdpp
         gdpp_packaged_sdk
         "${CMAKE_SOURCE_DIR}/example/autoload_state.gd"
+        "${CMAKE_SOURCE_DIR}/example/await_expression_case.gd"
         "${CMAKE_SOURCE_DIR}/example/cross_ref_a.gd"
         "${CMAKE_SOURCE_DIR}/example/cross_ref_b.gd"
         "${CMAKE_SOURCE_DIR}/example/hello.gd"
