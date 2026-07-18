@@ -376,6 +376,7 @@ set(GDPP_SEMANTIC_SOURCES
     src/semantic/analyzer.cpp
     src/semantic/godot_api.cpp
     src/semantic/intrinsics.cpp
+    src/semantic/iteration.cpp
     src/semantic/script_symbols.cpp
     src/semantic/type.cpp
 )
