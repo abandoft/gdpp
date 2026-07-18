@@ -29,12 +29,28 @@ enum class SymbolKind {
     enum_value
 };
 
+enum class SymbolStorage { class_member, function_local };
+
 struct Symbol {
     SymbolKind kind{SymbolKind::local};
     std::string name;
     Type type;
     SourceSpan declaration{};
     bool read_only{false};
+    std::optional<std::string> constant_string_value;
+    SymbolStorage storage{SymbolStorage::class_member};
+
+    Symbol() = default;
+    Symbol(SymbolKind symbol_kind, std::string symbol_name, Type symbol_type,
+           SourceSpan declaration_span, bool symbol_read_only,
+           std::optional<std::string> string_value = std::nullopt,
+           SymbolStorage symbol_storage = SymbolStorage::class_member)
+        : kind(symbol_kind), name(std::move(symbol_name)), type(std::move(symbol_type)),
+          declaration(declaration_span), read_only(symbol_read_only),
+          constant_string_value(std::move(string_value)),
+          storage(symbol_kind == SymbolKind::local || symbol_kind == SymbolKind::parameter
+                      ? SymbolStorage::function_local
+                      : symbol_storage) {}
 };
 
 enum class ApiResolutionKind {
@@ -49,6 +65,7 @@ enum class ApiResolutionKind {
     script_type_reference,
     script_autoload,
     script_constant,
+    local_constant,
     script_enum_type,
     script_resource,
     script_constructor,
@@ -97,9 +114,13 @@ class SemanticModel final {
     [[nodiscard]] Type type_of(const ast::VariableDeclaration& declaration) const;
     [[nodiscard]] Type property_type_of(const ast::VariableDeclaration& declaration) const;
     [[nodiscard]] Type type_of(const ast::Statement& statement) const;
+    [[nodiscard]] Type type_of(const ast::MatchPattern& pattern) const;
     [[nodiscard]] Type type_of(const ast::Parameter& parameter) const;
     [[nodiscard]] Type return_type_of(const ast::FunctionDeclaration& function) const;
     [[nodiscard]] Type return_type_of(const ast::LambdaExpression& function) const;
+    [[nodiscard]] bool is_coroutine(const ast::FunctionDeclaration& function) const noexcept;
+    [[nodiscard]] bool is_coroutine(const ast::LambdaExpression& function) const noexcept;
+    [[nodiscard]] bool is_coroutine_call(const ast::Expression& expression) const noexcept;
     [[nodiscard]] bool owner_bound(const ast::LambdaExpression& function) const noexcept;
     [[nodiscard]] std::int64_t value_of(const ast::EnumEntry& entry) const;
     [[nodiscard]] const Symbol* symbol_of(const ast::Expression& expression) const noexcept;
@@ -119,10 +140,14 @@ class SemanticModel final {
     std::unordered_map<const ast::VariableDeclaration*, Type> variable_types_;
     std::unordered_map<const ast::VariableDeclaration*, Type> property_types_;
     std::unordered_map<const ast::Statement*, Type> local_types_;
+    std::unordered_map<const ast::MatchPattern*, Type> match_pattern_types_;
     std::unordered_map<const ast::Parameter*, Type> parameter_types_;
     std::unordered_map<const ast::FunctionDeclaration*, Type> function_return_types_;
     std::unordered_map<const ast::LambdaExpression*, Type> lambda_return_types_;
     std::unordered_set<const ast::LambdaExpression*> owner_bound_lambdas_;
+    std::unordered_set<const ast::FunctionDeclaration*> coroutine_functions_;
+    std::unordered_set<const ast::LambdaExpression*> coroutine_lambdas_;
+    std::unordered_set<const ast::Expression*> coroutine_calls_;
     std::unordered_map<const ast::EnumEntry*, std::int64_t> enum_values_;
     std::unordered_map<const ast::Expression*, Symbol> referenced_symbols_;
     std::unordered_map<const ast::Expression*, ApiResolution> api_resolutions_;
@@ -162,7 +187,11 @@ class SemanticAnalyzer final {
     [[nodiscard]] FlowResult analyze_statements(const std::vector<ast::Statement>& statements);
     [[nodiscard]] FlowResult analyze_statement(const ast::Statement& statement);
     [[nodiscard]] Type analyze_expression(const ast::Expression& expression);
+    [[nodiscard]] bool is_constant_match_expression(const ast::Expression& expression) const;
+    [[nodiscard]] std::optional<std::string>
+    constant_string_expression(const ast::Expression& expression) const;
     [[nodiscard]] bool is_match_value_pattern(const ast::Expression& expression) const;
+    void analyze_match_pattern(const ast::MatchPattern& pattern, const Type& matched_type);
     [[nodiscard]] bool is_assignment_target(const ast::Expression& expression) const noexcept;
     [[nodiscard]] Type type_from_name(const std::string& name, SourceSpan span = {});
     [[nodiscard]] Type container_element_type(const Type& container, SourceSpan span = {});
@@ -174,6 +203,13 @@ class SemanticAnalyzer final {
                               SourceSpan span);
     [[nodiscard]] const ScriptInnerClassSymbol*
     find_inner_class(const std::string& name) const noexcept;
+    [[nodiscard]] const ScriptInnerClassSymbol*
+    inner_base_of(const ScriptInnerClassSymbol& owner) const noexcept;
+    [[nodiscard]] const ScriptInnerClassSymbol*
+    find_nested_inner_class(const ScriptInnerClassSymbol& owner,
+                            const std::string& name) const noexcept;
+    [[nodiscard]] const ScriptMemberSymbol*
+    find_inner_member(const ScriptInnerClassSymbol& owner, const std::string& name) const noexcept;
     void record_script_dependency(const ScriptClassSymbol* dependency);
 
     DiagnosticBag& diagnostics_;
@@ -193,15 +229,19 @@ class SemanticAnalyzer final {
     std::unordered_map<std::string, const ast::FunctionDeclaration*> functions_;
     std::unordered_map<std::string, ScriptInnerClassSymbol> local_inner_classes_;
     const ScriptInnerClassSymbol* current_inner_class_{nullptr};
-    std::unordered_set<const ast::Statement*> allowed_await_statements_;
+    const ScriptInnerClassSymbol* current_inner_base_{nullptr};
     bool allow_dynamic_await_return_{false};
+    bool await_expression_allowed_{true};
     bool current_function_static_{false};
+    bool current_callable_suspends_{false};
     bool in_function_{false};
     bool script_tool_{false};
     Type expected_return_{TypeKind::void_type, "void"};
     std::string current_function_name_;
     std::string base_type_{"Node"};
     std::size_t loop_depth_{0};
+    std::size_t await_operand_depth_{0};
+    const ast::Expression* discarded_expression_{nullptr};
 };
 
 } // namespace gdpp

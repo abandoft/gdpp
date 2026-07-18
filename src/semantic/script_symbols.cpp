@@ -40,6 +40,49 @@ void ScriptSymbolTable::add_resource_alias(std::string reference, std::string pr
     resource_aliases_.insert_or_assign(std::move(reference), std::move(project_path));
 }
 
+bool ScriptSymbolTable::set_coroutine(const std::string& path, const std::string& inner_class,
+                                      const std::string& method, const bool coroutine) {
+    const auto found = paths_.find(path);
+    if (found == paths_.end())
+        return false;
+    auto& owner = classes_[found->second];
+    auto* members = &owner.members;
+    if (!inner_class.empty()) {
+        const auto inner = std::find_if(owner.inner_classes.begin(), owner.inner_classes.end(),
+                                        [&](const auto& item) { return item.name == inner_class; });
+        if (inner == owner.inner_classes.end())
+            return false;
+        members = &inner->members;
+    }
+    const auto member = std::find_if(members->begin(), members->end(), [&](const auto& item) {
+        return item.kind == ScriptMemberKind::function && item.name == method;
+    });
+    if (member == members->end() || member->is_coroutine == coroutine)
+        return false;
+    member->is_coroutine = coroutine;
+    return true;
+}
+
+void ScriptSymbolTable::update_class_identity(const std::string& path,
+                                              std::string native_class_name,
+                                              std::string header_file_name) {
+    const auto found = paths_.find(path);
+    if (found == paths_.end())
+        return;
+    auto& owner = classes_[found->second];
+    const auto previous_native_name = owner.native_class_name;
+    native_classes_.erase(owner.native_class_name);
+    owner.native_class_name = std::move(native_class_name);
+    owner.header_file_name = std::move(header_file_name);
+    native_classes_.insert_or_assign(owner.native_class_name, found->second);
+    for (auto& inner : owner.inner_classes) {
+        if (inner.native_class_name.rfind(previous_native_name, 0) == 0) {
+            inner.native_class_name = owner.native_class_name +
+                                      inner.native_class_name.substr(previous_native_name.size());
+        }
+    }
+}
+
 const ScriptClassSymbol* ScriptSymbolTable::find_path(const std::string& path) const noexcept {
     const auto found = paths_.find(path);
     return found == paths_.end() ? nullptr : &classes_[found->second];
@@ -154,11 +197,26 @@ const ScriptEnumSymbol* ScriptSymbolTable::find_enum(const ScriptClassSymbol& ow
 const ScriptInnerClassSymbol*
 ScriptSymbolTable::find_inner(const ScriptClassSymbol& owner,
                               const std::string& name) const noexcept {
+    const auto exact = std::find_if(owner.inner_classes.begin(), owner.inner_classes.end(),
+                                    [&](const auto& inner) { return inner.name == name; });
+    if (exact != owner.inner_classes.end())
+        return &*exact;
+
     const auto separator = name.rfind('.');
-    const auto local_name = separator == std::string::npos ? name : name.substr(separator + 1);
-    const auto found = std::find_if(owner.inner_classes.begin(), owner.inner_classes.end(),
-                                    [&](const auto& inner) { return inner.name == local_name; });
-    return found == owner.inner_classes.end() ? nullptr : &*found;
+    const auto leaf = separator == std::string::npos ? name : name.substr(separator + 1);
+    const ScriptInnerClassSymbol* unique = nullptr;
+    for (const auto& inner : owner.inner_classes) {
+        const auto inner_separator = inner.name.rfind('.');
+        const auto inner_leaf = inner_separator == std::string::npos
+                                    ? inner.name
+                                    : inner.name.substr(inner_separator + 1);
+        if (inner_leaf != leaf)
+            continue;
+        if (unique)
+            return nullptr;
+        unique = &inner;
+    }
+    return unique;
 }
 
 const ScriptMemberSymbol*
@@ -219,7 +277,8 @@ bool ScriptSymbolTable::requires_dynamic_dispatch(const ScriptClassSymbol& owner
     const auto same_native_abi = [](const ScriptMemberSymbol& left,
                                     const ScriptMemberSymbol& right) {
         return left.type == right.type && left.parameters == right.parameters &&
-               left.default_parameters == right.default_parameters;
+               left.default_parameters == right.default_parameters &&
+               left.is_coroutine == right.is_coroutine;
     };
     for (const auto& candidate : classes_) {
         if (candidate.path == owner.path)
@@ -241,6 +300,37 @@ bool ScriptSymbolTable::requires_dynamic_dispatch(const ScriptClassSymbol& owner
                                                       !member.is_static && member.name == method;
                                            });
         if (override != candidate.members.end() && !same_native_abi(*contract, *override))
+            return true;
+    }
+    return false;
+}
+
+bool ScriptSymbolTable::may_dispatch_coroutine(const ScriptClassSymbol& owner,
+                                               const std::string& method) const noexcept {
+    if (const auto* contract = find_member(owner, method);
+        contract && contract->kind == ScriptMemberKind::function && contract->is_coroutine) {
+        return true;
+    }
+    for (const auto& candidate : classes_) {
+        if (candidate.path == owner.path)
+            continue;
+        bool descendant = false;
+        const ScriptClassSymbol* base = base_of(candidate);
+        for (std::size_t depth = 0; base && depth <= classes_.size(); ++depth) {
+            if (base->path == owner.path) {
+                descendant = true;
+                break;
+            }
+            base = base_of(*base);
+        }
+        if (!descendant)
+            continue;
+        const auto override = std::find_if(candidate.members.begin(), candidate.members.end(),
+                                           [&](const auto& member) {
+                                               return member.kind == ScriptMemberKind::function &&
+                                                      !member.is_static && member.name == method;
+                                           });
+        if (override != candidate.members.end() && override->is_coroutine)
             return true;
     }
     return false;

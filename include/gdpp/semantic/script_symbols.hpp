@@ -31,6 +31,7 @@ struct ScriptMemberSymbol {
     bool is_vararg{false};
     bool read_only{false};
     std::int64_t constant_value{0};
+    bool is_coroutine{false};
 };
 
 struct ScriptEnumEntrySymbol {
@@ -48,6 +49,7 @@ struct ScriptInnerClassSymbol {
     std::string name;
     std::string native_class_name;
     std::string godot_base_type{"RefCounted"};
+    std::string base_class_name;
     std::vector<ScriptMemberSymbol> members;
     std::vector<ScriptEnumSymbol> enums;
 };
@@ -82,6 +84,10 @@ class ScriptSymbolTable final {
     void add(ScriptClassSymbol symbol);
     void add_external(ExternalClassSymbol symbol);
     void add_resource_alias(std::string reference, std::string project_path);
+    bool set_coroutine(const std::string& path, const std::string& inner_class,
+                       const std::string& method, bool coroutine);
+    void update_class_identity(const std::string& path, std::string native_class_name,
+                               std::string header_file_name);
 
     [[nodiscard]] const ScriptClassSymbol* find_path(const std::string& path) const noexcept;
     [[nodiscard]] const ScriptClassSymbol*
@@ -123,6 +129,8 @@ class ScriptSymbolTable final {
     // dynamic method dispatcher when the receiver is typed as the base script.
     [[nodiscard]] bool requires_dynamic_dispatch(const ScriptClassSymbol& owner,
                                                  const std::string& method) const noexcept;
+    [[nodiscard]] bool may_dispatch_coroutine(const ScriptClassSymbol& owner,
+                                              const std::string& method) const noexcept;
 
   private:
     std::vector<ScriptClassSymbol> classes_;

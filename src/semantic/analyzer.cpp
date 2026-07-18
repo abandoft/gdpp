@@ -40,8 +40,28 @@ bool has_property_annotation(const ast::VariableDeclaration& variable) {
                        });
 }
 
+const ast::Annotation* property_annotation_of(const ast::VariableDeclaration& variable) {
+    const auto found = std::find_if(
+        variable.annotations.begin(), variable.annotations.end(), [](const auto& annotation) {
+            return annotation.name != "onready" && annotation.name != "warning_ignore" &&
+                   annotation.name != "export_group" && annotation.name != "export_subgroup" &&
+                   annotation.name != "export_category";
+        });
+    return found == variable.annotations.end() ? nullptr : &*found;
+}
+
+bool match_pattern_contains_binding(const ast::MatchPattern& pattern) {
+    if (pattern.kind() == ast::MatchPatternKind::binding)
+        return true;
+    return std::any_of(pattern.elements.begin(), pattern.elements.end(), [](const auto& element) {
+        return match_pattern_contains_binding(*element);
+    });
+}
+
 std::optional<Type> implied_export_property_type(const ast::VariableDeclaration& variable) {
     for (const auto& annotation : variable.annotations) {
+        if (annotation.name == "export_enum")
+            return Type{TypeKind::integer, "int"};
         if (annotation.name == "export_color_no_alpha")
             return Type{TypeKind::builtin, "Color"};
         if (annotation.name == "export_node_path")
@@ -53,7 +73,8 @@ std::optional<Type> implied_export_property_type(const ast::VariableDeclaration&
             annotation.name == "export_flags_2d_navigation" ||
             annotation.name == "export_flags_3d_render" ||
             annotation.name == "export_flags_3d_physics" ||
-            annotation.name == "export_flags_3d_navigation") {
+            annotation.name == "export_flags_3d_navigation" ||
+            annotation.name == "export_flags_avoidance") {
             return Type{TypeKind::integer, "int"};
         }
         if (annotation.name == "export_file" || annotation.name == "export_file_path" ||
@@ -66,37 +87,65 @@ std::optional<Type> implied_export_property_type(const ast::VariableDeclaration&
     return std::nullopt;
 }
 
-bool contains_value_return(const std::vector<ast::Statement>& statements) {
-    for (const auto& statement : statements) {
-        if (statement.kind() == ast::StatementKind::return_statement && statement.expression())
-            return true;
-        if (contains_value_return(statement.body()) || contains_value_return(statement.else_body()))
-            return true;
-        for (const auto& branch : statement.match_branches()) {
-            if (contains_value_return(branch.body))
-                return true;
+Type export_property_type(const ast::VariableDeclaration& variable, const Type& declared_type,
+                          const Type& initializer_type) {
+    if (!variable.type && !variable.infer_type) {
+        if (const auto implied = implied_export_property_type(variable))
+            return *implied;
+        if (const auto* annotation = property_annotation_of(variable);
+            annotation && annotation->name != "export_storage" && variable.initializer) {
+            return initializer_type;
         }
+    }
+    if (declared_type.kind == TypeKind::variant && variable.initializer) {
+        if (const auto* annotation = property_annotation_of(variable);
+            annotation && annotation->name == "export_enum") {
+            return initializer_type;
+        }
+    }
+    return declared_type;
+}
+
+Type exported_value_type(const Type& type) {
+    if (type.is_packed_array())
+        return packed_array_element_type(type);
+    constexpr std::string_view prefix{"Array["};
+    if (type.kind == TypeKind::array && type.name.size() > prefix.size() &&
+        type.name.compare(0, prefix.size(), prefix) == 0 && type.name.back() == ']') {
+        return type_from_annotation(
+            type.name.substr(prefix.size(), type.name.size() - prefix.size() - 1));
+    }
+    return type;
+}
+
+bool expression_contains_await(const ast::Expression& expression) {
+    if (expression.kind() == ast::ExpressionKind::await_expression)
+        return true;
+    for (std::size_t index = 0; index < expression.operand_count(); ++index) {
+        if (expression_contains_await(*expression.operand(index)))
+            return true;
     }
     return false;
 }
 
-void collect_structured_awaits(const std::vector<ast::Statement>& statements,
-                               std::unordered_set<const ast::Statement*>& result) {
+bool contains_await_syntax(const std::vector<ast::Statement>& statements) {
     for (const auto& statement : statements) {
-        if (statement.kind() == ast::StatementKind::await_statement ||
-            statement.kind() == ast::StatementKind::await_variable) {
-            result.insert(&statement);
-            continue;
+        if ((statement.expression() && expression_contains_await(*statement.expression())) ||
+            (statement.condition() && expression_contains_await(*statement.condition()))) {
+            return true;
         }
-        if (statement.kind() == ast::StatementKind::if_statement ||
-            statement.kind() == ast::StatementKind::while_statement ||
-            statement.kind() == ast::StatementKind::for_statement) {
-            collect_structured_awaits(statement.body(), result);
-            collect_structured_awaits(statement.else_body(), result);
+        if (contains_await_syntax(statement.body()) ||
+            contains_await_syntax(statement.else_body())) {
+            return true;
         }
-        for (const auto& branch : statement.match_branches())
-            collect_structured_awaits(branch.body, result);
+        for (const auto& branch : statement.match_branches()) {
+            if ((branch.guard && expression_contains_await(*branch.guard)) ||
+                contains_await_syntax(branch.body)) {
+                return true;
+            }
+        }
     }
+    return false;
 }
 
 struct ProjectEnumLookup {
@@ -188,6 +237,11 @@ Type SemanticModel::type_of(const ast::Statement& statement) const {
     return found == local_types_.end() ? unknown_type : found->second;
 }
 
+Type SemanticModel::type_of(const ast::MatchPattern& pattern) const {
+    const auto found = match_pattern_types_.find(&pattern);
+    return found == match_pattern_types_.end() ? unknown_type : found->second;
+}
+
 Type SemanticModel::type_of(const ast::Parameter& parameter) const {
     const auto found = parameter_types_.find(&parameter);
     return found == parameter_types_.end() ? unknown_type : found->second;
@@ -201,6 +255,18 @@ Type SemanticModel::return_type_of(const ast::FunctionDeclaration& function) con
 Type SemanticModel::return_type_of(const ast::LambdaExpression& function) const {
     const auto found = lambda_return_types_.find(&function);
     return found == lambda_return_types_.end() ? unknown_type : found->second;
+}
+
+bool SemanticModel::is_coroutine(const ast::FunctionDeclaration& function) const noexcept {
+    return coroutine_functions_.find(&function) != coroutine_functions_.end();
+}
+
+bool SemanticModel::is_coroutine(const ast::LambdaExpression& function) const noexcept {
+    return coroutine_lambdas_.find(&function) != coroutine_lambdas_.end();
+}
+
+bool SemanticModel::is_coroutine_call(const ast::Expression& expression) const noexcept {
+    return coroutine_calls_.find(&expression) != coroutine_calls_.end();
 }
 
 bool SemanticModel::owner_bound(const ast::LambdaExpression& function) const noexcept {
@@ -336,14 +402,84 @@ void SemanticAnalyzer::validate_script_call(const ScriptMemberSymbol& member,
 
 const ScriptInnerClassSymbol*
 SemanticAnalyzer::find_inner_class(const std::string& name) const noexcept {
-    const auto separator = name.rfind('.');
-    const auto local_name = separator == std::string::npos ? name : name.substr(separator + 1);
-    if (const auto found = local_inner_classes_.find(local_name);
+    if (const auto found = local_inner_classes_.find(name); found != local_inner_classes_.end()) {
+        return &found->second;
+    }
+    if (current_inner_class_) {
+        if (const auto* nested = find_nested_inner_class(*current_inner_class_, name))
+            return nested;
+        const auto separator = current_inner_class_->name.rfind('.');
+        if (separator != std::string::npos) {
+            const auto lexical = current_inner_class_->name.substr(0, separator + 1) + name;
+            if (const auto found = local_inner_classes_.find(lexical);
+                found != local_inner_classes_.end()) {
+                return &found->second;
+            }
+        }
+    }
+    const ScriptInnerClassSymbol* unique = nullptr;
+    for (const auto& [qualified, inner] : local_inner_classes_) {
+        const auto separator = qualified.rfind('.');
+        const auto leaf =
+            separator == std::string::npos ? qualified : qualified.substr(separator + 1);
+        if (leaf != name)
+            continue;
+        if (unique)
+            return nullptr;
+        unique = &inner;
+    }
+    if (unique)
+        return unique;
+    return script_symbols_ && current_script_ ? script_symbols_->find_inner(*current_script_, name)
+                                              : nullptr;
+}
+
+const ScriptInnerClassSymbol*
+SemanticAnalyzer::inner_base_of(const ScriptInnerClassSymbol& owner) const noexcept {
+    if (owner.base_class_name.empty())
+        return nullptr;
+    if (const auto found = local_inner_classes_.find(owner.base_class_name);
         found != local_inner_classes_.end()) {
         return &found->second;
     }
-    return script_symbols_ && current_script_ ? script_symbols_->find_inner(*current_script_, name)
-                                              : nullptr;
+    return script_symbols_ && current_script_
+               ? script_symbols_->find_inner(*current_script_, owner.base_class_name)
+               : nullptr;
+}
+
+const ScriptInnerClassSymbol*
+SemanticAnalyzer::find_nested_inner_class(const ScriptInnerClassSymbol& owner,
+                                          const std::string& name) const noexcept {
+    const ScriptInnerClassSymbol* current = &owner;
+    std::unordered_set<const ScriptInnerClassSymbol*> visited;
+    while (current && visited.insert(current).second) {
+        const auto qualified = current->name + "." + name;
+        if (const auto found = local_inner_classes_.find(qualified);
+            found != local_inner_classes_.end()) {
+            return &found->second;
+        }
+        if (script_symbols_ && current_script_) {
+            if (const auto* found = script_symbols_->find_inner(*current_script_, qualified))
+                return found;
+        }
+        current = inner_base_of(*current);
+    }
+    return nullptr;
+}
+
+const ScriptMemberSymbol*
+SemanticAnalyzer::find_inner_member(const ScriptInnerClassSymbol& owner,
+                                    const std::string& name) const noexcept {
+    const ScriptInnerClassSymbol* current = &owner;
+    std::unordered_set<const ScriptInnerClassSymbol*> visited;
+    while (current && visited.insert(current).second) {
+        const auto found = std::find_if(current->members.begin(), current->members.end(),
+                                        [&](const auto& member) { return member.name == name; });
+        if (found != current->members.end())
+            return &*found;
+        current = inner_base_of(*current);
+    }
+    return nullptr;
 }
 
 void SemanticAnalyzer::record_script_dependency(const ScriptClassSymbol* dependency) {
@@ -368,6 +504,8 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
     }
     if (api_.has_global_enum(name))
         return {TypeKind::enumeration, name};
+    if (api_.has_class_enum(base_type_, name))
+        return {TypeKind::enumeration, base_type_ + "." + name};
     if (const auto separator = name.rfind('.');
         separator != std::string::npos &&
         api_.has_class_enum(name.substr(0, separator), name.substr(separator + 1))) {
@@ -456,17 +594,20 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             break;
         }
         if (expression.value() == "super") {
-            const auto* base_script = script_symbols_ && current_script_
+            const auto* base_inner = current_inner_base_;
+            const auto* base_script = !base_inner && script_symbols_ && current_script_
                                           ? script_symbols_->base_of(*current_script_)
                                           : nullptr;
-            result = base_script ? Type{TypeKind::object, base_script->script_name}
-                                 : Type{TypeKind::object, base_type_};
+            result = base_inner    ? Type{TypeKind::object, base_inner->name}
+                     : base_script ? Type{TypeKind::object, base_script->script_name}
+                                   : Type{TypeKind::object, base_type_};
             record_script_dependency(base_script);
             model_.api_resolutions_.emplace(
-                &expression,
-                ApiResolution{ApiResolutionKind::script_super,
-                              base_script ? base_script->native_class_name : "godot::" + base_type_,
-                              "", "", result, 0, 0, false, true});
+                &expression, ApiResolution{ApiResolutionKind::script_super,
+                                           base_inner    ? base_inner->name
+                                           : base_script ? base_script->native_class_name
+                                                         : "godot::" + base_type_,
+                                           "", "", result, 0, 0, false, true});
             break;
         }
         if (const auto* symbol = resolve(expression.value())) {
@@ -479,13 +620,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     found != functions_.end()) {
                     is_static = found->second->is_static;
                 } else if (current_inner_class_) {
-                    const auto inner_member =
-                        std::find_if(current_inner_class_->members.begin(),
-                                     current_inner_class_->members.end(), [&](const auto& member) {
-                                         return member.kind == ScriptMemberKind::function &&
-                                                member.name == expression.value();
-                                     });
-                    is_static = inner_member != current_inner_class_->members.end() &&
+                    const auto* inner_member =
+                        find_inner_member(*current_inner_class_, expression.value());
+                    is_static = inner_member && inner_member->kind == ScriptMemberKind::function &&
                                 inner_member->is_static;
                 } else if (script_symbols_ && current_script_) {
                     const auto* member =
@@ -500,8 +637,10 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             }
             if (symbol->kind == SymbolKind::constant) {
                 model_.api_resolutions_.emplace(
-                    &expression, ApiResolution{ApiResolutionKind::script_constant, "", "", "",
-                                               result, 0, 0, false, true});
+                    &expression, ApiResolution{symbol->storage == SymbolStorage::function_local
+                                                   ? ApiResolutionKind::local_constant
+                                                   : ApiResolutionKind::script_constant,
+                                               "", "", "", result, 0, 0, false, true});
             }
             if (symbol->kind == SymbolKind::enum_value) {
                 model_.api_resolutions_.emplace(&expression,
@@ -707,10 +846,46 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         }
         break;
     }
+    case ast::ExpressionKind::await_expression: {
+        ++await_operand_depth_;
+        const auto awaited = analyze_expression(*expression.operand(0));
+        --await_operand_depth_;
+        const bool coroutine_call = model_.is_coroutine_call(*expression.operand(0));
+        const bool can_suspend = coroutine_call || awaited.is_dynamic() ||
+                                 (awaited.kind == TypeKind::builtin && awaited.name == "Signal");
+        current_callable_suspends_ = current_callable_suspends_ || can_suspend;
+        if (!in_function_) {
+            diagnostics_.error("GDS4090", "await expressions are only valid inside functions",
+                               expression.span);
+        } else if (!await_expression_allowed_) {
+            diagnostics_.error(
+                "GDS4090",
+                "await in this expression context requires a dedicated coroutine control-flow "
+                "lowering that is not implemented yet",
+                expression.span);
+        }
+        if (can_suspend && current_function_name_ == "_init") {
+            diagnostics_.error("GDS4097", "_init cannot suspend on a signal", expression.span);
+        }
+        if (can_suspend && current_function_static_) {
+            diagnostics_.error("GDS4091", "static functions cannot suspend on a signal yet",
+                               expression.span);
+        }
+        if (can_suspend && expected_return_.kind != TypeKind::void_type &&
+            !allow_dynamic_await_return_) {
+            diagnostics_.error("GDS4092",
+                               "an AOT function containing await must currently return void",
+                               expression.span);
+        }
+        if (!can_suspend)
+            diagnostics_.warning("GDS4093", "await operand does not suspend", expression.span);
+        result = can_suspend ? variant_type : awaited;
+        break;
+    }
     case ast::ExpressionKind::binary: {
+        const auto& operation = expression.value();
         const auto left = analyze_expression(*expression.operand(0));
         const auto right = analyze_expression(*expression.operand(1));
-        const auto& operation = expression.value();
         if (operation == "is" || operation == "is not") {
             const auto* target = model_.api_resolution_of(*expression.operand(1));
             const bool valid_target = target &&
@@ -812,6 +987,16 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
     }
     case ast::ExpressionKind::call: {
         const auto& callee = *expression.operand(0);
+        const auto mark_coroutine_call = [&](const bool coroutine) {
+            if (!coroutine)
+                return;
+            model_.coroutine_calls_.insert(&expression);
+            if (await_operand_depth_ == 0 && discarded_expression_ != &expression) {
+                diagnostics_.error("GDS4132",
+                                   "coroutine results must be awaited or explicitly discarded",
+                                   expression.span);
+            }
+        };
         std::vector<Type> argument_types;
         argument_types.reserve(expression.operand_count() - 1);
         for (std::size_t index = 1; index < expression.operand_count(); ++index)
@@ -942,20 +1127,19 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         if (language_intrinsic && (language_intrinsic->kind == IntrinsicKind::preload ||
                                    language_intrinsic->kind == IntrinsicKind::load)) {
             const bool is_preload = language_intrinsic->kind == IntrinsicKind::preload;
-            const bool literal_path =
-                argument_count == 1 &&
-                expression.operand(1)->kind() == ast::ExpressionKind::literal &&
-                expression.operand(1)->literal_kind() == ast::LiteralKind::string;
-            if (argument_count != 1 || (is_preload && !literal_path)) {
+            const auto constant_path = argument_count == 1
+                                           ? constant_string_expression(*expression.operand(1))
+                                           : std::optional<std::string>{};
+            if (argument_count != 1 || (is_preload && !constant_path)) {
                 diagnostics_.error("GDS4060",
                                    callee.value() +
                                        (is_preload
-                                            ? " requires exactly one literal project resource path"
+                                            ? " requires exactly one constant project resource path"
                                             : " requires exactly one resource path"),
                                    expression.span);
                 break;
             }
-            if (!literal_path) {
+            if (!constant_path) {
                 require_assignable({TypeKind::string, "String"}, argument_types.front(),
                                    expression.operand(1)->span, "load resource path");
                 result = variant_type;
@@ -976,7 +1160,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                                true};
             intrinsic_resolution.intrinsic = language_intrinsic->kind;
             model_.api_resolutions_.insert_or_assign(&callee, std::move(intrinsic_resolution));
-            const auto& resource_path = expression.operand(1)->value();
+            const auto& resource_path = *constant_path;
             const auto resolved_resource_path =
                 script_symbols_
                     ? script_symbols_->resolve_resource_path(current_script_path_, resource_path)
@@ -1023,17 +1207,21 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         }
         if (callee.kind() == ast::ExpressionKind::identifier) {
             if (callee.value() == "super") {
-                const auto* base_script = script_symbols_ && current_script_
+                const auto* base_inner = current_inner_base_;
+                const auto* base_script = !base_inner && script_symbols_ && current_script_
                                               ? script_symbols_->base_of(*current_script_)
                                               : nullptr;
                 const auto* member =
-                    base_script ? script_symbols_->find_member(*base_script, current_function_name_)
-                                : nullptr;
+                    base_inner ? find_inner_member(*base_inner, current_function_name_)
+                    : base_script
+                        ? script_symbols_->find_member(*base_script, current_function_name_)
+                        : nullptr;
                 const auto* method =
                     member ? nullptr : api_.find_method(base_type_, current_function_name_);
                 if (member && member->kind == ScriptMemberKind::function) {
                     validate_script_call(*member, argument_types, expression.span);
                     result = member->type;
+                    mark_coroutine_call(member->is_coroutine);
                 } else if (method) {
                     (void)resolve_method(method);
                 } else {
@@ -1043,20 +1231,22 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                        expression.span);
                     result = unknown_type;
                 }
-                model_.api_resolutions_[&callee] = ApiResolution{
-                    ApiResolutionKind::script_super,
-                    base_script ? base_script->native_class_name : "godot::" + base_type_,
-                    method ? method->owner : "",
-                    current_function_name_,
-                    result,
-                    member   ? static_cast<std::uint16_t>(member->required_arguments)
-                    : method ? method->required_arguments
-                             : std::uint16_t{0},
-                    member   ? static_cast<std::uint16_t>(member->parameters.size())
-                    : method ? method->maximum_arguments
-                             : std::uint16_t{0},
-                    method && method->is_vararg,
-                    true};
+                model_.api_resolutions_[&callee] =
+                    ApiResolution{ApiResolutionKind::script_super,
+                                  base_inner    ? base_inner->name
+                                  : base_script ? base_script->native_class_name
+                                                : "godot::" + base_type_,
+                                  method ? method->owner : "",
+                                  current_function_name_,
+                                  result,
+                                  member   ? static_cast<std::uint16_t>(member->required_arguments)
+                                  : method ? method->required_arguments
+                                           : std::uint16_t{0},
+                                  member   ? static_cast<std::uint16_t>(member->parameters.size())
+                                  : method ? method->maximum_arguments
+                                           : std::uint16_t{0},
+                                  method && method->is_vararg,
+                                  true};
             } else if (language_intrinsic && language_intrinsic->kind == IntrinsicKind::range) {
                 if (argument_count < language_intrinsic->minimum_arguments ||
                     argument_count > language_intrinsic->maximum_arguments) {
@@ -1086,6 +1276,16 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             } else if (const auto* symbol = resolve(callee.value())) {
                 result = symbol->type;
                 model_.referenced_symbols_.emplace(&callee, *symbol);
+                if (symbol->kind == SymbolKind::function) {
+                    const auto local = functions_.find(callee.value());
+                    const auto* member =
+                        script_symbols_ && current_script_
+                            ? script_symbols_->find_member(*current_script_, callee.value())
+                            : nullptr;
+                    mark_coroutine_call(member ? member->is_coroutine
+                                               : local != functions_.end() &&
+                                                     contains_await_syntax(local->second->body));
+                }
                 if (symbol->kind == SymbolKind::function && script_symbols_ && current_script_) {
                     if (const auto* member =
                             script_symbols_->find_member(*current_script_, callee.value())) {
@@ -1093,6 +1293,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         result = member->type;
                         if (script_symbols_->requires_dynamic_dispatch(*current_script_,
                                                                        callee.value())) {
+                            mark_coroutine_call(script_symbols_->may_dispatch_coroutine(
+                                *current_script_, callee.value()));
                             model_.api_resolutions_.emplace(
                                 &callee, ApiResolution{ApiResolutionKind::dynamic_method, "", "",
                                                        "", result, 0, 0, true, false});
@@ -1217,12 +1419,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                                "", "", result, 0, 0, false, true});
                     break;
                 }
-                const auto* member = [&]() -> const ScriptMemberSymbol* {
-                    const auto found = std::find_if(
-                        inner->members.begin(), inner->members.end(),
-                        [&](const auto& candidate) { return candidate.name == callee.value(); });
-                    return found == inner->members.end() ? nullptr : &*found;
-                }();
+                const auto* member = find_inner_member(*inner, callee.value());
                 if (!member || member->kind != ScriptMemberKind::function) {
                     diagnostics_.error("GDS4055",
                                        "internal class '" + inner->name + "' has no method '" +
@@ -1231,14 +1428,29 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     result = unknown_type;
                     break;
                 }
-                if (called_on_type != member->is_static) {
+                if (called_on_type && !member->is_static) {
                     diagnostics_.error("GDS4056",
-                                       "invalid static/instance call to internal class method '" +
-                                           callee.value() + "'",
+                                       "instance method '" + callee.value() +
+                                           "' cannot be called on an internal class type",
                                        expression.span);
+                } else if (!called_on_type && member->is_static) {
+                    diagnostics_.warning("GDS4130",
+                                         "static internal class method '" + callee.value() +
+                                             "' is called on an instance",
+                                         expression.span);
                 }
                 validate_script_call(*member, argument_types, expression.span);
                 result = member->type;
+                mark_coroutine_call(member->is_coroutine);
+                if (called_on_super) {
+                    model_.api_resolutions_.insert_or_assign(
+                        &callee,
+                        ApiResolution{ApiResolutionKind::script_super, object_resolution->owner, "",
+                                      callee.value(), result,
+                                      static_cast<std::uint16_t>(member->required_arguments),
+                                      static_cast<std::uint16_t>(member->parameters.size()),
+                                      member->is_vararg, true});
+                }
                 break;
             }
             const ScriptClassSymbol* script_owner = nullptr;
@@ -1342,13 +1554,19 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                            "' cannot be called on a script type",
                                        expression.span);
                 } else if (!called_on_type && member->is_static) {
-                    diagnostics_.error("GDS4057",
-                                       "static method '" + callee.value() +
-                                           "' must be called on its script type",
-                                       expression.span);
+                    diagnostics_.warning("GDS4130",
+                                         "static method '" + callee.value() +
+                                             "' is called on a script instance",
+                                         expression.span);
                 }
                 validate_script_call(*member, argument_types, expression.span);
                 result = member->type;
+                const bool dynamic_dispatch =
+                    !called_on_type && !called_on_super &&
+                    script_symbols_->requires_dynamic_dispatch(*script_owner, callee.value());
+                mark_coroutine_call(member->is_coroutine ||
+                                    (dynamic_dispatch && script_symbols_->may_dispatch_coroutine(
+                                                             *script_owner, callee.value())));
                 if (called_on_super) {
                     model_.api_resolutions_.emplace(
                         &callee,
@@ -1356,8 +1574,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                             ApiResolutionKind::script_super, object_resolution->owner, "", "",
                             result, static_cast<std::uint16_t>(member->required_arguments),
                             static_cast<std::uint16_t>(member->parameters.size()), false, true});
-                } else if (!called_on_type && script_symbols_->requires_dynamic_dispatch(
-                                                  *script_owner, callee.value())) {
+                } else if (dynamic_dispatch) {
                     model_.api_resolutions_.emplace(
                         &callee, ApiResolution{ApiResolutionKind::dynamic_method, "", "", "",
                                                result, 0, 0, true, false});
@@ -1460,6 +1677,12 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                    "instance method '" + callee.value() +
                                        "' cannot be called on a Godot type",
                                    expression.span);
+            }
+            if (method && !called_on_type && method->is_static) {
+                diagnostics_.warning("GDS4130",
+                                     "static method '" + callee.value() +
+                                         "' is called on a Godot value instance",
+                                     expression.span);
             }
             if (resolve_method(method)) {
                 if (called_on_super) {
@@ -1600,10 +1823,21 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             const bool accessed_on_type =
                 object_resolution &&
                 object_resolution->kind == ApiResolutionKind::inner_type_reference;
-            const auto found =
-                std::find_if(inner->members.begin(), inner->members.end(),
-                             [&](const auto& member) { return member.name == expression.value(); });
-            if (found == inner->members.end()) {
+            const bool accessed_on_self =
+                expression.operand(0)->kind() == ast::ExpressionKind::identifier &&
+                expression.operand(0)->value() == "self";
+            if (accessed_on_type || accessed_on_self) {
+                if (const auto* nested = find_nested_inner_class(*inner, expression.value())) {
+                    result = {TypeKind::object, nested->name};
+                    model_.api_resolutions_.emplace(
+                        &expression,
+                        ApiResolution{ApiResolutionKind::inner_type_reference, nested->name, "", "",
+                                      result, 0, 0, false, true});
+                    break;
+                }
+            }
+            const auto* found = find_inner_member(*inner, expression.value());
+            if (!found) {
                 diagnostics_.error("GDS4055",
                                    "internal class '" + inner->name + "' has no member '" +
                                        expression.value() + "'",
@@ -1637,8 +1871,17 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 result = found->type;
                 model_.api_resolutions_.emplace(&expression,
                                                 ApiResolution{ApiResolutionKind::script_constant,
-                                                              inner->native_class_name, "", "",
-                                                              result, 0, 0, false, true});
+                                                              inner->native_class_name.empty()
+                                                                  ? inner->name
+                                                                  : inner->native_class_name,
+                                                              "", "", result, 0, 0, false, true});
+                break;
+            }
+            if (found->kind == ScriptMemberKind::signal && !accessed_on_type) {
+                result = found->type;
+                model_.api_resolutions_.emplace(
+                    &expression, ApiResolution{ApiResolutionKind::script_signal, inner->name, "",
+                                               "", result, 0, 0, false, false});
                 break;
             }
             if (found->kind != ScriptMemberKind::field || accessed_on_type) {
@@ -2009,14 +2252,11 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
     return result;
 }
 
-bool SemanticAnalyzer::is_match_value_pattern(const ast::Expression& expression) const {
-    if (expression.kind() == ast::ExpressionKind::literal)
+bool SemanticAnalyzer::is_constant_match_expression(const ast::Expression& expression) const {
+    switch (expression.kind()) {
+    case ast::ExpressionKind::literal:
         return true;
-    if (expression.kind() == ast::ExpressionKind::unary && expression.operand_count() == 1 &&
-        (expression.value() == "+" || expression.value() == "-" || expression.value() == "~")) {
-        return is_match_value_pattern(*expression.operand(0));
-    }
-    if (expression.kind() == ast::ExpressionKind::identifier) {
+    case ast::ExpressionKind::identifier: {
         const auto* symbol = model_.symbol_of(expression);
         if (symbol &&
             (symbol->kind == SymbolKind::constant || symbol->kind == SymbolKind::enum_value)) {
@@ -2027,7 +2267,7 @@ bool SemanticAnalyzer::is_match_value_pattern(const ast::Expression& expression)
                               resolution->kind == ApiResolutionKind::global_enum_value ||
                               resolution->kind == ApiResolutionKind::external_type_reference);
     }
-    if (expression.kind() == ast::ExpressionKind::member) {
+    case ast::ExpressionKind::member: {
         const auto* resolution = model_.api_resolution_of(expression);
         return resolution && (resolution->kind == ApiResolutionKind::enum_member ||
                               resolution->kind == ApiResolutionKind::script_constant ||
@@ -2035,7 +2275,175 @@ bool SemanticAnalyzer::is_match_value_pattern(const ast::Expression& expression)
                               resolution->kind == ApiResolutionKind::global_constant ||
                               resolution->kind == ApiResolutionKind::global_enum_value);
     }
+    case ast::ExpressionKind::unary:
+        return expression.operand_count() == 1 &&
+               is_constant_match_expression(*expression.operand(0));
+    case ast::ExpressionKind::await_expression:
+        return false;
+    case ast::ExpressionKind::binary:
+    case ast::ExpressionKind::conditional:
+    case ast::ExpressionKind::array_literal:
+    case ast::ExpressionKind::dictionary_literal:
+        for (std::size_t index = 0; index < expression.operand_count(); ++index) {
+            if (!is_constant_match_expression(*expression.operand(index)))
+                return false;
+        }
+        return true;
+    case ast::ExpressionKind::call:
+    case ast::ExpressionKind::subscript:
+    case ast::ExpressionKind::node_reference:
+    case ast::ExpressionKind::lambda:
+        return false;
+    }
     return false;
+}
+
+std::optional<std::string>
+SemanticAnalyzer::constant_string_expression(const ast::Expression& expression) const {
+    if (expression.kind() == ast::ExpressionKind::literal &&
+        expression.literal_kind() == ast::LiteralKind::string) {
+        return expression.value();
+    }
+    if (expression.kind() == ast::ExpressionKind::identifier) {
+        const auto* symbol = model_.symbol_of(expression);
+        return symbol && symbol->kind == SymbolKind::constant ? symbol->constant_string_value
+                                                              : std::nullopt;
+    }
+    if (expression.kind() == ast::ExpressionKind::binary && expression.value() == "+" &&
+        expression.operand_count() == 2) {
+        const auto left = constant_string_expression(*expression.operand(0));
+        const auto right = constant_string_expression(*expression.operand(1));
+        if (left && right)
+            return *left + *right;
+    }
+    return std::nullopt;
+}
+
+bool SemanticAnalyzer::is_match_value_pattern(const ast::Expression& expression) const {
+    // Godot also permits a live identifier or a pure attribute chain (A.B.C) as the complete
+    // pattern. It deliberately does not extend that exemption into arithmetic or subscripts.
+    if (expression.kind() == ast::ExpressionKind::identifier)
+        return model_.symbol_of(expression) || model_.api_resolution_of(expression);
+    if (expression.kind() == ast::ExpressionKind::member) {
+        const ast::Expression* base = &expression;
+        while (base->kind() == ast::ExpressionKind::member && base->operand_count() == 1)
+            base = base->operand(0).get();
+        if (base->kind() == ast::ExpressionKind::identifier)
+            return true;
+    }
+    return is_constant_match_expression(expression);
+}
+
+void SemanticAnalyzer::analyze_match_pattern(const ast::MatchPattern& pattern,
+                                             const Type& matched_type) {
+    model_.match_pattern_types_[&pattern] = matched_type;
+    switch (pattern.kind()) {
+    case ast::MatchPatternKind::value: {
+        const auto pattern_type = analyze_expression(*pattern.expression());
+        if (!is_match_value_pattern(*pattern.expression())) {
+            diagnostics_.error(
+                "GDS4045",
+                "match expressions must be constant, an identifier, or an attribute access",
+                pattern.span);
+        }
+        const bool same_project_enum =
+            current_script_ && matched_type.kind == TypeKind::enumeration &&
+            pattern_type.kind == TypeKind::enumeration &&
+            (matched_type.name == current_script_->script_name + "." + pattern_type.name ||
+             pattern_type.name == current_script_->script_name + "." + matched_type.name);
+        if (!is_assignable(matched_type, pattern_type) &&
+            !is_assignable(pattern_type, matched_type) && !same_project_enum) {
+            diagnostics_.error("GDS4046",
+                               "match pattern type " + pattern_type.display_name() +
+                                   " cannot match " + matched_type.display_name(),
+                               pattern.span);
+        }
+        return;
+    }
+    case ast::MatchPatternKind::binding:
+        if (const auto* existing = resolve(pattern.name());
+            existing &&
+            (existing->kind == SymbolKind::local || existing->kind == SymbolKind::constant ||
+             existing->kind == SymbolKind::parameter)) {
+            diagnostics_.error("GDS4049",
+                               "match binding '" + pattern.name() +
+                                   "' conflicts with a variable in the enclosing scope",
+                               pattern.span);
+        }
+        declare({SymbolKind::local, pattern.name(), matched_type, pattern.span, false});
+        return;
+    case ast::MatchPatternKind::wildcard:
+        return;
+    case ast::MatchPatternKind::rest:
+        diagnostics_.error("GDS4048",
+                           "rest pattern can only be used inside an array or dictionary pattern",
+                           pattern.span);
+        return;
+    case ast::MatchPatternKind::array: {
+        if (!matched_type.is_dynamic() && matched_type.kind != TypeKind::array) {
+            diagnostics_.error("GDS4046", "array pattern requires an Array or Variant value",
+                               pattern.span);
+        }
+        const auto element_type = matched_type.kind == TypeKind::array
+                                      ? container_element_type(matched_type, pattern.span)
+                                      : variant_type;
+        std::size_t rest_count = 0;
+        for (std::size_t index = 0; index < pattern.elements.size(); ++index) {
+            const auto& child = *pattern.elements[index];
+            if (child.kind() == ast::MatchPatternKind::rest) {
+                ++rest_count;
+                if (index + 1 != pattern.elements.size()) {
+                    diagnostics_.error("GDS4048", "array rest pattern must be the last element",
+                                       child.span);
+                }
+            }
+            if (child.kind() != ast::MatchPatternKind::rest)
+                analyze_match_pattern(child, element_type);
+        }
+        if (rest_count > 1U)
+            diagnostics_.error("GDS4048", "array pattern accepts at most one rest marker",
+                               pattern.span);
+        return;
+    }
+    case ast::MatchPatternKind::dictionary: {
+        if (!matched_type.is_dynamic() && matched_type.kind != TypeKind::dictionary) {
+            diagnostics_.error("GDS4046",
+                               "dictionary pattern requires a Dictionary or Variant value",
+                               pattern.span);
+        }
+        if (pattern.keys.size() != pattern.elements.size()) {
+            diagnostics_.error("GDS4048", "dictionary pattern key/value structure is invalid",
+                               pattern.span);
+            return;
+        }
+        std::size_t rest_count = 0;
+        for (std::size_t index = 0; index < pattern.elements.size(); ++index) {
+            const auto& child = *pattern.elements[index];
+            if (!pattern.keys[index]) {
+                ++rest_count;
+                if (child.kind() != ast::MatchPatternKind::rest) {
+                    diagnostics_.error("GDS4048", "dictionary rest entry is malformed", child.span);
+                }
+                if (index + 1 != pattern.elements.size()) {
+                    diagnostics_.error("GDS4048", "dictionary rest pattern must be the last entry",
+                                       child.span);
+                }
+                continue;
+            }
+            (void)analyze_expression(*pattern.keys[index]);
+            if (!is_constant_match_expression(*pattern.keys[index])) {
+                diagnostics_.error("GDS4045",
+                                   "dictionary match keys must be compile-time constants",
+                                   pattern.keys[index]->span);
+            }
+            analyze_match_pattern(child, variant_type);
+        }
+        if (rest_count > 1U)
+            diagnostics_.error("GDS4048", "dictionary pattern accepts at most one rest marker",
+                               pattern.span);
+        return;
+    }
+    }
 }
 
 bool SemanticAnalyzer::is_assignment_target(const ast::Expression& expression) const noexcept {
@@ -2044,7 +2452,7 @@ bool SemanticAnalyzer::is_assignment_target(const ast::Expression& expression) c
     if (expression.kind() == ast::ExpressionKind::identifier) {
         if (const auto* symbol = model_.symbol_of(expression)) {
             return symbol->kind == SymbolKind::field || symbol->kind == SymbolKind::parameter ||
-                   symbol->kind == SymbolKind::local;
+                   symbol->kind == SymbolKind::local || symbol->kind == SymbolKind::constant;
         }
     }
     if (expression.kind() != ast::ExpressionKind::identifier &&
@@ -2062,9 +2470,13 @@ bool SemanticAnalyzer::is_assignment_target(const ast::Expression& expression) c
 
 SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Statement& statement) {
     switch (statement.kind()) {
-    case ast::StatementKind::expression:
+    case ast::StatementKind::expression: {
+        const auto* previous_discarded_expression = discarded_expression_;
+        discarded_expression_ = statement.expression().get();
         (void)analyze_expression(*statement.expression());
+        discarded_expression_ = previous_discarded_expression;
         return FlowResult{true, false, false, false};
+    }
     case ast::StatementKind::return_statement: {
         const auto actual = statement.expression() ? analyze_expression(*statement.expression())
                                                    : (expected_return_.kind == TypeKind::void_type
@@ -2072,54 +2484,6 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
                                                           : Type{TypeKind::nil, "null"});
         require_assignable(expected_return_, actual, statement.span, "invalid return value");
         return FlowResult{false, true, false, false};
-    }
-    case ast::StatementKind::await_statement: {
-        const auto awaited = analyze_expression(*statement.expression());
-        if (allowed_await_statements_.find(&statement) == allowed_await_statements_.end()) {
-            diagnostics_.error("GDS4090",
-                               "await is currently supported only at function-suite top level",
-                               statement.span);
-        }
-        if (current_function_static_) {
-            diagnostics_.error("GDS4091", "static functions cannot suspend on a signal yet",
-                               statement.span);
-        }
-        if (expected_return_.kind != TypeKind::void_type && !allow_dynamic_await_return_) {
-            diagnostics_.error("GDS4092",
-                               "an AOT function containing await must currently return void",
-                               statement.span);
-        }
-        if (!awaited.is_dynamic() &&
-            (awaited.kind != TypeKind::builtin || awaited.name != "Signal")) {
-            diagnostics_.error("GDS4093", "await requires a Signal expression", statement.span);
-        }
-        return FlowResult{true, false, false, false};
-    }
-    case ast::StatementKind::await_variable: {
-        const auto awaited = analyze_expression(*statement.expression());
-        if (allowed_await_statements_.find(&statement) == allowed_await_statements_.end()) {
-            diagnostics_.error("GDS4090",
-                               "await is currently supported only at function-suite top level",
-                               statement.span);
-        }
-        if (current_function_static_) {
-            diagnostics_.error("GDS4091", "static functions cannot suspend on a signal yet",
-                               statement.span);
-        }
-        if (expected_return_.kind != TypeKind::void_type && !allow_dynamic_await_return_) {
-            diagnostics_.error("GDS4092",
-                               "an AOT function containing await must currently return void",
-                               statement.span);
-        }
-        if (!awaited.is_dynamic() &&
-            (awaited.kind != TypeKind::builtin || awaited.name != "Signal")) {
-            diagnostics_.error("GDS4093", "await requires a Signal expression", statement.span);
-        }
-        const auto type =
-            statement.type() ? type_from_name(*statement.type(), statement.span) : variant_type;
-        model_.local_types_[&statement] = type;
-        declare({SymbolKind::local, statement.name(), type, statement.span, false});
-        return FlowResult{true, false, false, false};
     }
     case ast::StatementKind::assert_statement: {
         const auto condition = analyze_expression(*statement.condition());
@@ -2135,21 +2499,34 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         return FlowResult{true, false, false, false};
     }
     case ast::StatementKind::variable: {
+        if (statement.is_constant() && statement.expression() &&
+            expression_contains_await(*statement.expression())) {
+            diagnostics_.error("GDS2025", "a local constant initializer cannot await a signal",
+                               statement.expression()->span);
+        }
         const auto initializer =
             statement.expression() ? analyze_expression(*statement.expression()) : variant_type;
         Type type = statement.type().has_value() ? type_from_name(*statement.type(), statement.span)
                                                  : variant_type;
-        if (statement.infer_type())
+        if (statement.infer_type() || (statement.is_constant() && !statement.type()))
             type = initializer;
         if (statement.type().has_value() && statement.expression()) {
             require_assignable(type, initializer, statement.span, "invalid initializer");
         }
         model_.local_types_[&statement] = type;
-        declare({SymbolKind::local, statement.name(), type, statement.span, false});
+        const auto constant_string = statement.is_constant() && statement.expression()
+                                         ? constant_string_expression(*statement.expression())
+                                         : std::optional<std::string>{};
+        declare({statement.is_constant() ? SymbolKind::constant : SymbolKind::local,
+                 statement.name(), type, statement.span, statement.is_constant(), constant_string,
+                 SymbolStorage::function_local});
         return FlowResult{true, false, false, false};
     }
     case ast::StatementKind::assignment: {
+        const auto previous_await_context = await_expression_allowed_;
+        await_expression_allowed_ = false;
         const auto target = analyze_expression(*statement.condition());
+        await_expression_allowed_ = previous_await_context;
         const auto value = analyze_expression(*statement.expression());
         if (!is_assignment_target(*statement.condition())) {
             diagnostics_.error("GDS4110", "assignment target is not writable",
@@ -2210,10 +2587,8 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
     }
     case ast::StatementKind::match_statement: {
         const auto matched_type = analyze_expression(*statement.condition());
-        if (statement.match_branches().empty()) {
-            diagnostics_.error("GDS4042", "match requires at least one branch", statement.span);
+        if (statement.match_branches().empty())
             return FlowResult{true, false, false, false};
-        }
         bool unconditional_seen = false;
         FlowResult flow;
         for (const auto& branch : statement.match_branches()) {
@@ -2223,45 +2598,20 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
                 flow.falls_through = true;
                 continue;
             }
-            if (unconditional_seen) {
-                diagnostics_.error("GDS4044", "match branch is unreachable after a catch-all",
-                                   branch.span);
-            }
+            if (unconditional_seen)
+                diagnostics_.warning("GDS4044", "match branch is unreachable after a catch-all",
+                                     branch.span);
             scopes_.emplace_back();
             bool catch_all = false;
             for (const auto& pattern : branch.patterns) {
-                if (pattern.kind() == ast::MatchPatternKind::value) {
-                    const auto pattern_type = analyze_expression(*pattern.expression());
-                    if (!is_match_value_pattern(*pattern.expression())) {
-                        diagnostics_.error("GDS4045",
-                                           "match value patterns must be compile-time constants",
-                                           pattern.span);
-                    }
-                    const bool same_project_enum =
-                        current_script_ && matched_type.kind == TypeKind::enumeration &&
-                        pattern_type.kind == TypeKind::enumeration &&
-                        (matched_type.name ==
-                             current_script_->script_name + "." + pattern_type.name ||
-                         pattern_type.name ==
-                             current_script_->script_name + "." + matched_type.name);
-                    if (!is_assignable(matched_type, pattern_type) &&
-                        !is_assignable(pattern_type, matched_type) && !same_project_enum) {
-                        diagnostics_.error("GDS4046",
-                                           "match pattern type " + pattern_type.display_name() +
-                                               " cannot match " + matched_type.display_name(),
-                                           pattern.span);
-                    }
-                } else {
-                    catch_all = true;
-                    if (branch.patterns.size() != 1) {
-                        diagnostics_.error("GDS4047",
-                                           "wildcard and binding patterns cannot have alternatives",
-                                           pattern.span);
-                    }
-                    if (pattern.kind() == ast::MatchPatternKind::binding) {
-                        declare(
-                            {SymbolKind::local, pattern.name(), matched_type, pattern.span, false});
-                    }
+                analyze_match_pattern(pattern, matched_type);
+                catch_all = catch_all || pattern.kind() == ast::MatchPatternKind::wildcard ||
+                            pattern.kind() == ast::MatchPatternKind::binding;
+                if (branch.patterns.size() != 1U && match_pattern_contains_binding(pattern)) {
+                    diagnostics_.error("GDS4047",
+                                       "variable bindings cannot be combined with alternative "
+                                       "match patterns",
+                                       pattern.span);
                 }
             }
             if (branch.guard) {
@@ -2301,6 +2651,15 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
             iterable.kind != TypeKind::dictionary && iterable.kind != TypeKind::string &&
             iterable.kind != TypeKind::integer && !iterable.is_packed_array()) {
             diagnostics_.error("GDS4007", "for loop expression is not iterable", statement.span);
+        }
+        if (const auto existing = scopes_.back().find(statement.name());
+            existing != scopes_.back().end() && (existing->second.kind == SymbolKind::local ||
+                                                 existing->second.kind == SymbolKind::constant ||
+                                                 existing->second.kind == SymbolKind::parameter)) {
+            diagnostics_.error("GDS4125",
+                               "iterator variable '" + statement.name() +
+                                   "' conflicts with a variable in the same scope",
+                               statement.span);
         }
         ++loop_depth_;
         scopes_.emplace_back();
@@ -2346,9 +2705,8 @@ SemanticAnalyzer::analyze_statements(const std::vector<ast::Statement>& statemen
                        annotation.arguments.front()->kind() == ast::ExpressionKind::literal &&
                        annotation.arguments.front()->value() == "unreachable_code";
             });
-        if (!reachable && !ignores_unreachable) {
-            diagnostics_.error("GDS4069", "unreachable statement", statement.span);
-        }
+        if (!reachable && !ignores_unreachable)
+            diagnostics_.warning("GDS4069", "unreachable statement", statement.span);
         const auto statement_flow = analyze_statement(statement);
         if (!reachable)
             continue;
@@ -2363,8 +2721,10 @@ SemanticAnalyzer::analyze_statements(const std::vector<ast::Statement>& statemen
 void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function) {
     const auto previous_in_function = in_function_;
     const auto previous_function_name = current_function_name_;
+    const auto previous_callable_suspends = current_callable_suspends_;
     in_function_ = true;
     current_function_name_ = function.name;
+    current_callable_suspends_ = false;
     for (const auto& annotation : function.annotations) {
         if (annotation.name == "warning_ignore")
             continue;
@@ -2375,8 +2735,17 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
     }
     if (function.name == "_init" && function.is_static)
         diagnostics_.error("GDS4065", "_init cannot be static", function.span);
+    if (function.name == "_static_init" && !function.is_static)
+        diagnostics_.error("GDS4123", "_static_init must be declared static", function.span);
+    if (function.name == "_static_init" && !function.parameters.empty())
+        diagnostics_.error("GDS4124", "_static_init cannot declare parameters", function.span);
     if (function.name == "_init" && function.return_type && *function.return_type != "void") {
         diagnostics_.error("GDS4066", "_init cannot declare a non-void return type", function.span);
+    }
+    if (function.name == "_static_init" && function.return_type &&
+        *function.return_type != "void") {
+        diagnostics_.error("GDS4066", "_static_init cannot declare a non-void return type",
+                           function.span);
     }
     const auto* virtual_method =
         function.is_static ? nullptr : api_.find_method(base_type_, function.name);
@@ -2393,7 +2762,7 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
         }
     }
     expected_return_ =
-        function.name == "_init"           ? void_type
+        function.name == "_init" || function.name == "_static_init" ? void_type
         : function.return_type.has_value() ? type_from_name(*function.return_type, function.span)
         : inherited_script_method          ? inherited_script_method->type
         : virtual_method && std::string_view{virtual_method->return_type}.empty() ? void_type
@@ -2420,24 +2789,10 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
                            function.span);
     }
     model_.function_return_types_[&function] = expected_return_;
-    allowed_await_statements_.clear();
-    collect_structured_awaits(function.body, allowed_await_statements_);
-    if (function.name == "_init") {
-        for (const auto* statement : allowed_await_statements_) {
-            diagnostics_.error("GDS4097", "_init cannot suspend on a signal", statement->span);
-        }
-    }
-    const bool value_returning_dynamic_coroutine = !function.return_type &&
-                                                   contains_value_return(function.body) &&
-                                                   !allowed_await_statements_.empty();
-    allow_dynamic_await_return_ = !function.return_type;
-    if (value_returning_dynamic_coroutine) {
-        diagnostics_.warning(
-            "GDS4103",
-            "a value-returning dynamic coroutine is emitted as fire-and-forget; values returned "
-            "after suspension are not observable until native awaitable results are enabled",
-            function.span);
-    }
+    // Native coroutine methods expose a Variant that is either the synchronously completed
+    // source return value or a per-call completion Signal. This preserves typed and untyped
+    // GDScript return values without changing their source-level type.
+    allow_dynamic_await_return_ = true;
     current_function_static_ = function.is_static;
     current_accessor_fields_.clear();
     if (const auto found = bound_accessor_fields_.find(function.name);
@@ -2455,8 +2810,11 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
                 ? &inherited_script_method->parameters[index]
                 : nullptr;
         std::optional<Type> analyzed_default;
+        const auto previous_await_context = await_expression_allowed_;
+        await_expression_allowed_ = false;
         if (parameter.default_value)
             analyzed_default = analyze_expression(*parameter.default_value);
+        await_expression_allowed_ = previous_await_context;
         const auto type = parameter.type.has_value()
                               ? type_from_name(*parameter.type, parameter.span)
                           : parameter.infer_type && analyzed_default ? *analyzed_default
@@ -2486,6 +2844,8 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
                            function.span);
     }
     const auto flow = analyze_statements(function.body);
+    if (current_callable_suspends_)
+        model_.coroutine_functions_.insert(&function);
     scopes_.pop_back();
     if (expected_return_.kind != TypeKind::void_type && !expected_return_.is_dynamic() &&
         flow.falls_through) {
@@ -2495,9 +2855,9 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
                            function.span);
     }
     current_accessor_fields_.clear();
-    allowed_await_statements_.clear();
     allow_dynamic_await_return_ = false;
     current_function_static_ = false;
+    current_callable_suspends_ = previous_callable_suspends;
     in_function_ = previous_in_function;
     current_function_name_ = previous_function_name;
 }
@@ -2507,8 +2867,9 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
     const auto previous_static = current_function_static_;
     const auto previous_in_function = in_function_;
     const auto previous_loop_depth = loop_depth_;
-    auto previous_await = std::move(allowed_await_statements_);
+    const auto previous_function_name = current_function_name_;
     const auto previous_dynamic_await = allow_dynamic_await_return_;
+    const auto previous_callable_suspends = current_callable_suspends_;
 
     expected_return_ = expression.return_type
                            ? type_from_name(*expression.return_type, expression.span)
@@ -2518,15 +2879,18 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
         model_.owner_bound_lambdas_.insert(&expression);
     current_function_static_ = false;
     in_function_ = true;
+    current_function_name_ = expression.name.empty() ? "<lambda>" : expression.name;
     loop_depth_ = 0;
-    allowed_await_statements_.clear();
-    collect_structured_awaits(expression.body, allowed_await_statements_);
     allow_dynamic_await_return_ = !expression.return_type;
+    current_callable_suspends_ = false;
     scopes_.emplace_back();
     for (const auto& parameter : expression.parameters) {
         std::optional<Type> analyzed_default;
+        const auto previous_await_context = await_expression_allowed_;
+        await_expression_allowed_ = false;
         if (parameter.default_value)
             analyzed_default = analyze_expression(*parameter.default_value);
+        await_expression_allowed_ = previous_await_context;
         const auto type = parameter.type ? type_from_name(*parameter.type, parameter.span)
                           : parameter.infer_type && analyzed_default ? *analyzed_default
                                                                      : variant_type;
@@ -2537,6 +2901,8 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
                                "invalid lambda default value");
     }
     const auto flow = analyze_statements(expression.body);
+    if (current_callable_suspends_)
+        model_.coroutine_lambdas_.insert(&expression);
     scopes_.pop_back();
     if (expected_return_.kind != TypeKind::void_type && !expected_return_.is_dynamic() &&
         flow.falls_through) {
@@ -2546,11 +2912,12 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
                            expression.span);
     }
 
-    allowed_await_statements_ = std::move(previous_await);
     allow_dynamic_await_return_ = previous_dynamic_await;
+    current_callable_suspends_ = previous_callable_suspends;
     loop_depth_ = previous_loop_depth;
     in_function_ = previous_in_function;
     current_function_static_ = previous_static;
+    current_function_name_ = previous_function_name;
     expected_return_ = previous_return;
 }
 
@@ -2571,7 +2938,6 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     auto saved_current_accessor_fields = std::move(current_accessor_fields_);
     auto saved_bound_accessor_fields = std::move(bound_accessor_fields_);
     auto saved_functions = std::move(functions_);
-    auto saved_allowed_await = std::move(allowed_await_statements_);
     const auto saved_dynamic_await = allow_dynamic_await_return_;
     const auto saved_static = current_function_static_;
     const auto saved_in_function = in_function_;
@@ -2579,6 +2945,7 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     const auto saved_base = base_type_;
     const auto saved_loop_depth = loop_depth_;
     const auto* saved_inner = current_inner_class_;
+    const auto* saved_inner_base = current_inner_base_;
 
     scopes_.clear();
     scopes_.emplace_back();
@@ -2590,24 +2957,53 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     current_accessor_fields_.clear();
     bound_accessor_fields_.clear();
     functions_.clear();
-    allowed_await_statements_.clear();
     allow_dynamic_await_return_ = false;
     current_function_static_ = false;
     in_function_ = false;
     expected_return_ = void_type;
     loop_depth_ = 0;
-    base_type_ = declaration.base_type.value_or("RefCounted");
     current_inner_class_ = find_inner_class(declaration.name);
+    current_inner_base_ = current_inner_class_ ? inner_base_of(*current_inner_class_) : nullptr;
+    base_type_ = current_inner_base_ ? current_inner_base_->godot_base_type
+                                     : declaration.base_type.value_or("RefCounted");
 
-    if (!api_.find_class(base_type_)) {
+    if (!current_inner_base_ && !api_.find_class(base_type_)) {
         diagnostics_.error("GDS4099",
                            "internal class base '" + base_type_ + "' is not a Godot engine type",
                            declaration.span);
         base_type_ = "RefCounted";
     }
-    if (!declaration.classes.empty()) {
-        diagnostics_.error("GDS4100", "nested internal classes are not supported yet",
-                           declaration.classes.front().span);
+    if (current_inner_base_) {
+        std::vector<const ScriptInnerClassSymbol*> hierarchy;
+        std::unordered_set<const ScriptInnerClassSymbol*> visited;
+        for (auto* base = current_inner_base_; base && visited.insert(base).second;
+             base = inner_base_of(*base)) {
+            hierarchy.push_back(base);
+        }
+        for (auto base = hierarchy.rbegin(); base != hierarchy.rend(); ++base) {
+            for (const auto& member : (*base)->members) {
+                auto kind = SymbolKind::field;
+                if (member.kind == ScriptMemberKind::constant)
+                    kind = SymbolKind::constant;
+                else if (member.kind == ScriptMemberKind::enum_value)
+                    kind = SymbolKind::enum_value;
+                else if (member.kind == ScriptMemberKind::function)
+                    kind = SymbolKind::function;
+                else if (member.kind == ScriptMemberKind::signal)
+                    kind = SymbolKind::signal;
+                scopes_.front().insert_or_assign(
+                    member.name, Symbol{kind,
+                                        member.name,
+                                        member.type,
+                                        {},
+                                        member.kind == ScriptMemberKind::constant ||
+                                            member.kind == ScriptMemberKind::enum_value});
+                if (member.kind == ScriptMemberKind::field && member.has_accessor)
+                    accessor_fields_.insert(member.name);
+                if (member.kind == ScriptMemberKind::field && member.is_static)
+                    static_fields_.insert(member.name);
+            }
+        }
     }
     analyze_enums(declaration.enums);
     for (const auto& function : declaration.functions)
@@ -2650,18 +3046,28 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
                                "invalid internal field initializer");
         }
         model_.variable_types_[&variable] = type;
-        const auto implied_property = !variable.type && !variable.infer_type
-                                          ? implied_export_property_type(variable)
-                                          : std::nullopt;
-        const auto property_type = implied_property ? *implied_property
-                                   : has_property_annotation(variable) && !variable.type &&
-                                           !variable.infer_type && variable.initializer
-                                       ? initializer
+        const auto property_type = has_property_annotation(variable)
+                                       ? export_property_type(variable, type, initializer)
                                        : type;
         model_.property_types_[&variable] = property_type;
         validate_annotations(variable, property_type);
-        if (const auto found = scopes_.back().find(variable.name); found != scopes_.back().end())
+        if (current_inner_class_) {
+            if (auto owner = local_inner_classes_.find(current_inner_class_->name);
+                owner != local_inner_classes_.end()) {
+                const auto member =
+                    std::find_if(owner->second.members.begin(), owner->second.members.end(),
+                                 [&](const auto& value) { return value.name == variable.name; });
+                if (member != owner->second.members.end())
+                    member->type = type;
+            }
+        }
+        if (const auto found = scopes_.back().find(variable.name); found != scopes_.back().end()) {
             found->second.type = type;
+            if (variable.is_constant && variable.initializer) {
+                found->second.constant_string_value =
+                    constant_string_expression(*variable.initializer);
+            }
+        }
     };
     // Constants are visible throughout a GDScript class regardless of textual order. Resolve
     // them before ordinary field initializers so forward constant references keep their native
@@ -2690,6 +3096,8 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
         analyze_property_accessors(variable, model_.type_of(variable));
     for (const auto& function : declaration.functions)
         analyze_function(function);
+    for (const auto& nested : declaration.classes)
+        analyze_class(nested);
 
     scopes_ = std::move(saved_scopes);
     enum_types_ = std::move(saved_enum_types);
@@ -2699,7 +3107,6 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     current_accessor_fields_ = std::move(saved_current_accessor_fields);
     bound_accessor_fields_ = std::move(saved_bound_accessor_fields);
     functions_ = std::move(saved_functions);
-    allowed_await_statements_ = std::move(saved_allowed_await);
     allow_dynamic_await_return_ = saved_dynamic_await;
     current_function_static_ = saved_static;
     in_function_ = saved_in_function;
@@ -2707,6 +3114,7 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     base_type_ = saved_base;
     loop_depth_ = saved_loop_depth;
     current_inner_class_ = saved_inner;
+    current_inner_base_ = saved_inner_base;
 }
 
 void SemanticAnalyzer::analyze_property_accessors(const ast::VariableDeclaration& variable,
@@ -2719,15 +3127,12 @@ void SemanticAnalyzer::analyze_property_accessors(const ast::VariableDeclaration
     }
     current_accessor_fields_.clear();
     current_accessor_fields_.insert(variable.name);
-    auto saved_allowed_await = std::move(allowed_await_statements_);
     const auto saved_return = expected_return_;
     const auto saved_dynamic_await = allow_dynamic_await_return_;
     const auto saved_static = current_function_static_;
     const auto saved_in_function = in_function_;
-    const auto prepare_accessor_body = [&](const std::vector<ast::Statement>& body,
+    const auto prepare_accessor_body = [&](const std::vector<ast::Statement>&,
                                            const Type& return_type) {
-        allowed_await_statements_.clear();
-        collect_structured_awaits(body, allowed_await_statements_);
         expected_return_ = return_type;
         allow_dynamic_await_return_ = false;
         current_function_static_ = variable.is_static;
@@ -2816,7 +3221,6 @@ void SemanticAnalyzer::analyze_property_accessors(const ast::VariableDeclaration
             scopes_.pop_back();
         }
     }
-    allowed_await_statements_ = std::move(saved_allowed_await);
     expected_return_ = saved_return;
     allow_dynamic_await_return_ = saved_dynamic_await;
     current_function_static_ = saved_static;
@@ -2988,7 +3392,8 @@ void SemanticAnalyzer::validate_annotations(const ast::VariableDeclaration& vari
                            annotation.span);
         return;
     }
-    const bool unchecked_export = name == "export_storage" || name == "export_custom";
+    const bool unchecked_export =
+        name == "export_storage" || name == "export_custom" || name == "export_enum";
     if (!unchecked_export &&
         (type.is_dynamic() || type.kind == TypeKind::nil || type.kind == TypeKind::void_type)) {
         diagnostics_.error("GDS4025", "exported fields require a concrete serializable type",
@@ -3006,14 +3411,18 @@ void SemanticAnalyzer::validate_annotations(const ast::VariableDeclaration& vari
                            variable.span);
     }
 
-    const bool string_collection =
-        type.kind == TypeKind::string ||
-        (type.kind == TypeKind::array && type.name == "Array[String]") ||
-        (type.kind == TypeKind::builtin && type.name == "PackedStringArray");
+    const auto value_type = exported_value_type(type);
+    const bool string_collection = value_type.kind == TypeKind::string;
+    const bool integer_collection = value_type.kind == TypeKind::integer;
+    const bool numeric_collection = integer_collection || value_type.kind == TypeKind::floating;
+    const bool color_collection =
+        value_type.kind == TypeKind::builtin && value_type.name == "Color";
+    const bool node_path_collection =
+        value_type.kind == TypeKind::builtin && value_type.name == "NodePath";
     if (name == "export") {
         require_no_arguments();
     } else if (name == "export_range") {
-        if (type.kind != TypeKind::integer && type.kind != TypeKind::floating) {
+        if (!numeric_collection) {
             diagnostics_.error("GDS4026", "@export_range requires an int or float field",
                                variable.span);
         }
@@ -3032,16 +3441,26 @@ void SemanticAnalyzer::validate_annotations(const ast::VariableDeclaration& vari
             }
         }
     } else if (name == "export_enum") {
-        if (type.kind != TypeKind::integer && type.kind != TypeKind::string) {
+        if (!type.is_dynamic() && value_type.kind != TypeKind::integer &&
+            value_type.kind != TypeKind::string) {
             diagnostics_.error("GDS4029", "@export_enum requires an int or String field",
                                variable.span);
         }
         require_string_arguments(1, 256);
     } else if (name == "export_flags") {
-        if (type.kind != TypeKind::integer) {
+        if (!integer_collection) {
             diagnostics_.error("GDS4030", "@export_flags requires an int field", variable.span);
         }
         require_string_arguments(1, 32);
+    } else if (name == "export_flags_2d_render" || name == "export_flags_2d_physics" ||
+               name == "export_flags_2d_navigation" || name == "export_flags_3d_render" ||
+               name == "export_flags_3d_physics" || name == "export_flags_3d_navigation" ||
+               name == "export_flags_avoidance") {
+        if (!integer_collection) {
+            diagnostics_.error("GDS4030", "@" + name + " requires an int collection field",
+                               variable.span);
+        }
+        require_no_arguments();
     } else if (name == "export_file" || name == "export_file_path" ||
                name == "export_global_file") {
         if (!string_collection) {
@@ -3056,22 +3475,21 @@ void SemanticAnalyzer::validate_annotations(const ast::VariableDeclaration& vari
         }
         require_no_arguments();
     } else if (name == "export_multiline") {
-        const bool multiline_type =
-            string_collection || type.kind == TypeKind::dictionary ||
-            (type.kind == TypeKind::array && type.name == "Array[Dictionary]");
+        const bool multiline_type = string_collection || type.kind == TypeKind::dictionary ||
+                                    value_type.kind == TypeKind::dictionary;
         if (!multiline_type) {
             diagnostics_.error("GDS4031", "@export_multiline requires text or Dictionary values",
                                variable.span);
         }
         require_string_arguments(0, 256);
     } else if (name == "export_color_no_alpha") {
-        if (type.kind != TypeKind::builtin || type.name != "Color") {
+        if (!color_collection) {
             diagnostics_.error("GDS4032", "@export_color_no_alpha requires a Color field",
                                variable.span);
         }
         require_no_arguments();
     } else if (name == "export_node_path") {
-        if (type.kind != TypeKind::builtin || type.name != "NodePath") {
+        if (!node_path_collection) {
             diagnostics_.error("GDS4033", "@export_node_path requires a NodePath field",
                                variable.span);
         }
@@ -3082,6 +3500,12 @@ void SemanticAnalyzer::validate_annotations(const ast::VariableDeclaration& vari
                                variable.span);
         }
         require_string_arguments(1, 1);
+    } else if (name == "export_exp_easing") {
+        if (value_type.kind != TypeKind::floating) {
+            diagnostics_.error("GDS4026", "@export_exp_easing requires a float collection field",
+                               variable.span);
+        }
+        require_string_arguments(0, 2);
     } else if (name == "export_storage") {
         require_no_arguments();
     } else if (name == "export_tool_button") {
@@ -3119,9 +3543,10 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
     bound_accessor_fields_.clear();
     functions_.clear();
     local_inner_classes_.clear();
-    allowed_await_statements_.clear();
     allow_dynamic_await_return_ = false;
     current_function_static_ = false;
+    current_inner_class_ = nullptr;
+    current_inner_base_ = nullptr;
     script_tool_ = script.tool;
     for (const auto& annotation : script.annotations) {
         if (annotation.name == "icon" && (annotation.arguments.size() != 1 ||
@@ -3167,67 +3592,162 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
                                "' requires project-level inheritance resolution",
                            script.span);
     }
-    for (const auto& declaration : script.classes) {
-        ScriptInnerClassSymbol symbol;
-        symbol.name = declaration.name;
-        symbol.godot_base_type = declaration.base_type.value_or("RefCounted");
-        if (!local_inner_classes_.emplace(declaration.name, std::move(symbol)).second) {
-            diagnostics_.error("GDS4101", "duplicate internal class '" + declaration.name + "'",
-                               declaration.span);
+    const auto register_inner_classes = [&](const auto& self, const auto& declarations,
+                                            const std::string& parent) -> void {
+        for (const auto& declaration : declarations) {
+            const auto qualified =
+                parent.empty() ? declaration.name : parent + "." + declaration.name;
+            ScriptInnerClassSymbol symbol;
+            symbol.name = qualified;
+            symbol.godot_base_type = declaration.base_type.value_or("RefCounted");
+            if (!local_inner_classes_.emplace(qualified, std::move(symbol)).second) {
+                diagnostics_.error("GDS4101", "duplicate internal class '" + qualified + "'",
+                                   declaration.span);
+            }
+            self(self, declaration.classes, qualified);
         }
+    };
+    register_inner_classes(register_inner_classes, script.classes, "");
+    const auto resolve_inner_base_name = [&](const std::string& owner,
+                                             const std::string& base) -> std::string {
+        if (local_inner_classes_.find(base) != local_inner_classes_.end())
+            return base;
+        const auto separator = owner.rfind('.');
+        if (separator != std::string::npos) {
+            const auto lexical = owner.substr(0, separator + 1) + base;
+            if (local_inner_classes_.find(lexical) != local_inner_classes_.end())
+                return lexical;
+        }
+        const ScriptInnerClassSymbol* unique = nullptr;
+        for (const auto& [qualified, candidate] : local_inner_classes_) {
+            const auto leaf_separator = qualified.rfind('.');
+            const auto leaf = leaf_separator == std::string::npos
+                                  ? qualified
+                                  : qualified.substr(leaf_separator + 1);
+            if (leaf != base)
+                continue;
+            if (unique)
+                return {};
+            unique = &candidate;
+        }
+        return unique ? unique->name : std::string{};
+    };
+    const auto resolve_inner_bases = [&](const auto& self, const auto& declarations,
+                                         const std::string& parent) -> void {
+        for (const auto& declaration : declarations) {
+            const auto qualified =
+                parent.empty() ? declaration.name : parent + "." + declaration.name;
+            if (auto found = local_inner_classes_.find(qualified);
+                found != local_inner_classes_.end() && declaration.base_type &&
+                !api_.find_class(*declaration.base_type)) {
+                found->second.base_class_name =
+                    resolve_inner_base_name(qualified, *declaration.base_type);
+            }
+            self(self, declaration.classes, qualified);
+        }
+    };
+    resolve_inner_bases(resolve_inner_bases, script.classes, "");
+    for (auto& [name, inner] : local_inner_classes_) {
+        std::unordered_set<std::string> visited{name};
+        auto* current = &inner;
+        while (!current->base_class_name.empty()) {
+            if (!visited.insert(current->base_class_name).second) {
+                diagnostics_.error("GDS4102",
+                                   "cyclic internal class inheritance involving '" + name + "'",
+                                   script.span);
+                current->base_class_name.clear();
+                break;
+            }
+            const auto base = local_inner_classes_.find(current->base_class_name);
+            if (base == local_inner_classes_.end())
+                break;
+            current = &base->second;
+        }
+        inner.godot_base_type = current->godot_base_type;
     }
-    for (const auto& declaration : script.classes) {
-        auto found = local_inner_classes_.find(declaration.name);
-        if (found == local_inner_classes_.end())
-            continue;
-        for (const auto& variable : declaration.variables) {
-            found->second.members.push_back(
-                {variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field,
-                 variable.name,
-                 variable.type ? type_from_name(*variable.type, variable.span) : variant_type,
-                 {},
-                 0,
-                 variable.is_constant || variable.is_static,
-                 variable.getter.has_value() || variable.setter.has_value(),
-                 false,
-                 {},
-                 {}});
-        }
-        for (const auto& function : declaration.functions) {
-            ScriptMemberSymbol member;
-            member.kind = ScriptMemberKind::function;
-            member.name = function.name;
-            member.type = function.name == "_init" ? void_type
-                          : function.return_type
-                              ? type_from_name(*function.return_type, function.span)
-                              : variant_type;
-            member.is_static = function.is_static;
-            member.has_explicit_type = function.name == "_init" || function.return_type.has_value();
-            for (const auto& parameter : function.parameters) {
-                member.parameters.push_back(parameter.type
-                                                ? type_from_name(*parameter.type, parameter.span)
-                                                : variant_type);
-                member.explicit_parameter_types.push_back(parameter.type.has_value());
-                member.default_parameters.push_back(parameter.default_value != nullptr);
-                if (!parameter.default_value)
+    const auto populate_inner_classes = [&](const auto& self, const auto& declarations,
+                                            const std::string& parent) -> void {
+        for (const auto& declaration : declarations) {
+            const auto qualified =
+                parent.empty() ? declaration.name : parent + "." + declaration.name;
+            auto found = local_inner_classes_.find(qualified);
+            if (found == local_inner_classes_.end())
+                continue;
+            for (const auto& variable : declaration.variables) {
+                found->second.members.push_back(
+                    {variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field,
+                     variable.name,
+                     variable.type ? type_from_name(*variable.type, variable.span) : variant_type,
+                     {},
+                     0,
+                     variable.is_constant || variable.is_static,
+                     variable.getter.has_value() || variable.setter.has_value(),
+                     false,
+                     {},
+                     {}});
+            }
+            for (const auto& function : declaration.functions) {
+                ScriptMemberSymbol member;
+                member.kind = ScriptMemberKind::function;
+                member.name = function.name;
+                member.type = function.name == "_init" ? void_type
+                              : function.return_type
+                                  ? type_from_name(*function.return_type, function.span)
+                                  : variant_type;
+                member.is_static = function.is_static;
+                member.has_explicit_type =
+                    function.name == "_init" || function.return_type.has_value();
+                for (const auto& parameter : function.parameters) {
+                    member.parameters.push_back(
+                        parameter.type ? type_from_name(*parameter.type, parameter.span)
+                                       : variant_type);
+                    member.explicit_parameter_types.push_back(parameter.type.has_value());
+                    member.default_parameters.push_back(parameter.default_value != nullptr);
+                    if (!parameter.default_value)
+                        ++member.required_arguments;
+                }
+                found->second.members.push_back(std::move(member));
+            }
+            for (const auto& signal : declaration.signals) {
+                ScriptMemberSymbol member;
+                member.kind = ScriptMemberKind::signal;
+                member.name = signal.name;
+                member.type = {TypeKind::builtin, "Signal"};
+                for (const auto& parameter : signal.parameters) {
+                    member.parameters.push_back(
+                        parameter.type ? type_from_name(*parameter.type, parameter.span)
+                                       : variant_type);
                     ++member.required_arguments;
+                }
+                found->second.members.push_back(std::move(member));
             }
-            found->second.members.push_back(std::move(member));
-        }
-        for (const auto& signal : declaration.signals) {
-            ScriptMemberSymbol member;
-            member.kind = ScriptMemberKind::signal;
-            member.name = signal.name;
-            member.type = {TypeKind::builtin, "Signal"};
-            for (const auto& parameter : signal.parameters) {
-                member.parameters.push_back(parameter.type
-                                                ? type_from_name(*parameter.type, parameter.span)
-                                                : variant_type);
-                ++member.required_arguments;
+            for (const auto& enumeration : declaration.enums) {
+                ScriptEnumSymbol enum_symbol;
+                enum_symbol.name = enumeration.name.value_or("");
+                std::int64_t value = 0;
+                for (const auto& entry : enumeration.entries) {
+                    enum_symbol.entries.push_back({entry.name, value});
+                    if (!enumeration.name) {
+                        found->second.members.push_back({ScriptMemberKind::enum_value,
+                                                         entry.name,
+                                                         {TypeKind::integer, "int"},
+                                                         {},
+                                                         0,
+                                                         true,
+                                                         false,
+                                                         false,
+                                                         {},
+                                                         {}});
+                    }
+                    ++value;
+                }
+                if (enumeration.name)
+                    found->second.enums.push_back(std::move(enum_symbol));
             }
-            found->second.members.push_back(std::move(member));
+            self(self, declaration.classes, qualified);
         }
-    }
+    };
+    populate_inner_classes(populate_inner_classes, script.classes, "");
     if (const auto local_base = local_inner_classes_.find(declared_base);
         local_base != local_inner_classes_.end()) {
         for (const auto& member : local_base->second.members) {
@@ -3305,19 +3825,19 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
             require_assignable(type, initializer, variable.span, "invalid field initializer");
         }
         model_.variable_types_[&variable] = type;
-        const auto implied_property = !variable.type && !variable.infer_type
-                                          ? implied_export_property_type(variable)
-                                          : std::nullopt;
-        const auto property_type = implied_property ? *implied_property
-                                   : has_property_annotation(variable) && !variable.type &&
-                                           !variable.infer_type && variable.initializer
-                                       ? initializer
+        const auto property_type = has_property_annotation(variable)
+                                       ? export_property_type(variable, type, initializer)
                                        : type;
         model_.property_types_[&variable] = property_type;
         validate_annotations(variable, property_type);
         const auto found = scopes_.back().find(variable.name);
-        if (found != scopes_.back().end())
+        if (found != scopes_.back().end()) {
             found->second.type = type;
+            if (variable.is_constant && variable.initializer) {
+                found->second.constant_string_value =
+                    constant_string_expression(*variable.initializer);
+            }
+        }
     };
     for (const auto& variable : script.variables) {
         if (variable.is_constant)
