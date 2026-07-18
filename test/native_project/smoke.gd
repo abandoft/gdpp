@@ -30,6 +30,7 @@ func _run() -> void:
     var inheritance_class := _native_class_for("inheritance_child.gd")
     var cross_a_class := _native_class_for("cross_ref_a.gd")
     var cross_b_class := _native_class_for("cross_ref_b.gd")
+    var optimization_class := _native_class_for("optimization_case.gd")
     var required_init_class := _native_class_for("required_initializer.gd")
     var rpc_class := _native_class_for("rpc_case.gd")
     var long_await_class := _native_class_for("long_await_chain.gd")
@@ -40,6 +41,7 @@ func _run() -> void:
         or inheritance_class.is_empty()
         or cross_a_class.is_empty()
         or cross_b_class.is_empty()
+        or optimization_class.is_empty()
         or required_init_class.is_empty()
         or rpc_class.is_empty()
         or long_await_class.is_empty()
@@ -61,6 +63,22 @@ func _run() -> void:
         quit(1)
         return
     instance.free()
+
+    var native_optimization: Object = ClassDB.instantiate(optimization_class)
+    var script_optimization: Object = load("res://optimization_case.gd").new()
+    if native_optimization == null or script_optimization == null:
+        push_error("Control-flow optimization differential fixtures are unavailable")
+        quit(1)
+        return
+    var native_trace: Array = native_optimization.call("run")
+    var script_trace: Array = script_optimization.call("run")
+    if native_trace != script_trace or native_trace != ["live"]:
+        push_error(
+            "Optimized native control flow differs from GDScript: native=%s script=%s"
+            % [native_trace, script_trace]
+        )
+        quit(1)
+        return
 
     var rpc_instance: Node = ClassDB.instantiate(rpc_class) as Node
     if rpc_instance == null:
