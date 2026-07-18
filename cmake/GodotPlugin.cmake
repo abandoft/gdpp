@@ -468,6 +468,8 @@ add_custom_command(
         "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/native_project_player.gd.cpp"
         "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/required_initializer.gd.hpp"
         "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/required_initializer.gd.cpp"
+        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/rpc_case.gd.hpp"
+        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/rpc_case.gd.cpp"
         "${GDPP_PROJECT_SMOKE_OUTPUT}/register_types.cpp"
         "${GDPP_PROJECT_SMOKE_OUTPUT}/CMakeLists.txt"
         "${GDPP_PROJECT_SMOKE_OUTPUT}/prune_stale_development.cmake"
@@ -490,6 +492,7 @@ add_custom_command(
         "${CMAKE_SOURCE_DIR}/example/inheritance_child.gd"
         "${CMAKE_SOURCE_DIR}/example/player.gd"
         "${CMAKE_SOURCE_DIR}/example/required_initializer.gd"
+        "${CMAKE_SOURCE_DIR}/example/rpc_case.gd"
     VERBATIM
 )
 add_custom_target(
@@ -511,6 +514,8 @@ add_custom_target(
         "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/native_project_player.gd.cpp"
         "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/required_initializer.gd.hpp"
         "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/required_initializer.gd.cpp"
+        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/rpc_case.gd.hpp"
+        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/rpc_case.gd.cpp"
         "${GDPP_PROJECT_SMOKE_OUTPUT}/register_types.cpp"
         "${GDPP_PROJECT_SMOKE_OUTPUT}/CMakeLists.txt"
         "${GDPP_PROJECT_SMOKE_OUTPUT}/prune_stale_development.cmake"
