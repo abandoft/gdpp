@@ -299,6 +299,12 @@ bool SemanticModel::owner_bound(const ast::LambdaExpression& function) const noe
     return owner_bound_lambdas_.find(&function) != owner_bound_lambdas_.end();
 }
 
+const RpcConfiguration*
+SemanticModel::rpc_configuration_of(const ast::FunctionDeclaration& function) const noexcept {
+    const auto found = rpc_configurations_.find(&function);
+    return found == rpc_configurations_.end() ? nullptr : &found->second;
+}
+
 std::int64_t SemanticModel::value_of(const ast::EnumEntry& entry) const {
     const auto found = enum_values_.find(&entry);
     return found == enum_values_.end() ? 0 : found->second;
@@ -2374,6 +2380,18 @@ SemanticAnalyzer::constant_string_expression(const ast::Expression& expression) 
     return std::nullopt;
 }
 
+std::optional<std::int64_t>
+SemanticAnalyzer::constant_integer_expression(const ast::Expression& expression) const {
+    std::unordered_map<std::string, std::int64_t> constants;
+    for (const auto& scope : scopes_) {
+        for (const auto& [name, symbol] : scope) {
+            if (symbol.constant_integer_value)
+                constants.insert_or_assign(name, *symbol.constant_integer_value);
+        }
+    }
+    return evaluate_integer_constant(expression, constants);
+}
+
 bool SemanticAnalyzer::is_match_value_pattern(const ast::Expression& expression) const {
     // Godot also permits a live identifier or a pure attribute chain (A.B.C) as the complete
     // pattern. It deliberately does not extend that exemption into arithmetic or subscripts.
@@ -2774,6 +2792,101 @@ SemanticAnalyzer::analyze_statements(const std::vector<ast::Statement>& statemen
     return flow;
 }
 
+void SemanticAnalyzer::analyze_rpc_annotations(const ast::FunctionDeclaration& function) {
+    const ast::Annotation* rpc = nullptr;
+    for (const auto& annotation : function.annotations) {
+        if (annotation.name != "rpc")
+            continue;
+        if (rpc) {
+            diagnostics_.error("GDS4133", "RPC annotations can only be used once per function",
+                               annotation.span);
+            continue;
+        }
+        rpc = &annotation;
+    }
+    if (!rpc)
+        return;
+
+    RpcConfiguration configuration;
+    bool valid = rpc->arguments.size() <= 4;
+    std::uint8_t permission_arguments = 0;
+    std::uint8_t locality_arguments = 0;
+    std::uint8_t transfer_arguments = 0;
+    const auto string_argument_count = std::min<std::size_t>(rpc->arguments.size(), 3);
+    for (std::size_t index = 0; index < string_argument_count; ++index) {
+        const auto previous_await_context = await_expression_allowed_;
+        await_expression_allowed_ = false;
+        (void)analyze_expression(*rpc->arguments[index]);
+        await_expression_allowed_ = previous_await_context;
+        const auto value = constant_string_expression(*rpc->arguments[index]);
+        if (!value) {
+            diagnostics_.error("GDS4134", "RPC arguments 1 to 3 must be constant String values",
+                               rpc->arguments[index]->span);
+            valid = false;
+            continue;
+        }
+        if (*value == "authority") {
+            ++permission_arguments;
+            configuration.permission = RpcPermission::authority;
+        } else if (*value == "any_peer") {
+            ++permission_arguments;
+            configuration.permission = RpcPermission::any_peer;
+        } else if (*value == "call_remote") {
+            ++locality_arguments;
+            configuration.call_local = false;
+        } else if (*value == "call_local") {
+            ++locality_arguments;
+            configuration.call_local = true;
+        } else if (*value == "unreliable") {
+            ++transfer_arguments;
+            configuration.transfer_mode = RpcTransferMode::unreliable;
+        } else if (*value == "unreliable_ordered") {
+            ++transfer_arguments;
+            configuration.transfer_mode = RpcTransferMode::unreliable_ordered;
+        } else if (*value == "reliable") {
+            ++transfer_arguments;
+            configuration.transfer_mode = RpcTransferMode::reliable;
+        } else {
+            diagnostics_.error("GDS4135",
+                               "invalid RPC argument '" + *value +
+                                   "'; expected a permission, locality, or transfer mode",
+                               rpc->arguments[index]->span);
+            valid = false;
+        }
+    }
+    if (permission_arguments > 1) {
+        diagnostics_.error("GDS4136", "RPC permission must be specified no more than once",
+                           rpc->span);
+        valid = false;
+    }
+    if (locality_arguments > 1) {
+        diagnostics_.error("GDS4136", "RPC locality must be specified no more than once",
+                           rpc->span);
+        valid = false;
+    }
+    if (transfer_arguments > 1) {
+        diagnostics_.error("GDS4136", "RPC transfer mode must be specified no more than once",
+                           rpc->span);
+        valid = false;
+    }
+    if (rpc->arguments.size() == 4) {
+        const auto previous_await_context = await_expression_allowed_;
+        await_expression_allowed_ = false;
+        (void)analyze_expression(*rpc->arguments[3]);
+        await_expression_allowed_ = previous_await_context;
+        const auto channel = constant_integer_expression(*rpc->arguments[3]);
+        if (!channel) {
+            diagnostics_.error("GDS4137", "RPC transfer channel must be a constant int value",
+                               rpc->arguments[3]->span);
+            valid = false;
+        } else {
+            configuration.channel = *channel;
+        }
+    }
+    if (valid)
+        model_.rpc_configurations_.insert_or_assign(&function, configuration);
+}
+
 void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function) {
     const auto previous_in_function = in_function_;
     const auto previous_function_name = current_function_name_;
@@ -2782,7 +2895,7 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
     current_function_name_ = function.name;
     current_callable_suspends_ = false;
     for (const auto& annotation : function.annotations) {
-        if (annotation.name == "warning_ignore")
+        if (annotation.name == "warning_ignore" || annotation.name == "rpc")
             continue;
         diagnostics_.error("GDS4112",
                            "function annotation '@" + annotation.name +
@@ -2850,6 +2963,7 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
     // GDScript return values without changing their source-level type.
     allow_dynamic_await_return_ = true;
     current_function_static_ = function.is_static;
+    analyze_rpc_annotations(function);
     current_accessor_fields_.clear();
     if (const auto found = bound_accessor_fields_.find(function.name);
         found != bound_accessor_fields_.end()) {
@@ -3122,6 +3236,8 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
             if (variable.is_constant && variable.initializer) {
                 found->second.constant_string_value =
                     constant_string_expression(*variable.initializer);
+                found->second.constant_integer_value =
+                    constant_integer_expression(*variable.initializer);
             }
         }
     };
@@ -3892,6 +4008,8 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
             if (variable.is_constant && variable.initializer) {
                 found->second.constant_string_value =
                     constant_string_expression(*variable.initializer);
+                found->second.constant_integer_value =
+                    constant_integer_expression(*variable.initializer);
             }
         }
     };

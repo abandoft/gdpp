@@ -4,6 +4,7 @@
 #include "gdpp/frontend/ast.hpp"
 #include "gdpp/semantic/godot_api.hpp"
 #include "gdpp/semantic/intrinsics.hpp"
+#include "gdpp/semantic/rpc.hpp"
 #include "gdpp/semantic/script_symbols.hpp"
 #include "gdpp/semantic/type.hpp"
 
@@ -39,18 +40,21 @@ struct Symbol {
     bool read_only{false};
     std::optional<std::string> constant_string_value;
     SymbolStorage storage{SymbolStorage::class_member};
+    std::optional<std::int64_t> constant_integer_value;
 
     Symbol() = default;
     Symbol(SymbolKind symbol_kind, std::string symbol_name, Type symbol_type,
            SourceSpan declaration_span, bool symbol_read_only,
            std::optional<std::string> string_value = std::nullopt,
-           SymbolStorage symbol_storage = SymbolStorage::class_member)
+           SymbolStorage symbol_storage = SymbolStorage::class_member,
+           std::optional<std::int64_t> integer_value = std::nullopt)
         : kind(symbol_kind), name(std::move(symbol_name)), type(std::move(symbol_type)),
           declaration(declaration_span), read_only(symbol_read_only),
           constant_string_value(std::move(string_value)),
           storage(symbol_kind == SymbolKind::local || symbol_kind == SymbolKind::parameter
                       ? SymbolStorage::function_local
-                      : symbol_storage) {}
+                      : symbol_storage),
+          constant_integer_value(integer_value) {}
 };
 
 enum class ApiResolutionKind {
@@ -122,6 +126,8 @@ class SemanticModel final {
     [[nodiscard]] bool is_coroutine(const ast::LambdaExpression& function) const noexcept;
     [[nodiscard]] bool is_coroutine_call(const ast::Expression& expression) const noexcept;
     [[nodiscard]] bool owner_bound(const ast::LambdaExpression& function) const noexcept;
+    [[nodiscard]] const RpcConfiguration*
+    rpc_configuration_of(const ast::FunctionDeclaration& function) const noexcept;
     [[nodiscard]] std::int64_t value_of(const ast::EnumEntry& entry) const;
     [[nodiscard]] const Symbol* symbol_of(const ast::Expression& expression) const noexcept;
     [[nodiscard]] const ApiResolution*
@@ -148,6 +154,7 @@ class SemanticModel final {
     std::unordered_set<const ast::FunctionDeclaration*> coroutine_functions_;
     std::unordered_set<const ast::LambdaExpression*> coroutine_lambdas_;
     std::unordered_set<const ast::Expression*> coroutine_calls_;
+    std::unordered_map<const ast::FunctionDeclaration*, RpcConfiguration> rpc_configurations_;
     std::unordered_map<const ast::EnumEntry*, std::int64_t> enum_values_;
     std::unordered_map<const ast::Expression*, Symbol> referenced_symbols_;
     std::unordered_map<const ast::Expression*, ApiResolution> api_resolutions_;
@@ -179,6 +186,7 @@ class SemanticAnalyzer final {
     void declare(Symbol symbol);
     [[nodiscard]] const Symbol* resolve(const std::string& name) const noexcept;
     void analyze_function(const ast::FunctionDeclaration& function);
+    void analyze_rpc_annotations(const ast::FunctionDeclaration& function);
     void analyze_class(const ast::ClassDeclaration& declaration);
     void analyze_lambda(const ast::LambdaExpression& expression);
     void analyze_enums(const std::vector<ast::EnumDeclaration>& declarations);
@@ -193,6 +201,8 @@ class SemanticAnalyzer final {
     [[nodiscard]] bool is_constant_match_expression(const ast::Expression& expression) const;
     [[nodiscard]] std::optional<std::string>
     constant_string_expression(const ast::Expression& expression) const;
+    [[nodiscard]] std::optional<std::int64_t>
+    constant_integer_expression(const ast::Expression& expression) const;
     [[nodiscard]] bool is_match_value_pattern(const ast::Expression& expression) const;
     void analyze_match_pattern(const ast::MatchPattern& pattern, const Type& matched_type);
     [[nodiscard]] bool is_assignment_target(const ast::Expression& expression) const noexcept;
