@@ -2,6 +2,7 @@
 
 #include "gdpp/core/source.hpp"
 #include "gdpp/semantic/intrinsics.hpp"
+#include "gdpp/semantic/rpc.hpp"
 #include "gdpp/semantic/type.hpp"
 
 #include <cstdint>
@@ -205,6 +206,7 @@ struct Function {
     std::vector<Statement> body;
     bool is_static{false};
     bool is_coroutine{false};
+    std::optional<RpcConfiguration> rpc;
     SourceSpan span{};
 };
 

@@ -668,6 +668,8 @@ ir::Class IrLowerer::lower_class(const ast::ClassDeclaration& declaration) const
         result.return_type = semantic_.return_type_of(function);
         result.is_static = function.is_static;
         result.is_coroutine = semantic_.is_coroutine(function);
+        if (const auto* rpc = semantic_.rpc_configuration_of(function))
+            result.rpc = *rpc;
         result.span = function.span;
         for (const auto& parameter : function.parameters)
             result.parameters.push_back(lower_parameter(parameter));
@@ -798,6 +800,8 @@ ir::Module IrLowerer::lower(const ast::Script& script) const {
         lowered.return_type = semantic_.return_type_of(function);
         lowered.is_static = function.is_static;
         lowered.is_coroutine = semantic_.is_coroutine(function);
+        if (const auto* rpc = semantic_.rpc_configuration_of(function))
+            lowered.rpc = *rpc;
         lowered.span = function.span;
         lowered.parameters.reserve(function.parameters.size());
         for (const auto& parameter : function.parameters) {
