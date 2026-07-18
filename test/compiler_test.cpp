@@ -1199,12 +1199,10 @@ TEST_CASE("compiler preserves explicit typed iterator variables") {
                                                          "    return total\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("gdpp::runtime::iter_init") != std::string::npos);
-    REQUIRE(
-        result.unit.source.find("int64_t value = static_cast<int64_t>(gdpp::runtime::iter_get(") !=
-        std::string::npos);
-    REQUIRE(result.unit.source.find("godot::Variant(gdpp::runtime::iter_get(") ==
+    REQUIRE(result.unit.source.find("_gdpp_array_iterable_") != std::string::npos);
+    REQUIRE(result.unit.source.find("int64_t value = static_cast<int64_t>(_gdpp_array_iterable_") !=
             std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::iter_init") == std::string::npos);
 }
 
 TEST_CASE("compiler iterates packed arrays with their Godot element types") {
@@ -1222,7 +1220,70 @@ TEST_CASE("compiler iterates packed arrays with their Godot element types") {
     REQUIRE(result.unit.source.find("godot::String argument =") != std::string::npos);
     REQUIRE(result.unit.source.find("_gdpp_packed_iterable_") != std::string::npos);
     REQUIRE(result.unit.source.find(".size();") != std::string::npos);
+    REQUIRE(result.unit.source.find("auto &&_gdpp_packed_iterable_") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_packed_size_") == std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::iter_init") == std::string::npos);
+}
+
+TEST_CASE("compiler emits semantic iteration strategies without backend type guessing") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "static_iteration.gd",
+        "func collect(values: Array[int], labels: Dictionary[String, int]) -> Array:\n"
+        "    var result: Array = []\n"
+        "    for character: String in \"A🙂B\":\n"
+        "        result.append(character)\n"
+        "    for value: int in values:\n"
+        "        result.append(value)\n"
+        "    for key: String in labels:\n"
+        "        result.append(key)\n"
+        "    return result\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("const godot::String _gdpp_string_iterable_") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find(".substr(_gdpp_string_index_") != std::string::npos);
+    REQUIRE(result.unit.source.find("auto &&_gdpp_array_iterable_") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::String key = static_cast<godot::String>(") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::iter_init") != std::string::npos);
+}
+
+TEST_CASE("mutable indexed iterables use live storage and live bounds") {
+    const gdpp::Compiler compiler;
+    const auto result =
+        compiler.compile("mutable_iteration.gd", "func collect() -> Array:\n"
+                                                 "    var values := [1, 2]\n"
+                                                 "    for value in values:\n"
+                                                 "        if value == 1:\n"
+                                                 "            values.append(3)\n"
+                                                 "    var packed := PackedInt64Array([1, 2])\n"
+                                                 "    for value in packed:\n"
+                                                 "        if value == 1:\n"
+                                                 "            packed.append(3)\n"
+                                                 "    return [values, packed]\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("auto &&_gdpp_array_iterable_") != std::string::npos);
+    REQUIRE(result.unit.source.find("auto &&_gdpp_packed_iterable_") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_array_iterable_") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_packed_size_") == std::string::npos);
+}
+
+TEST_CASE("uninitialized locals preserve Godot default initialization") {
+    const gdpp::Compiler compiler;
+    const auto result =
+        compiler.compile("local_defaults.gd", "extends Node\n"
+                                              "func defaults() -> Array:\n"
+                                              "    var typed: int\n"
+                                              "    var dynamic\n"
+                                              "    var object: Node\n"
+                                              "    return [typed, dynamic, object]\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("int64_t typed{};") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Variant dynamic{};") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Node* object{};") != std::string::npos);
 }
 
 TEST_CASE("compiler preserves typed subscript and builtin component scalar semantics") {
@@ -2176,7 +2237,7 @@ TEST_CASE("inferred collection types and numeric-looking strings generate native
     REQUIRE(result.unit.source.find("text = godot::String(\"123\")") != std::string::npos);
     REQUIRE(result.unit.source.find("godot::Array values") != std::string::npos);
     REQUIRE(result.unit.source.find("_gdpp_dictionary_") != std::string::npos);
-    REQUIRE(result.unit.source.find("godot::Variant value = gdpp::runtime::iter_get") !=
+    REQUIRE(result.unit.source.find("godot::Variant value = _gdpp_array_iterable_") !=
             std::string::npos);
 }
 
