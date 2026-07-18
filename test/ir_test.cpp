@@ -85,6 +85,25 @@ TEST_CASE("typed IR preserves dynamic method and property dispatch") {
     REQUIRE(verifier.verify(module));
 }
 
+TEST_CASE("typed IR normalizes RPC annotations before code generation") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module = lower_source("extends Node\n"
+                                     "@rpc(\"reliable\", \"any_peer\", \"call_local\", 7)\n"
+                                     "func synchronize() -> void:\n"
+                                     "    pass\n",
+                                     diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(module.functions.size(), std::size_t{1});
+    REQUIRE(module.functions.front().rpc.has_value());
+    REQUIRE_EQ(module.functions.front().rpc->permission, gdpp::RpcPermission::any_peer);
+    REQUIRE_EQ(module.functions.front().rpc->transfer_mode, gdpp::RpcTransferMode::reliable);
+    REQUIRE(module.functions.front().rpc->call_local);
+    REQUIRE_EQ(module.functions.front().rpc->channel, std::int64_t{7});
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+}
+
 TEST_CASE("typed IR distinguishes local constants from class constants") {
     gdpp::DiagnosticBag diagnostics;
     const auto module = lower_source("const ROOT = \"res://\"\n"
