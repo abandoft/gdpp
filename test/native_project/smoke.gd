@@ -28,6 +28,7 @@ func _run() -> void:
     var player_class := _native_class_for("player.gd")
     var hello_class := _native_class_for("hello.gd")
     var inheritance_class := _native_class_for("inheritance_child.gd")
+    var iteration_class := _native_class_for("iteration_case.gd")
     var cross_a_class := _native_class_for("cross_ref_a.gd")
     var cross_b_class := _native_class_for("cross_ref_b.gd")
     var optimization_class := _native_class_for("optimization_case.gd")
@@ -39,6 +40,7 @@ func _run() -> void:
         player_class.is_empty()
         or hello_class.is_empty()
         or inheritance_class.is_empty()
+        or iteration_class.is_empty()
         or cross_a_class.is_empty()
         or cross_b_class.is_empty()
         or optimization_class.is_empty()
@@ -50,6 +52,30 @@ func _run() -> void:
         push_error("Generated native class manifest is incomplete")
         quit(1)
         return
+
+    var native_iteration: Object = ClassDB.instantiate(iteration_class)
+    var script_iteration: Object = load("res://iteration_case.gd").new()
+    if native_iteration == null or script_iteration == null:
+        push_error("Static iteration differential fixtures are unavailable")
+        quit(1)
+        return
+    var native_iteration_trace: Array = native_iteration.call("run")
+    var script_iteration_trace: Array = script_iteration.call("run")
+    var expected_iteration_trace: Array = [
+        1, 2, 3, 4, 5, 6, "A", "🙂", "B", "left", "right", "tail", 0, null, true
+    ]
+    if (
+        native_iteration_trace != script_iteration_trace
+        or native_iteration_trace != expected_iteration_trace
+    ):
+        push_error(
+            "Native iteration differs from GDScript: native=%s script=%s"
+            % [native_iteration_trace, script_iteration_trace]
+        )
+        quit(1)
+        return
+    native_iteration = null
+    script_iteration = null
     var instance: Object = ClassDB.instantiate(player_class)
     if (
         instance == null
