@@ -3780,7 +3780,13 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
         return result + prefix + "}\n";
     }
     case ir::StatementKind::for_statement: {
-        if (const auto* direct_range = range_call(*statement.condition)) {
+        if (statement.iteration.strategy == IterationStrategy::intrinsic_range) {
+            const auto* direct_range = range_call(*statement.condition);
+            if (!direct_range) {
+                diagnostics_.error("GDS3011", "range iteration plan lost its intrinsic call",
+                                   statement.span);
+                return prefix + "/* invalid range iteration plan */;\n";
+            }
             const auto suffix = std::to_string(temporary_counter_++);
             const auto start = "_gdpp_range_start_" + suffix;
             const auto stop = "_gdpp_range_stop_" + suffix;
@@ -3815,7 +3821,7 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                 result += emit_statement(child, indentation + 2);
             return result + nested_prefix + "}\n" + prefix + "}\n";
         }
-        if (statement.condition->type.kind == TypeKind::integer) {
+        if (statement.iteration.strategy == IterationStrategy::integer_count) {
             const auto suffix = std::to_string(temporary_counter_++);
             const auto limit = "_gdpp_integer_limit_" + suffix;
             std::string result =
@@ -3830,34 +3836,73 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                 result += emit_statement(child, indentation + 2);
             return result + indent(indentation + 1) + "}\n" + prefix + "}\n";
         }
-        if (statement.condition->type.is_packed_array()) {
+        if (statement.iteration.strategy == IterationStrategy::indexed_packed_array) {
             const auto suffix = std::to_string(temporary_counter_++);
             const auto iterable_name = "_gdpp_packed_iterable_" + suffix;
             const auto index_name = "_gdpp_packed_index_" + suffix;
-            const auto size_name = "_gdpp_packed_size_" + suffix;
             const auto nested_prefix = indent(indentation + 1);
             const auto body_prefix = indent(indentation + 2);
-            const auto element_type = packed_array_element_type(statement.condition->type);
             std::string result =
-                prefix + "{\n" + nested_prefix + "const auto " + iterable_name + " = " +
-                emit_expression(*statement.condition) + ";\n" + nested_prefix + "const int64_t " +
-                size_name + " = " + iterable_name + ".size();\n" + nested_prefix + "for (int64_t " +
-                index_name + " = 0; " + index_name + " < " + size_name + "; ++" + index_name +
-                ") {\n" + body_prefix +
+                prefix + "{\n" + nested_prefix + "auto &&" + iterable_name + " = " +
+                emit_expression(*statement.condition) + ";\n" + nested_prefix + "for (int64_t " +
+                index_name + " = 0; " + index_name + " < " + iterable_name + ".size(); ++" +
+                index_name + ") {\n" + body_prefix +
                 (statement.declared_type.is_dynamic() ? std::string{"godot::Variant"}
                                                       : cpp_type(statement.declared_type)) +
                 " " + sanitize_identifier(statement.name) + " = " +
-                emit_conversion(statement.declared_type, element_type,
+                emit_conversion(statement.declared_type, statement.iteration.element_type,
                                 iterable_name + "[" + index_name + "]") +
                 ";\n";
             for (const auto& child : statement.body)
                 result += emit_statement(child, indentation + 2);
             return result + nested_prefix + "}\n" + prefix + "}\n";
         }
-        if (statement.condition->type.is_dynamic() ||
-            statement.condition->type.kind == TypeKind::array ||
-            statement.condition->type.kind == TypeKind::dictionary ||
-            statement.condition->type.kind == TypeKind::string) {
+        if (statement.iteration.strategy == IterationStrategy::indexed_string) {
+            const auto suffix = std::to_string(temporary_counter_++);
+            const auto iterable_name = "_gdpp_string_iterable_" + suffix;
+            const auto index_name = "_gdpp_string_index_" + suffix;
+            const auto size_name = "_gdpp_string_size_" + suffix;
+            const auto nested_prefix = indent(indentation + 1);
+            const auto body_prefix = indent(indentation + 2);
+            std::string result =
+                prefix + "{\n" + nested_prefix + "const godot::String " + iterable_name + " = " +
+                emit_expression(*statement.condition) + ";\n" + nested_prefix + "const int64_t " +
+                size_name + " = " + iterable_name + ".length();\n" + nested_prefix +
+                "for (int64_t " + index_name + " = 0; " + index_name + " < " + size_name + "; ++" +
+                index_name + ") {\n" + body_prefix +
+                (statement.declared_type.is_dynamic() ? std::string{"godot::Variant"}
+                                                      : cpp_type(statement.declared_type)) +
+                " " + sanitize_identifier(statement.name) + " = " +
+                emit_conversion(statement.declared_type, statement.iteration.element_type,
+                                iterable_name + ".substr(" + index_name + ", 1)") +
+                ";\n";
+            for (const auto& child : statement.body)
+                result += emit_statement(child, indentation + 2);
+            return result + nested_prefix + "}\n" + prefix + "}\n";
+        }
+        if (statement.iteration.strategy == IterationStrategy::indexed_array) {
+            const auto suffix = std::to_string(temporary_counter_++);
+            const auto iterable_name = "_gdpp_array_iterable_" + suffix;
+            const auto index_name = "_gdpp_array_index_" + suffix;
+            const auto nested_prefix = indent(indentation + 1);
+            const auto body_prefix = indent(indentation + 2);
+            std::string result =
+                prefix + "{\n" + nested_prefix + "auto &&" + iterable_name + " = " +
+                emit_expression(*statement.condition) + ";\n" + nested_prefix + "for (int64_t " +
+                index_name + " = 0; " + index_name + " < " + iterable_name + ".size(); ++" +
+                index_name + ") {\n" + body_prefix +
+                (statement.declared_type.is_dynamic() ? std::string{"godot::Variant"}
+                                                      : cpp_type(statement.declared_type)) +
+                " " + sanitize_identifier(statement.name) + " = " +
+                emit_conversion(statement.declared_type, {TypeKind::variant, "Variant"},
+                                iterable_name + "[" + index_name + "]") +
+                ";\n";
+            for (const auto& child : statement.body)
+                result += emit_statement(child, indentation + 2);
+            return result + nested_prefix + "}\n" + prefix + "}\n";
+        }
+        if (statement.iteration.strategy == IterationStrategy::dynamic_protocol ||
+            statement.iteration.strategy == IterationStrategy::dictionary_protocol) {
             const auto suffix = std::to_string(temporary_counter_++);
             const auto iterable_name = "_gdpp_dynamic_iterable_" + suffix;
             const auto iterator_name = "_gdpp_dynamic_iterator_" + suffix;
