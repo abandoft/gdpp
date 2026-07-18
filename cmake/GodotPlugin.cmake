@@ -450,77 +450,35 @@ configure_file(
     "${GDPP_PROJECT_SMOKE_ROOT}/.godot/extension_list.cfg"
     COPYONLY
 )
+file(GLOB_RECURSE GDPP_PROJECT_SMOKE_INPUTS CONFIGURE_DEPENDS LIST_DIRECTORIES false
+    "${GDPP_PROJECT_SMOKE_ROOT}/*.gd"
+    "${GDPP_PROJECT_SMOKE_ROOT}/*.tscn"
+    "${GDPP_PROJECT_SMOKE_ROOT}/*.tres"
+)
+list(FILTER GDPP_PROJECT_SMOKE_INPUTS EXCLUDE REGEX "/addons/gdpp/build/")
+list(FILTER GDPP_PROJECT_SMOKE_INPUTS EXCLUDE REGEX "/\\.godot/")
+list(APPEND GDPP_PROJECT_SMOKE_INPUTS "${GDPP_PROJECT_SMOKE_ROOT}/project.godot")
+list(REMOVE_DUPLICATES GDPP_PROJECT_SMOKE_INPUTS)
+list(SORT GDPP_PROJECT_SMOKE_INPUTS)
+set(GDPP_PROJECT_SMOKE_STAMP "${CMAKE_BINARY_DIR}/gdpp-project-sources.stamp")
 add_custom_command(
-    OUTPUT
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/example_autoload_state.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/example_autoload_state.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/cross_ref_a.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/cross_ref_a.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/cross_ref_b.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/cross_ref_b.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/hello_aot.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/hello_aot.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/inheritance_base.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/inheritance_base.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/inheritance_child.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/inheritance_child.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/native_project_player.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/native_project_player.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/required_initializer.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/required_initializer.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/rpc_case.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/rpc_case.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/register_types.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/CMakeLists.txt"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/prune_stale_development.cmake"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/gdpp_project.gdextension"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/build_id.txt"
+    OUTPUT "${GDPP_PROJECT_SMOKE_STAMP}"
     COMMAND $<TARGET_FILE:gdpp> project "${GDPP_PROJECT_SMOKE_ROOT}"
             --output "${GDPP_PROJECT_SMOKE_OUTPUT}"
             --sdk-root "${GDPP_PROJECT_SMOKE_SDK}"
             --godot-cpp "${CMAKE_SOURCE_DIR}/third/godot-cpp"
             --target-godot "${GDPP_PROJECT_SMOKE_VERSION}"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${GDPP_PROJECT_SMOKE_STAMP}"
     DEPENDS
         gdpp
         gdpp_packaged_sdk
-        "${CMAKE_SOURCE_DIR}/example/autoload_state.gd"
-        "${CMAKE_SOURCE_DIR}/example/await_expression_case.gd"
-        "${CMAKE_SOURCE_DIR}/example/cross_ref_a.gd"
-        "${CMAKE_SOURCE_DIR}/example/cross_ref_b.gd"
-        "${CMAKE_SOURCE_DIR}/example/hello.gd"
-        "${CMAKE_SOURCE_DIR}/example/inheritance_base.gd"
-        "${CMAKE_SOURCE_DIR}/example/inheritance_child.gd"
-        "${CMAKE_SOURCE_DIR}/example/player.gd"
-        "${CMAKE_SOURCE_DIR}/example/required_initializer.gd"
-        "${CMAKE_SOURCE_DIR}/example/rpc_case.gd"
+        ${GDPP_PROJECT_SMOKE_INPUTS}
+    COMMENT "Generating deterministic native project smoke sources"
     VERBATIM
 )
 add_custom_target(
     gdpp_project_sources ALL
-    DEPENDS
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/example_autoload_state.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/example_autoload_state.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/cross_ref_a.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/cross_ref_a.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/cross_ref_b.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/cross_ref_b.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/hello_aot.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/hello_aot.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/inheritance_base.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/inheritance_base.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/inheritance_child.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/inheritance_child.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/native_project_player.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/native_project_player.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/required_initializer.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/required_initializer.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/rpc_case.gd.hpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/generated/rpc_case.gd.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/register_types.cpp"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/CMakeLists.txt"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/prune_stale_development.cmake"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/gdpp_project.gdextension"
-        "${GDPP_PROJECT_SMOKE_OUTPUT}/build_id.txt"
+    DEPENDS "${GDPP_PROJECT_SMOKE_STAMP}"
 )
 
 add_custom_target(
