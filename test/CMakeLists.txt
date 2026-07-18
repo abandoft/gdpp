@@ -2,6 +2,7 @@ add_executable(
     gdpp_tests
     main.cpp
     lexer_test.cpp
+    frontend_limits_test.cpp
     parser_test.cpp
     ir_test.cpp
     mir_test.cpp

@@ -55,6 +55,32 @@ TEST_CASE("parser accepts latest script annotations directives and single-line s
     REQUIRE_EQ(script.functions.back().body.size(), std::size_t{2});
 }
 
+TEST_CASE("parser rejects misplaced duplicate script annotations and warning ranges") {
+    const gdpp::SourceFile source{"invalid_directives.gd",
+                                  "@tool\n"
+                                  "@tool\n"
+                                  "class_name Invalid\n"
+                                  "@icon(\"res://late.svg\")\n"
+                                  "@warning_ignore_start(\"unused_variable\")\n"
+                                  "@warning_ignore_start(\"unused_variable\")\n"
+                                  "@warning_ignore_restore(\"not_active\")\n"
+                                  "func test() -> void:\n"
+                                  "    pass\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    (void)gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(diagnostics.has_errors());
+    REQUIRE(std::count_if(diagnostics.items().begin(), diagnostics.items().end(),
+                          [](const auto& diagnostic) { return diagnostic.code == "GDS2028"; }) ==
+            std::ptrdiff_t{1});
+    REQUIRE(std::count_if(diagnostics.items().begin(), diagnostics.items().end(),
+                          [](const auto& diagnostic) { return diagnostic.code == "GDS2029"; }) ==
+            std::ptrdiff_t{2});
+    REQUIRE(std::any_of(diagnostics.items().begin(), diagnostics.items().end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS2027"; }));
+}
+
 TEST_CASE("parser builds internal classes and multiline lambda expressions") {
     const gdpp::SourceFile source{"modern.gd", "class Payload:\n"
                                                "    var value: int\n"
@@ -102,19 +128,28 @@ TEST_CASE("parser builds assert statements with optional messages") {
                gdpp::ast::LiteralKind::string);
 }
 
-TEST_CASE("parser builds top-level signal await statements") {
+TEST_CASE("parser builds await as a precedence-aware expression") {
     const gdpp::SourceFile source{"await.gd", "func wait_for(timer: Timer) -> void:\n"
                                               "    await timer.timeout\n"
+                                              "    var value = 1 + await timer.timeout\n"
+                                              "    print(await timer.timeout)\n"
                                               "    pass\n"};
     gdpp::DiagnosticBag diagnostics;
     const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
     const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
 
     REQUIRE(!diagnostics.has_errors());
-    REQUIRE_EQ(script.functions.front().body.front().kind(),
-               gdpp::ast::StatementKind::await_statement);
+    REQUIRE_EQ(script.functions.front().body.front().kind(), gdpp::ast::StatementKind::expression);
     REQUIRE_EQ(script.functions.front().body.front().expression()->kind(),
+               gdpp::ast::ExpressionKind::await_expression);
+    REQUIRE_EQ(script.functions.front().body.front().expression()->operand(0)->kind(),
                gdpp::ast::ExpressionKind::member);
+    const auto& initializer = *script.functions.front().body.at(1).expression();
+    REQUIRE_EQ(initializer.kind(), gdpp::ast::ExpressionKind::binary);
+    REQUIRE_EQ(initializer.operand(1)->kind(), gdpp::ast::ExpressionKind::await_expression);
+    const auto& call = *script.functions.front().body.at(2).expression();
+    REQUIRE_EQ(call.kind(), gdpp::ast::ExpressionKind::call);
+    REQUIRE_EQ(call.operand(1)->kind(), gdpp::ast::ExpressionKind::await_expression);
 }
 
 TEST_CASE("parser preserves collection literals inferred types for loops and elif") {
@@ -142,6 +177,33 @@ TEST_CASE("parser preserves collection literals inferred types for loops and eli
     REQUIRE_EQ(script.functions.front().body.at(2).kind(), gdpp::ast::StatementKind::for_statement);
     REQUIRE_EQ(script.functions.front().body.at(2).body().front().else_body().front().kind(),
                gdpp::ast::StatementKind::if_statement);
+}
+
+TEST_CASE("parser accepts current Godot local constants separators and Lua dictionaries") {
+    const gdpp::SourceFile source{"official_surface.gd",
+                                  "func exercise() -> void:\n"
+                                  "    const LIMIT : = 123_\n"
+                                  "    var match : = {score = LIMIT, \"label\" = \"ok\",}\n"
+                                  "    var when := [match.score,]\n"
+                                  "    assert(when[0] == LIMIT,)\n"
+                                  "    match.return = LIMIT\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.functions.front().body.size(), std::size_t{5});
+    REQUIRE(script.functions.front().body.front().is_constant());
+    REQUIRE(script.functions.front().body.front().infer_type());
+    const auto& dictionary = *script.functions.front().body.at(1).expression();
+    REQUIRE_EQ(dictionary.kind(), gdpp::ast::ExpressionKind::dictionary_literal);
+    const auto& entries = dictionary.get_if<gdpp::ast::DictionaryExpression>()->entries;
+    REQUIRE_EQ(entries.size(), std::size_t{2});
+    REQUIRE_EQ(entries.front().key->literal_kind(), gdpp::ast::LiteralKind::string);
+    REQUIRE_EQ(entries.front().key->value(), std::string{"score"});
+    REQUIRE_EQ(script.functions.front().body.at(3).kind(),
+               gdpp::ast::StatementKind::assert_statement);
+    REQUIRE_EQ(script.functions.front().body.back().condition()->value(), std::string{"return"});
 }
 
 TEST_CASE("parser attaches export annotations to fields across line layouts") {
@@ -274,6 +336,53 @@ TEST_CASE("parser builds match alternatives bindings guards and wildcard branche
     REQUIRE(match.match_branches().at(1).guard != nullptr);
     REQUIRE_EQ(match.match_branches().back().patterns.front().kind(),
                gdpp::ast::MatchPatternKind::wildcard);
+}
+
+TEST_CASE("parser preserves recursive array dictionary rest and binding match patterns") {
+    const gdpp::SourceFile source{
+        "structured_match.gd", "func classify(value):\n"
+                               "    match [1, value, 3]:\n"
+                               "        [1, {\"hp\": var hp, ..}, [var first, ..]] when hp > 0:\n"
+                               "            return first\n"
+                               "    match 0:\n"
+                               "        pass\n"
+                               "func callback():\n"
+                               "    var operation := func named_operation(input):\n"
+                               "        return input\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    const auto& statement = script.functions.front().body.front();
+    REQUIRE_EQ(statement.condition()->kind(), gdpp::ast::ExpressionKind::array_literal);
+    const auto& root = statement.match_branches().front().patterns.front();
+    REQUIRE_EQ(root.kind(), gdpp::ast::MatchPatternKind::array);
+    REQUIRE_EQ(root.elements.size(), std::size_t{3});
+    REQUIRE_EQ(root.elements.at(1)->kind(), gdpp::ast::MatchPatternKind::dictionary);
+    REQUIRE_EQ(root.elements.at(1)->keys.size(), std::size_t{2});
+    REQUIRE_EQ(root.elements.at(1)->elements.front()->kind(), gdpp::ast::MatchPatternKind::binding);
+    REQUIRE_EQ(root.elements.at(1)->elements.back()->kind(), gdpp::ast::MatchPatternKind::rest);
+    REQUIRE_EQ(root.elements.at(2)->elements.back()->kind(), gdpp::ast::MatchPatternKind::rest);
+    REQUIRE(script.functions.front().body.at(1).match_branches().empty());
+    REQUIRE_EQ(script.functions.back().body.front().expression()->lambda()->name,
+               std::string{"named_operation"});
+}
+
+TEST_CASE("parser rejects standalone lambdas while preserving assigned named lambdas") {
+    const gdpp::SourceFile source{"standalone_lambda.gd",
+                                  "func invalid():\n"
+                                  "    func inaccessible(): pass\n"
+                                  "func valid():\n"
+                                  "    var callable := func accessible(): pass\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(diagnostics.has_errors());
+    REQUIRE_EQ(script.functions.size(), std::size_t{2});
+    REQUIRE_EQ(script.functions.back().body.front().expression()->lambda()->name,
+               std::string{"accessible"});
 }
 
 TEST_CASE("parser attaches Godot 4 property getter and setter blocks") {
