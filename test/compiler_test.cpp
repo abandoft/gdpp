@@ -463,6 +463,84 @@ TEST_CASE("compiler rejects invalid and unsupported export annotations") {
     REQUIRE(wrong_type.unit.source.empty());
 }
 
+TEST_CASE("compiler emits complete native RPC configuration for Node classes") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "rpc_node.gd", "extends Node\n"
+                       "const RPC_MODE = \"any_peer\"\n"
+                       "const RPC_CHANNEL = 3\n"
+                       "@rpc\n"
+                       "func defaults() -> void:\n"
+                       "    pass\n"
+                       "@rpc(RPC_MODE, \"call_local\", \"reliable\", RPC_CHANNEL)\n"
+                       "static func synchronize() -> void:\n"
+                       "    pass\n"
+                       "class Child extends Node:\n"
+                       "    @rpc(\"unreliable_ordered\")\n"
+                       "    func update_remote() -> void:\n"
+                       "        pass\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("GDPPNative_RpcNode();") != std::string::npos);
+    REQUIRE(result.unit.source.find("#include <godot_cpp/classes/multiplayer_api.hpp>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("RPC_MODE_AUTHORITY") != std::string::npos);
+    REQUIRE(result.unit.source.find("RPC_MODE_ANY_PEER") != std::string::npos);
+    REQUIRE(result.unit.source.find("TRANSFER_MODE_UNRELIABLE") != std::string::npos);
+    REQUIRE(result.unit.source.find("TRANSFER_MODE_UNRELIABLE_ORDERED") != std::string::npos);
+    REQUIRE(result.unit.source.find("TRANSFER_MODE_RELIABLE") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp_rpc_config[\"call_local\"] = true") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp_rpc_config[\"channel\"] = int64_t{3}") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("rpc_config(godot::StringName(\"synchronize\")") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("rpc_config(godot::StringName(\"update_remote\")") !=
+            std::string::npos);
+}
+
+TEST_CASE("compiler accepts inert RPC metadata on non-Node classes") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile("rpc_ref.gd", "extends RefCounted\n"
+                                                       "@rpc(\"call_local\")\n"
+                                                       "func local_only() -> void:\n"
+                                                       "    pass\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("rpc_config(") == std::string::npos);
+}
+
+TEST_CASE("compiler rejects malformed and ambiguous RPC configurations") {
+    const gdpp::Compiler compiler;
+    const auto duplicate =
+        compiler.compile("duplicate_rpc.gd", "@rpc(\"authority\", \"any_peer\")\n"
+                                             "func synchronize() -> void:\n"
+                                             "    pass\n");
+    const auto invalid = compiler.compile("invalid_rpc.gd", "@rpc(\"ordered\")\n"
+                                                            "func synchronize() -> void:\n"
+                                                            "    pass\n");
+    const auto channel = compiler.compile(
+        "channel_rpc.gd", "@rpc(\"authority\", \"call_remote\", \"reliable\", \"one\")\n"
+                          "func synchronize() -> void:\n"
+                          "    pass\n");
+    const auto repeated = compiler.compile("repeated_rpc.gd", "@rpc\n"
+                                                              "@rpc\n"
+                                                              "func synchronize() -> void:\n"
+                                                              "    pass\n");
+
+    REQUIRE(!duplicate.success);
+    REQUIRE(!invalid.success);
+    REQUIRE(!channel.success);
+    REQUIRE(!repeated.success);
+    REQUIRE(std::any_of(duplicate.diagnostics.begin(), duplicate.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4136"; }));
+    REQUIRE(std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4135"; }));
+    REQUIRE(std::any_of(channel.diagnostics.begin(), channel.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4137"; }));
+    REQUIRE(std::any_of(repeated.diagnostics.begin(), repeated.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4133"; }));
+}
+
 TEST_CASE("compiler initializes onready fields immediately before ready") {
     const gdpp::Compiler compiler;
     const auto result =
