@@ -1,4 +1,5 @@
 extends Node
+class_name RpcCase
 
 var received_value: int = -1
 
