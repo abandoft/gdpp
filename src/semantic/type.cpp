@@ -1,5 +1,6 @@
 #include "gdpp/semantic/type.hpp"
 
+#include <cctype>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -130,6 +131,54 @@ Type packed_array_element_type(const Type& packed_array) {
     };
     const auto found = elements.find(packed_array.name);
     return found == elements.end() ? Type{TypeKind::variant, "Variant"} : found->second;
+}
+
+std::optional<std::vector<std::string>>
+generic_type_arguments(const std::string_view type_name, const std::string_view container_name,
+                       const std::size_t expected_arguments) {
+    if (type_name.size() <= container_name.size() + 2U ||
+        type_name.compare(0, container_name.size(), container_name) != 0 ||
+        type_name[container_name.size()] != '[' || type_name.back() != ']') {
+        return std::nullopt;
+    }
+    const auto trim = [](std::string_view value) {
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0) {
+            value.remove_prefix(1);
+        }
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())) != 0) {
+            value.remove_suffix(1);
+        }
+        return value;
+    };
+    auto content =
+        type_name.substr(container_name.size() + 1U, type_name.size() - container_name.size() - 2U);
+    std::vector<std::string> arguments;
+    std::size_t begin = 0;
+    std::size_t depth = 0;
+    for (std::size_t index = 0; index <= content.size(); ++index) {
+        const bool at_end = index == content.size();
+        const auto character = at_end ? '\0' : content[index];
+        if (!at_end && character == '[') {
+            ++depth;
+            continue;
+        }
+        if (!at_end && character == ']') {
+            if (depth == 0)
+                return std::nullopt;
+            --depth;
+            continue;
+        }
+        if (!at_end && (character != ',' || depth != 0))
+            continue;
+        const auto argument = trim(content.substr(begin, index - begin));
+        if (argument.empty())
+            return std::nullopt;
+        arguments.emplace_back(argument);
+        begin = index + 1U;
+    }
+    if (depth != 0 || arguments.size() != expected_arguments)
+        return std::nullopt;
+    return arguments;
 }
 
 bool is_assignable(const Type& target, const Type& source) noexcept {

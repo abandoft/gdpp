@@ -1,6 +1,10 @@
 #pragma once
 
+#include <cstddef>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace gdpp {
 
@@ -41,6 +45,9 @@ struct Type {
 
 [[nodiscard]] Type type_from_annotation(const std::string& annotation);
 [[nodiscard]] Type packed_array_element_type(const Type& packed_array);
+[[nodiscard]] std::optional<std::vector<std::string>>
+generic_type_arguments(std::string_view type_name, std::string_view container_name,
+                       std::size_t expected_arguments);
 [[nodiscard]] bool is_assignable(const Type& target, const Type& source) noexcept;
 
 } // namespace gdpp
