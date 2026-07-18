@@ -8,6 +8,25 @@ import json
 from pathlib import Path
 
 
+# extension_api.json exposes C++ wrapper placeholders for vararg utilities rather than their
+# runtime minimum arity. Keep this source-audited list exhaustive so upstream additions cannot
+# silently inherit an unsafe argument contract.
+VARARG_MINIMUM_ARGUMENTS = {
+    "max": 2,
+    "min": 2,
+    "str": 0,
+    "print": 0,
+    "print_rich": 0,
+    "printerr": 0,
+    "printt": 0,
+    "prints": 0,
+    "printraw": 0,
+    "print_verbose": 0,
+    "push_error": 0,
+    "push_warning": 0,
+}
+
+
 def cpp_string(value: str | None) -> str:
     return json.dumps(value or "", ensure_ascii=True)
 
@@ -156,13 +175,21 @@ def main() -> None:
     for function in data.get("utility_functions", []):
         arguments_list = function.get("arguments", [])
         required = sum("default_value" not in argument for argument in arguments_list)
+        is_vararg = bool(function.get("is_vararg", False))
+        if is_vararg:
+            try:
+                required = VARARG_MINIMUM_ARGUMENTS[function["name"]]
+            except KeyError as error:
+                raise ValueError(
+                    "unreviewed Godot vararg utility function: " + function["name"]
+                ) from error
         utility_functions.append(
             (
                 function["name"],
                 function.get("return_type", "void"),
                 required,
                 len(arguments_list),
-                bool(function.get("is_vararg", False)),
+                is_vararg,
                 tuple(
                     (
                         argument.get("name", ""),
