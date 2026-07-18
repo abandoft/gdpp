@@ -6,6 +6,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <utility>
 
 namespace gdpp {
@@ -26,6 +27,8 @@ ast::ExpressionPtr make_expression(ast::ExpressionKind kind, std::string value, 
     case ast::ExpressionKind::unary:
         return std::make_unique<ast::Expression>(ast::UnaryExpression{std::move(value), nullptr},
                                                  span);
+    case ast::ExpressionKind::await_expression:
+        return std::make_unique<ast::Expression>(ast::AwaitExpression{}, span);
     case ast::ExpressionKind::binary:
         return std::make_unique<ast::Expression>(
             ast::BinaryExpression{std::move(value), nullptr, nullptr}, span);
@@ -78,8 +81,26 @@ void validate_annotation_targets(const std::vector<ast::Annotation>& annotations
 
 } // namespace
 
-Parser::Parser(const std::vector<Token>& tokens, DiagnosticBag& diagnostics)
-    : tokens_(tokens), diagnostics_(diagnostics) {}
+Parser::Parser(const std::vector<Token>& tokens, DiagnosticBag& diagnostics, FrontendLimits limits)
+    : tokens_(tokens), diagnostics_(diagnostics), limits_(limits) {}
+
+Parser::DepthGuard::DepthGuard(Parser& parser, SourceSpan span) : parser_(parser) {
+    if (parser_.recursion_depth_ >= parser_.limits_.max_parser_depth) {
+        if (!parser_.recursion_limit_reported_) {
+            parser_.diagnostics_.error("GDS2024", "parser recursion exceeds the configured limit",
+                                       span);
+            parser_.recursion_limit_reported_ = true;
+        }
+        return;
+    }
+    ++parser_.recursion_depth_;
+    active_ = true;
+}
+
+Parser::DepthGuard::~DepthGuard() {
+    if (active_)
+        --parser_.recursion_depth_;
+}
 
 const Token& Parser::current() const noexcept { return tokens_[position_]; }
 
@@ -91,12 +112,68 @@ bool Parser::at_end() const noexcept { return current().kind == TokenKind::end_o
 
 bool Parser::check(TokenKind kind) const noexcept { return current().kind == kind; }
 
+bool Parser::check_soft_identifier() const noexcept {
+    return check(TokenKind::identifier) || check(TokenKind::kw_match) || check(TokenKind::kw_when);
+}
+
+bool Parser::check_attribute_name() const noexcept {
+    return check(TokenKind::identifier) ||
+           (current().kind >= TokenKind::kw_extends && current().kind <= TokenKind::kw_await);
+}
+
+bool Parser::is_match_statement_ahead() const noexcept {
+    if (!check(TokenKind::kw_match))
+        return false;
+    std::size_t grouping_depth = 0;
+    for (std::size_t index = position_ + 1; index < tokens_.size(); ++index) {
+        switch (tokens_[index].kind) {
+        case TokenKind::left_paren:
+        case TokenKind::left_bracket:
+        case TokenKind::left_brace:
+            ++grouping_depth;
+            break;
+        case TokenKind::right_paren:
+        case TokenKind::right_bracket:
+        case TokenKind::right_brace:
+            if (grouping_depth > 0)
+                --grouping_depth;
+            break;
+        case TokenKind::colon:
+            if (grouping_depth == 0)
+                return true;
+            break;
+        case TokenKind::newline:
+        case TokenKind::semicolon:
+        case TokenKind::dedent:
+        case TokenKind::end_of_file:
+            if (grouping_depth == 0)
+                return false;
+            break;
+        default:
+            break;
+        }
+    }
+    return false;
+}
+
 bool Parser::match(TokenKind kind) noexcept {
     if (!check(kind)) {
         return false;
     }
     advance();
     return true;
+}
+
+bool Parser::match_inferred_assignment() noexcept {
+    if (match(TokenKind::colon_equal))
+        return true;
+    if (check(TokenKind::colon) && position_ + 1 < tokens_.size() &&
+        tokens_[position_ + 1].kind == TokenKind::equal) {
+        advance();
+        advance();
+        return true;
+    }
+    return false;
 }
 
 const Token& Parser::advance() noexcept {
@@ -119,6 +196,18 @@ const Token& Parser::consume(TokenKind kind, const char* message) {
     return current();
 }
 
+const Token& Parser::consume_soft_identifier(const char* message) {
+    if (check_soft_identifier())
+        return advance();
+    return consume(TokenKind::identifier, message);
+}
+
+const Token& Parser::consume_attribute_name(const char* message) {
+    if (check_attribute_name())
+        return advance();
+    return consume(TokenKind::identifier, message);
+}
+
 void Parser::skip_newlines() noexcept {
     while (match(TokenKind::newline) || match(TokenKind::semicolon)) {
     }
@@ -137,6 +226,12 @@ void Parser::synchronize() noexcept {
 }
 
 std::string Parser::parse_type_name(const char* message) {
+    const DepthGuard depth{*this, current().span};
+    if (!depth) {
+        if (!at_end())
+            advance();
+        return "Variant";
+    }
     const auto& name = consume(TokenKind::identifier, message);
     std::string type = name.lexeme;
     while (match(TokenKind::dot)) {
@@ -259,7 +354,7 @@ ast::Annotation Parser::parse_annotation() {
     if (match(TokenKind::left_paren)) {
         while (!check(TokenKind::right_paren) && !at_end()) {
             annotation.arguments.push_back(parse_expression());
-            if (!match(TokenKind::comma))
+            if (!match(TokenKind::comma) || check(TokenKind::right_paren))
                 break;
         }
         consume(TokenKind::right_paren, "expected ')' after annotation arguments");
@@ -285,23 +380,79 @@ ast::Annotation Parser::parse_annotation() {
     return annotation;
 }
 
+void Parser::apply_warning_directive(const ast::Annotation& annotation) {
+    if (annotation.name != "warning_ignore_start" && annotation.name != "warning_ignore_restore") {
+        return;
+    }
+    for (const auto& argument : annotation.arguments) {
+        if (argument->kind() != ast::ExpressionKind::literal ||
+            argument->literal_kind() != ast::LiteralKind::string) {
+            continue;
+        }
+        const auto& warning = argument->value();
+        if (annotation.name == "warning_ignore_start") {
+            if (!ignored_warning_ranges_.emplace(warning, annotation.span).second) {
+                diagnostics_.error("GDS2029",
+                                   "warning '" + warning +
+                                       "' is already ignored by an active "
+                                       "@warning_ignore_start range",
+                                   argument->span);
+            }
+        } else if (ignored_warning_ranges_.erase(warning) == 0U) {
+            diagnostics_.error("GDS2029",
+                               "warning '" + warning +
+                                   "' is not ignored by an active @warning_ignore_start range",
+                               argument->span);
+        }
+    }
+}
+
+void Parser::apply_active_warning_ignores(ast::Statement& statement) const {
+    std::vector<std::pair<std::string, SourceSpan>> active;
+    active.reserve(ignored_warning_ranges_.size());
+    for (const auto& entry : ignored_warning_ranges_)
+        active.push_back(entry);
+    std::sort(active.begin(), active.end(),
+              [](const auto& left, const auto& right) { return left.first < right.first; });
+    for (const auto& entry : active) {
+        const auto& warning = entry.first;
+        const auto& span = entry.second;
+        const bool already_present = std::any_of(
+            statement.annotations.begin(), statement.annotations.end(),
+            [&](const ast::Annotation& annotation) {
+                return annotation.name == "warning_ignore" && annotation.arguments.size() == 1 &&
+                       annotation.arguments.front()->kind() == ast::ExpressionKind::literal &&
+                       annotation.arguments.front()->value() == warning;
+            });
+        if (already_present)
+            continue;
+        ast::Annotation annotation;
+        annotation.name = "warning_ignore";
+        annotation.span = span;
+        annotation.arguments.push_back(std::make_unique<ast::Expression>(
+            ast::LiteralExpression{ast::LiteralKind::string, warning}, span));
+        statement.annotations.push_back(std::move(annotation));
+    }
+}
+
 std::vector<ast::Parameter> Parser::parse_parameters() {
     std::vector<ast::Parameter> parameters;
     consume(TokenKind::left_paren, "expected '('");
     while (!check(TokenKind::right_paren) && !at_end()) {
         const auto begin = current().span;
         ast::Parameter parameter;
-        parameter.name = consume(TokenKind::identifier, "expected a parameter name").lexeme;
-        parameter.type = parse_type_annotation();
-        if (match(TokenKind::colon_equal)) {
+        parameter.name = consume_soft_identifier("expected a parameter name").lexeme;
+        if (match_inferred_assignment()) {
             parameter.infer_type = true;
             parameter.default_value = parse_expression();
-        } else if (match(TokenKind::equal)) {
-            parameter.default_value = parse_expression();
+        } else {
+            parameter.type = parse_type_annotation();
+            if (match(TokenKind::equal))
+                parameter.default_value = parse_expression();
         }
         parameter.span = joined(begin, previous().span);
         parameters.push_back(std::move(parameter));
-        if (!match(TokenKind::comma)) {
+        if (!match(TokenKind::comma) || check(TokenKind::right_paren)) {
             break;
         }
     }
@@ -318,14 +469,14 @@ ast::VariableDeclaration Parser::parse_variable(bool is_constant,
     declaration.onready =
         std::any_of(declaration.annotations.begin(), declaration.annotations.end(),
                     [](const ast::Annotation& annotation) { return annotation.name == "onready"; });
-    declaration.name = consume(TokenKind::identifier, "expected a variable name").lexeme;
+    declaration.name = consume_soft_identifier("expected a variable name").lexeme;
     const bool property_without_type =
         check(TokenKind::colon) && position_ + 1 < tokens_.size() &&
         tokens_[position_ + 1].kind == TokenKind::identifier &&
         (tokens_[position_ + 1].lexeme == "get" || tokens_[position_ + 1].lexeme == "set");
     if (property_without_type) {
         advance();
-    } else if (match(TokenKind::colon_equal)) {
+    } else if (match_inferred_assignment()) {
         declaration.infer_type = true;
         declaration.initializer = parse_expression();
     } else {
@@ -390,12 +541,12 @@ ast::EnumDeclaration Parser::parse_enum(std::vector<ast::Annotation> annotations
     while (!check(TokenKind::right_brace) && !at_end()) {
         const auto entry_begin = current().span;
         ast::EnumEntry entry;
-        entry.name = consume(TokenKind::identifier, "expected an enum member name").lexeme;
+        entry.name = consume_soft_identifier("expected an enum member name").lexeme;
         if (match(TokenKind::equal))
             entry.value = parse_expression();
         entry.span = joined(entry_begin, previous().span);
         declaration.entries.push_back(std::move(entry));
-        if (!match(TokenKind::comma))
+        if (!match(TokenKind::comma) || check(TokenKind::right_brace))
             break;
     }
     const auto& end = consume(TokenKind::right_brace, "expected '}' after enum members");
@@ -428,7 +579,11 @@ ast::FunctionDeclaration Parser::parse_function(bool is_static,
 
 void Parser::parse_class_member(ast::ClassDeclaration& declaration,
                                 std::vector<ast::Annotation>& annotations) {
-    if (match(TokenKind::kw_extends)) {
+    if (match(TokenKind::string)) {
+        // Godot permits standalone strings as documentation/comment blocks in class suites.
+        annotations.clear();
+        skip_newlines();
+    } else if (match(TokenKind::kw_extends)) {
         if (!annotations.empty()) {
             diagnostics_.error("GDS2008", "annotations are not valid before 'extends'",
                                annotations.front().span);
@@ -482,11 +637,27 @@ void Parser::parse_class_member(ast::ClassDeclaration& declaration,
 }
 
 ast::ClassDeclaration Parser::parse_class(std::vector<ast::Annotation> annotations) {
+    const DepthGuard depth{*this, current().span};
+    if (!depth) {
+        synchronize();
+        return {};
+    }
     const auto begin = previous().span;
     ast::ClassDeclaration declaration;
     declaration.annotations = std::move(annotations);
-    declaration.name = consume(TokenKind::identifier, "expected an internal class name").lexeme;
+    declaration.name = consume_soft_identifier("expected an internal class name").lexeme;
+    if (match(TokenKind::kw_extends)) {
+        declaration.base_type =
+            parse_type_name("expected an internal class base type after 'extends'");
+    }
     consume(TokenKind::colon, "expected ':' after internal class name");
+    if (!check(TokenKind::newline)) {
+        std::vector<ast::Annotation> pending_annotations;
+        if (!match(TokenKind::kw_pass))
+            parse_class_member(declaration, pending_annotations);
+        declaration.span = joined(begin, previous().span);
+        return declaration;
+    }
     consume(TokenKind::newline, "expected a newline before internal class body");
     while (match(TokenKind::newline)) {
     }
@@ -520,7 +691,9 @@ std::vector<ast::Statement> Parser::parse_block() {
     std::vector<ast::Statement> statements;
     skip_newlines();
     while (!check(TokenKind::dedent) && !at_end()) {
-        statements.push_back(parse_statement());
+        auto statement = parse_statement();
+        apply_active_warning_ignores(statement);
+        statements.push_back(std::move(statement));
         skip_newlines();
     }
     consume(TokenKind::dedent, "expected the end of an indented block");
@@ -532,25 +705,21 @@ std::vector<ast::Statement> Parser::parse_suite() {
         return parse_block();
     std::vector<ast::Statement> statements;
     do {
-        statements.push_back(parse_statement());
+        auto statement = parse_statement();
+        apply_active_warning_ignores(statement);
+        statements.push_back(std::move(statement));
     } while (match(TokenKind::semicolon) && !check(TokenKind::newline) &&
              !check(TokenKind::dedent) && !at_end());
     return statements;
 }
 
-ast::Statement Parser::parse_variable_statement() {
+ast::Statement Parser::parse_variable_statement(const bool is_constant) {
     const auto begin = previous().span;
     ast::VariableStatement variable;
-    variable.name = consume(TokenKind::identifier, "expected a local variable name").lexeme;
-    const auto parse_initializer = [&] {
-        if (match(TokenKind::kw_await)) {
-            variable.awaits = true;
-            variable.initializer = parse_expression();
-        } else {
-            variable.initializer = parse_expression();
-        }
-    };
-    if (match(TokenKind::colon_equal)) {
+    variable.is_constant = is_constant;
+    variable.name = consume_soft_identifier("expected a local variable name").lexeme;
+    const auto parse_initializer = [&] { variable.initializer = parse_expression(); };
+    if (match_inferred_assignment()) {
         variable.infer_type = true;
         parse_initializer();
     } else {
@@ -558,6 +727,14 @@ ast::Statement Parser::parse_variable_statement() {
         if (match(TokenKind::equal)) {
             parse_initializer();
         }
+    }
+    if (is_constant && !variable.initializer) {
+        diagnostics_.error("GDS2002", "a local constant requires an initializer", current().span);
+    }
+    if (is_constant && variable.initializer &&
+        variable.initializer->kind() == ast::ExpressionKind::await_expression) {
+        diagnostics_.error("GDS2025", "a local constant initializer cannot await a signal",
+                           variable.initializer->span);
     }
     return ast::Statement{std::move(variable), joined(begin, previous().span)};
 }
@@ -578,25 +755,76 @@ ast::Statement Parser::parse_if_statement() {
     return ast::Statement{std::move(conditional), joined(begin, previous().span)};
 }
 
+std::unique_ptr<ast::MatchPattern> Parser::parse_match_pattern() {
+    auto pattern = std::make_unique<ast::MatchPattern>();
+    const auto begin = current().span;
+    if (match(TokenKind::kw_var)) {
+        const auto& name = consume_soft_identifier("expected a match binding name");
+        pattern->node = ast::BindingPattern{name.lexeme};
+        pattern->span = joined(begin, name.span);
+        return pattern;
+    }
+    if (check(TokenKind::identifier) && current().lexeme == "_") {
+        pattern->node = ast::WildcardPattern{};
+        pattern->span = advance().span;
+        return pattern;
+    }
+    if (check(TokenKind::dot) && position_ + 1 < tokens_.size() &&
+        tokens_[position_ + 1].kind == TokenKind::dot) {
+        advance();
+        const auto end = advance().span;
+        pattern->node = ast::RestPattern{};
+        pattern->span = joined(begin, end);
+        return pattern;
+    }
+    if (match(TokenKind::left_bracket)) {
+        pattern->node = ast::ArrayPattern{};
+        while (!check(TokenKind::right_bracket) && !at_end()) {
+            pattern->elements.push_back(parse_match_pattern());
+            if (!match(TokenKind::comma) || check(TokenKind::right_bracket))
+                break;
+        }
+        const auto& end = consume(TokenKind::right_bracket, "expected ']' after array pattern");
+        pattern->span = joined(begin, end.span);
+        return pattern;
+    }
+    if (match(TokenKind::left_brace)) {
+        pattern->node = ast::DictionaryPattern{};
+        while (!check(TokenKind::right_brace) && !at_end()) {
+            if (check(TokenKind::dot) && position_ + 1 < tokens_.size() &&
+                tokens_[position_ + 1].kind == TokenKind::dot) {
+                pattern->keys.push_back(nullptr);
+                pattern->elements.push_back(parse_match_pattern());
+            } else {
+                pattern->keys.push_back(parse_expression());
+                if (match(TokenKind::colon)) {
+                    pattern->elements.push_back(parse_match_pattern());
+                } else {
+                    auto wildcard = std::make_unique<ast::MatchPattern>();
+                    wildcard->node = ast::WildcardPattern{};
+                    wildcard->span = pattern->keys.back()->span;
+                    pattern->elements.push_back(std::move(wildcard));
+                }
+            }
+            if (!match(TokenKind::comma) || check(TokenKind::right_brace))
+                break;
+        }
+        const auto& end = consume(TokenKind::right_brace, "expected '}' after dictionary pattern");
+        pattern->span = joined(begin, end.span);
+        return pattern;
+    }
+    auto expression = parse_expression();
+    pattern->span = expression->span;
+    pattern->node = ast::ValuePattern{std::move(expression)};
+    return pattern;
+}
+
 ast::MatchBranch Parser::parse_match_branch() {
     const auto begin = current().span;
     ast::MatchBranch branch;
     while (!check(TokenKind::colon) && !check(TokenKind::kw_when) && !at_end()) {
-        ast::MatchPattern pattern;
-        pattern.span.begin = current().span.begin;
-        if (match(TokenKind::kw_var)) {
-            const auto& name = consume(TokenKind::identifier, "expected a match binding name");
-            pattern.node = ast::BindingPattern{name.lexeme};
-            pattern.span.end = name.span.end;
-        } else if (check(TokenKind::identifier) && current().lexeme == "_") {
-            pattern.node = ast::WildcardPattern{};
-            pattern.span = advance().span;
-        } else {
-            auto expression = parse_expression();
-            pattern.span.end = expression->span.end;
-            pattern.node = ast::ValuePattern{std::move(expression)};
-        }
-        branch.patterns.push_back(std::move(pattern));
+        auto pattern = parse_match_pattern();
+        branch.patterns.push_back(std::move(*pattern));
         if (!match(TokenKind::comma))
             break;
     }
@@ -618,6 +846,8 @@ ast::Statement Parser::parse_match_statement() {
     }
     consume(TokenKind::indent, "expected indented match branches");
     skip_newlines();
+    if (match(TokenKind::kw_pass))
+        skip_newlines();
     while (!check(TokenKind::dedent) && !at_end()) {
         match_statement.branches.push_back(parse_match_branch());
         skip_newlines();
@@ -652,26 +882,42 @@ ast::Statement Parser::parse_assert_statement() {
     ast::AssertStatement assertion;
     consume(TokenKind::left_paren, "expected '(' after 'assert'");
     assertion.condition = parse_expression();
-    if (match(TokenKind::comma))
+    if (match(TokenKind::comma) && !check(TokenKind::right_paren)) {
         assertion.message = parse_expression();
+        (void)match(TokenKind::comma);
+    }
     const auto& end = consume(TokenKind::right_paren, "expected ')' after assert arguments");
     return ast::Statement{std::move(assertion), joined(begin, end.span)};
 }
 
 ast::Statement Parser::parse_statement() {
+    const auto fallback_span = current().span;
+    const DepthGuard depth{*this, fallback_span};
+    if (!depth) {
+        synchronize();
+        return ast::Statement{ast::PassStatement{}, fallback_span};
+    }
     if (match(TokenKind::at_sign)) {
         auto annotation = parse_annotation();
-        if (annotation.name != "warning_ignore") {
+        const bool warning_range = annotation.name == "warning_ignore_start" ||
+                                   annotation.name == "warning_ignore_restore";
+        const bool warning_annotation = annotation.name == "warning_ignore" || warning_range;
+        if (!warning_annotation) {
             diagnostics_.error("GDS2015",
                                "unsupported statement annotation '@" + annotation.name + "'",
                                annotation.span);
-        } else if (annotation.arguments.size() != 1 ||
-                   annotation.arguments.front()->kind() != ast::ExpressionKind::literal ||
-                   annotation.arguments.front()->literal_kind() != ast::LiteralKind::string) {
-            diagnostics_.error("GDS2016", "@warning_ignore expects one string literal",
+        } else if (annotation.arguments.empty() ||
+                   std::any_of(annotation.arguments.begin(), annotation.arguments.end(),
+                               [](const auto& argument) {
+                                   return argument->kind() != ast::ExpressionKind::literal ||
+                                          argument->literal_kind() != ast::LiteralKind::string;
+                               })) {
+            diagnostics_.error("GDS2016", "warning directives expect one or more string literals",
                                annotation.span);
         }
         consume(TokenKind::newline, "expected a newline after statement annotation");
+        if (warning_range)
+            apply_warning_directive(annotation);
         skip_newlines();
         if (check(TokenKind::dedent) || at_end()) {
             diagnostics_.error("GDS2017", "statement annotation is not followed by a statement",
@@ -679,7 +925,8 @@ ast::Statement Parser::parse_statement() {
             return ast::Statement{ast::PassStatement{}, annotation.span};
         }
         auto statement = parse_statement();
-        statement.annotations.push_back(std::move(annotation));
+        if (!warning_range)
+            statement.annotations.push_back(std::move(annotation));
         return statement;
     }
     if (match(TokenKind::kw_return)) {
@@ -692,20 +939,21 @@ ast::Statement Parser::parse_statement() {
         }
         return ast::Statement{std::move(result), span};
     }
-    if (match(TokenKind::kw_await)) {
-        auto span = previous().span;
-        ast::AwaitStatement result{parse_expression()};
-        span.end = result.signal->span.end;
-        return ast::Statement{std::move(result), span};
-    }
     if (match(TokenKind::kw_assert))
         return parse_assert_statement();
     if (match(TokenKind::kw_var))
-        return parse_variable_statement();
+        return parse_variable_statement(false);
+    if (match(TokenKind::kw_const))
+        return parse_variable_statement(true);
     if (match(TokenKind::kw_if))
         return parse_if_statement();
-    if (match(TokenKind::kw_match))
+    // `match` is a soft keyword in Godot. A top-level ':' before the statement terminator is the
+    // unambiguous grammar boundary; postfix syntax alone cannot distinguish `match[0]` from a
+    // match statement whose subject begins with an array literal.
+    if (is_match_statement_ahead()) {
+        advance();
         return parse_match_statement();
+    }
     if (match(TokenKind::kw_while))
         return parse_while_statement();
     if (match(TokenKind::kw_for))
@@ -728,6 +976,11 @@ ast::Statement Parser::parse_statement() {
         return ast::Statement{std::move(assignment), span};
     }
     const auto span = expression->span;
+    if (expression->kind() == ast::ExpressionKind::lambda) {
+        diagnostics_.error("GDS2030",
+                           "standalone lambdas cannot be accessed; assign the lambda to a variable",
+                           span);
+    }
     return ast::Statement{ast::ExpressionStatement{std::move(expression)}, span};
 }
 
@@ -800,10 +1053,21 @@ ast::ExpressionPtr Parser::parse_prefix() {
         return make_expression(ast::ExpressionKind::literal, token.lexeme, token.span,
                                ast::LiteralKind::nil);
     case TokenKind::identifier:
+    case TokenKind::kw_match:
+    case TokenKind::kw_when:
     case TokenKind::kw_self:
         return make_expression(ast::ExpressionKind::identifier, token.lexeme, token.span);
     case TokenKind::kw_func:
         return parse_lambda(token.span);
+    case TokenKind::kw_await: {
+        auto expression = make_expression(ast::ExpressionKind::await_expression, "", token.span);
+        auto* await = expression->get_if<ast::AwaitExpression>();
+        // Godot parses the operand at PREC_AWAIT: calls, attributes and subscripts bind to the
+        // operand, while every binary operator remains outside the await expression.
+        await->operand = parse_expression(11);
+        expression->span.end = await->operand->span.end;
+        return expression;
+    }
     case TokenKind::minus:
     case TokenKind::plus:
     case TokenKind::kw_not:
@@ -825,7 +1089,7 @@ ast::ExpressionPtr Parser::parse_prefix() {
         auto* array = expression->get_if<ast::ArrayExpression>();
         while (!check(TokenKind::right_bracket) && !at_end()) {
             array->elements.push_back(parse_expression());
-            if (!match(TokenKind::comma))
+            if (!match(TokenKind::comma) || check(TokenKind::right_bracket))
                 break;
         }
         const auto& end = consume(TokenKind::right_bracket, "expected ']' after array literal");
@@ -837,9 +1101,20 @@ ast::ExpressionPtr Parser::parse_prefix() {
         auto* dictionary = expression->get_if<ast::DictionaryExpression>();
         while (!check(TokenKind::right_brace) && !at_end()) {
             auto key = parse_expression();
-            consume(TokenKind::colon, "expected ':' between dictionary key and value");
+            if (match(TokenKind::equal)) {
+                if (key->kind() == ast::ExpressionKind::identifier) {
+                    key = make_expression(ast::ExpressionKind::literal, key->value(), key->span,
+                                          ast::LiteralKind::string);
+                } else if (key->kind() != ast::ExpressionKind::literal ||
+                           key->literal_kind() != ast::LiteralKind::string) {
+                    diagnostics_.error(
+                        "GDS2026", "Lua-style dictionary keys must be names or strings", key->span);
+                }
+            } else {
+                consume(TokenKind::colon, "expected ':' between dictionary key and value");
+            }
             dictionary->entries.push_back({std::move(key), parse_expression()});
-            if (!match(TokenKind::comma))
+            if (!match(TokenKind::comma) || check(TokenKind::right_brace))
                 break;
         }
         const auto& end = consume(TokenKind::right_brace, "expected '}' after dictionary literal");
@@ -858,6 +1133,10 @@ ast::ExpressionPtr Parser::parse_lambda(SourceSpan begin) {
     auto* lambda_value = expression->get_if<ast::LambdaValueExpression>();
     lambda_value->function = std::make_unique<ast::LambdaExpression>();
     auto& lambda = *lambda_value->function;
+    if (check_soft_identifier() && position_ + 1 < tokens_.size() &&
+        tokens_[position_ + 1].kind == TokenKind::left_paren) {
+        lambda.name = advance().lexeme;
+    }
     lambda.parameters = parse_parameters();
     if (match(TokenKind::arrow))
         lambda.return_type = parse_type_name("expected a lambda return type");
@@ -865,7 +1144,9 @@ ast::ExpressionPtr Parser::parse_lambda(SourceSpan begin) {
     if (check(TokenKind::newline)) {
         lambda.body = parse_block();
     } else {
-        lambda.body.push_back(parse_statement());
+        auto statement = parse_statement();
+        apply_active_warning_ignores(statement);
+        lambda.body.push_back(std::move(statement));
     }
     lambda.span = joined(begin, previous().span);
     expression->span = lambda.span;
@@ -880,14 +1161,14 @@ ast::ExpressionPtr Parser::parse_postfix(ast::ExpressionPtr expression) {
             value->callee = std::move(expression);
             while (!check(TokenKind::right_paren) && !at_end()) {
                 value->arguments.push_back(parse_expression());
-                if (!match(TokenKind::comma))
+                if (!match(TokenKind::comma) || check(TokenKind::right_paren))
                     break;
             }
             const auto& end = consume(TokenKind::right_paren, "expected ')' after arguments");
             call->span.end = end.span.end;
             expression = std::move(call);
         } else if (match(TokenKind::dot)) {
-            const auto& name = consume(TokenKind::identifier, "expected a member name after '.'");
+            const auto& name = consume_attribute_name("expected a member name after '.'");
             auto member = make_expression(ast::ExpressionKind::member, name.lexeme,
                                           joined(expression->span, name.span));
             member->get_if<ast::MemberExpression>()->receiver = std::move(expression);
@@ -908,6 +1189,14 @@ ast::ExpressionPtr Parser::parse_postfix(ast::ExpressionPtr expression) {
 }
 
 ast::ExpressionPtr Parser::parse_expression(int minimum_precedence) {
+    const auto fallback_span = current().span;
+    const DepthGuard depth{*this, fallback_span};
+    if (!depth) {
+        if (!at_end())
+            advance();
+        return make_expression(ast::ExpressionKind::literal, "null", fallback_span,
+                               ast::LiteralKind::nil);
+    }
     auto left = parse_postfix(parse_prefix());
     const auto is_not_in = [&] {
         return current().kind == TokenKind::kw_not && position_ + 1 < tokens_.size() &&
@@ -935,7 +1224,9 @@ ast::ExpressionPtr Parser::parse_expression(int minimum_precedence) {
         value->right = std::move(right);
         left = std::move(binary);
     }
-    if (minimum_precedence == 0 && match(TokenKind::kw_if)) {
+    const bool multiline_lambda =
+        left->kind() == ast::ExpressionKind::lambda && left->span.end.line > left->span.begin.line;
+    if (minimum_precedence == 0 && !multiline_lambda && match(TokenKind::kw_if)) {
         auto conditional = make_expression(ast::ExpressionKind::conditional, "", left->span);
         auto* value = conditional->get_if<ast::ConditionalExpression>();
         value->when_true = std::move(left);
@@ -955,20 +1246,32 @@ ast::Script Parser::parse_script() {
     }
     skip_newlines();
     std::vector<ast::Annotation> annotations;
+    std::unordered_set<std::string> script_annotation_names;
+    bool script_header_closed = false;
     while (!at_end()) {
         if (match(TokenKind::at_sign)) {
             auto annotation = parse_annotation();
             const auto* feature =
                 LanguageFeatureRegistry::latest().find_annotation(annotation.name);
             if (feature && has_annotation_target(feature->targets, AnnotationTarget::script)) {
+                if (script_header_closed) {
+                    diagnostics_.error("GDS2027",
+                                       "script annotation '@" + annotation.name +
+                                           "' must appear before extends and class_name",
+                                       annotation.span);
+                }
+                if (!script_annotation_names.insert(annotation.name).second) {
+                    diagnostics_.error("GDS2028",
+                                       "script annotation '@" + annotation.name +
+                                           "' can only be used once",
+                                       annotation.span);
+                }
                 if (annotation.name == "tool")
                     script.tool = true;
                 script.annotations.push_back(std::move(annotation));
             } else if (feature &&
                        has_annotation_target(feature->targets, AnnotationTarget::directive)) {
-                // Warning range directives affect compiler diagnostics only.  GDPP currently
-                // emits no matching style warnings, so retaining them in the runtime AST would
-                // only create dead state.
+                apply_warning_directive(annotation);
             } else {
                 annotations.push_back(std::move(annotation));
             }
@@ -977,6 +1280,7 @@ ast::Script Parser::parse_script() {
             continue;
         }
         if (match(TokenKind::kw_extends)) {
+            script_header_closed = true;
             if (!annotations.empty())
                 validate_annotation_targets(annotations, AnnotationTarget::script, diagnostics_);
             for (auto& annotation : annotations)
@@ -989,6 +1293,7 @@ ast::Script Parser::parse_script() {
             }
             skip_newlines();
         } else if (match(TokenKind::kw_class_name)) {
+            script_header_closed = true;
             if (!annotations.empty())
                 validate_annotation_targets(annotations, AnnotationTarget::script, diagnostics_);
             for (auto& annotation : annotations)
@@ -1009,22 +1314,27 @@ ast::Script Parser::parse_script() {
             }
             skip_newlines();
         } else if (match(TokenKind::kw_var)) {
+            script_header_closed = true;
             validate_annotation_targets(annotations, AnnotationTarget::field, diagnostics_);
             script.variables.push_back(parse_variable(false, std::move(annotations)));
             annotations.clear();
         } else if (match(TokenKind::kw_const)) {
+            script_header_closed = true;
             validate_annotation_targets(annotations, AnnotationTarget::field, diagnostics_);
             script.variables.push_back(parse_variable(true, std::move(annotations)));
             annotations.clear();
         } else if (match(TokenKind::kw_signal)) {
+            script_header_closed = true;
             validate_annotation_targets(annotations, AnnotationTarget::signal, diagnostics_);
             script.signals.push_back(parse_signal(std::move(annotations)));
             annotations.clear();
         } else if (match(TokenKind::kw_enum)) {
+            script_header_closed = true;
             validate_annotation_targets(annotations, AnnotationTarget::enumeration, diagnostics_);
             script.enums.push_back(parse_enum(std::move(annotations)));
             annotations.clear();
         } else if (match(TokenKind::kw_static)) {
+            script_header_closed = true;
             if (match(TokenKind::kw_var)) {
                 validate_annotation_targets(annotations, AnnotationTarget::field, diagnostics_);
                 auto variable = parse_variable(false, std::move(annotations));
@@ -1038,13 +1348,20 @@ ast::Script Parser::parse_script() {
                 annotations.clear();
             }
         } else if (match(TokenKind::kw_func)) {
+            script_header_closed = true;
             validate_annotation_targets(annotations, AnnotationTarget::function, diagnostics_);
             script.functions.push_back(parse_function(false, std::move(annotations)));
             annotations.clear();
         } else if (match(TokenKind::kw_class)) {
+            script_header_closed = true;
             validate_annotation_targets(annotations, AnnotationTarget::inner_class, diagnostics_);
             script.classes.push_back(parse_class(std::move(annotations)));
             annotations.clear();
+        } else if (match(TokenKind::string)) {
+            // Standalone triple/single/double quoted strings are accepted by Godot as script
+            // documentation/comment blocks and do not become runtime declarations.
+            annotations.clear();
+            skip_newlines();
         } else {
             if (!annotations.empty())
                 annotations.clear();

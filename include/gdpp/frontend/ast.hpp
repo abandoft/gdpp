@@ -23,6 +23,7 @@ enum class ExpressionKind {
     literal,
     identifier,
     unary,
+    await_expression,
     binary,
     call,
     member,
@@ -45,6 +46,9 @@ struct IdentifierExpression {
 };
 struct UnaryExpression {
     std::string operation;
+    ExpressionPtr operand;
+};
+struct AwaitExpression {
     ExpressionPtr operand;
 };
 struct BinaryExpression {
@@ -87,10 +91,10 @@ struct LambdaValueExpression {
 };
 
 using ExpressionNode =
-    std::variant<LiteralExpression, IdentifierExpression, UnaryExpression, BinaryExpression,
-                 CallExpression, MemberExpression, SubscriptExpression, ConditionalExpression,
-                 NodeReferenceExpression, ArrayExpression, DictionaryExpression,
-                 LambdaValueExpression>;
+    std::variant<LiteralExpression, IdentifierExpression, UnaryExpression, AwaitExpression,
+                 BinaryExpression, CallExpression, MemberExpression, SubscriptExpression,
+                 ConditionalExpression, NodeReferenceExpression, ArrayExpression,
+                 DictionaryExpression, LambdaValueExpression>;
 
 struct Expression {
     ExpressionNode node{LiteralExpression{}};
@@ -140,7 +144,7 @@ struct Annotation {
     SourceSpan span{};
 };
 
-enum class MatchPatternKind { value, wildcard, binding };
+enum class MatchPatternKind { value, wildcard, binding, rest, array, dictionary };
 
 struct ValuePattern {
     ExpressionPtr expression;
@@ -149,11 +153,20 @@ struct WildcardPattern {};
 struct BindingPattern {
     std::string name;
 };
+struct RestPattern {};
+struct ArrayPattern {};
+struct DictionaryPattern {};
 
-using MatchPatternNode = std::variant<ValuePattern, WildcardPattern, BindingPattern>;
+using MatchPatternNode = std::variant<ValuePattern, WildcardPattern, BindingPattern, RestPattern,
+                                      ArrayPattern, DictionaryPattern>;
 
 struct MatchPattern {
     MatchPatternNode node{WildcardPattern{}};
+    // Array patterns use `elements`. Dictionary patterns keep one key and one value pattern at
+    // each matching index; a presence-only entry stores a wildcard value. Rest markers are
+    // explicit child patterns so validation can reject duplicates and non-terminal placement.
+    std::vector<std::unique_ptr<MatchPattern>> elements;
+    std::vector<ExpressionPtr> keys;
     SourceSpan span{};
 
     [[nodiscard]] MatchPatternKind kind() const noexcept;
@@ -174,15 +187,12 @@ struct ExpressionStatement {
 struct ReturnStatement {
     ExpressionPtr value;
 };
-struct AwaitStatement {
-    ExpressionPtr signal;
-};
 struct VariableStatement {
     std::string name;
     std::optional<std::string> type;
     ExpressionPtr initializer;
     bool infer_type{false};
-    bool awaits{false};
+    bool is_constant{false};
 };
 struct AssertStatement {
     ExpressionPtr condition;
@@ -217,15 +227,13 @@ struct BreakStatement {};
 struct ContinueStatement {};
 
 using StatementNode =
-    std::variant<ExpressionStatement, ReturnStatement, AwaitStatement, VariableStatement,
-                 AssertStatement, AssignmentStatement, IfStatement, MatchStatement, WhileStatement,
-                 ForStatement, PassStatement, BreakStatement, ContinueStatement>;
+    std::variant<ExpressionStatement, ReturnStatement, AssertStatement, VariableStatement,
+                 AssignmentStatement, IfStatement, MatchStatement, WhileStatement, ForStatement,
+                 PassStatement, BreakStatement, ContinueStatement>;
 
 enum class StatementKind {
     expression,
     return_statement,
-    await_statement,
-    await_variable,
     assert_statement,
     variable,
     assignment,
@@ -254,6 +262,7 @@ struct Statement {
     [[nodiscard]] const std::optional<std::string>& type() const noexcept;
     [[nodiscard]] const std::string& operation() const noexcept;
     [[nodiscard]] bool infer_type() const noexcept;
+    [[nodiscard]] bool is_constant() const noexcept;
     [[nodiscard]] const ExpressionPtr& expression() const noexcept;
     [[nodiscard]] const ExpressionPtr& condition() const noexcept;
     [[nodiscard]] const Block& body() const noexcept;
@@ -331,6 +340,7 @@ struct FunctionDeclaration {
 };
 
 struct LambdaExpression {
+    std::string name;
     std::vector<Parameter> parameters;
     std::optional<std::string> return_type;
     Block body;
@@ -390,7 +400,7 @@ inline const std::string& Expression::value() const noexcept {
 }
 
 inline std::size_t Expression::operand_count() const noexcept {
-    if (get_if<UnaryExpression>() || get_if<MemberExpression>())
+    if (get_if<UnaryExpression>() || get_if<AwaitExpression>() || get_if<MemberExpression>())
         return 1;
     if (get_if<BinaryExpression>() || get_if<SubscriptExpression>())
         return 2;
@@ -409,6 +419,10 @@ inline const ExpressionPtr& Expression::operand(std::size_t index) const {
     if (const auto* unary = get_if<UnaryExpression>()) {
         if (index == 0)
             return unary->operand;
+    }
+    if (const auto* await = get_if<AwaitExpression>()) {
+        if (index == 0)
+            return await->operand;
     }
     if (const auto* binary = get_if<BinaryExpression>()) {
         if (index == 0)
@@ -474,12 +488,7 @@ inline const ExpressionPtr& MatchPattern::expression() const noexcept {
 }
 
 inline StatementKind Statement::kind() const noexcept {
-    if (const auto* variable = get_if<VariableStatement>())
-        return variable->awaits ? StatementKind::await_variable : StatementKind::variable;
-    const auto index = node.index();
-    if (index <= 4)
-        return static_cast<StatementKind>(index);
-    return static_cast<StatementKind>(index + 1);
+    return static_cast<StatementKind>(node.index());
 }
 
 inline const std::string& Statement::name() const noexcept {
@@ -511,14 +520,17 @@ inline bool Statement::infer_type() const noexcept {
     return variable && variable->infer_type;
 }
 
+inline bool Statement::is_constant() const noexcept {
+    const auto* variable = get_if<VariableStatement>();
+    return variable && variable->is_constant;
+}
+
 inline const ExpressionPtr& Statement::expression() const noexcept {
     static const ExpressionPtr empty;
     if (const auto* item = get_if<ExpressionStatement>())
         return item->expression;
     if (const auto* item = get_if<ReturnStatement>())
         return item->value;
-    if (const auto* item = get_if<AwaitStatement>())
-        return item->signal;
     if (const auto* item = get_if<VariableStatement>())
         return item->initializer;
     if (const auto* item = get_if<AssertStatement>())
