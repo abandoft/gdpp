@@ -31,6 +31,7 @@ gdpp::FrontendLimits compact_limits() {
     limits.max_indentation_depth = 16;
     limits.max_grouping_depth = 32;
     limits.max_parser_depth = 32;
+    limits.max_binary_chain_length = 16;
     limits.max_diagnostics = 16;
     return limits;
 }
@@ -104,6 +105,26 @@ TEST_CASE("compiler stops parser recursion transactionally at the configured dep
 
     REQUIRE(!result.success);
     REQUIRE(has_code(result, "GDS2024"));
+    REQUIRE(result.unit.header.empty());
+    REQUIRE(result.unit.source.empty());
+}
+
+TEST_CASE("compiler bounds non-associative binary chains before recursive lowering") {
+    gdpp::CompileOptions options;
+    options.frontend_limits = compact_limits();
+    options.frontend_limits.max_source_bytes = 4096;
+    options.frontend_limits.max_line_bytes = 4096;
+    options.frontend_limits.max_tokens = 4096;
+    options.frontend_limits.max_binary_chain_length = 8;
+
+    std::string source{"func total() -> int:\n    return 1"};
+    for (std::size_t index = 0; index < 32; ++index)
+        source += " + 1";
+    source += '\n';
+    const auto result = gdpp::Compiler{}.compile("wide_binary.gd", std::move(source), options);
+
+    REQUIRE(!result.success);
+    REQUIRE(has_code(result, "GDS2031"));
     REQUIRE(result.unit.header.empty());
     REQUIRE(result.unit.source.empty());
 }

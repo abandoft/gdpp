@@ -14,7 +14,8 @@ struct FrontendLimits {
     std::size_t max_literal_bytes{8U * 1024U * 1024U};
     std::size_t max_indentation_depth{256U};
     std::size_t max_grouping_depth{512U};
-    std::size_t max_parser_depth{512U};
+    std::size_t max_parser_depth{128U};
+    std::size_t max_binary_chain_length{128U};
     std::size_t max_diagnostics{256U};
 };
 

@@ -6,6 +6,7 @@
 #include "gdpp/frontend/parser.hpp"
 
 #include <algorithm>
+#include <string>
 
 TEST_CASE("parser builds declarations and structured function body") {
     const gdpp::SourceFile source{"player.gd", "extends Node\n"
@@ -493,6 +494,29 @@ TEST_CASE("parser recovery always advances past unexpected indentation") {
     REQUIRE(diagnostics.has_errors());
     REQUIRE_EQ(script.variables.size(), std::size_t{2});
     REQUIRE_EQ(script.variables.back().name, std::string{"second"});
+}
+
+TEST_CASE("parser balances large logical chains without changing source order") {
+    std::string text{"func validate() -> bool:\n    return true"};
+    constexpr std::size_t operand_count = 1024;
+    for (std::size_t index = 1; index < operand_count; ++index)
+        text += " and true";
+    text += '\n';
+
+    const gdpp::SourceFile source{"large_logical_chain.gd", std::move(text)};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    const auto* expression = script.functions.front().body.front().expression().get();
+    std::size_t left_depth = 0;
+    while (expression->kind() == gdpp::ast::ExpressionKind::binary &&
+           expression->value() == "and") {
+        ++left_depth;
+        expression = expression->operand(0).get();
+    }
+    REQUIRE(left_depth <= std::size_t{10});
 }
 
 TEST_CASE("parser accepts commercial script headers semicolons and inline lambdas") {

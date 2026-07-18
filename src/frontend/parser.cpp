@@ -54,6 +54,56 @@ ast::ExpressionPtr make_expression(ast::ExpressionKind kind, std::string value, 
     return std::make_unique<ast::Expression>();
 }
 
+ast::ExpressionPtr balance_logical_chain(ast::ExpressionPtr expression) {
+    if (!expression || expression->kind() != ast::ExpressionKind::binary)
+        return expression;
+    const auto operation = expression->value();
+    if (operation != "and" && operation != "or")
+        return expression;
+
+    // Precedence parsing naturally creates a left-deep tree. A commercial script can contain
+    // hundreds of generated guards, and recursively processing that shape exhausts Windows'
+    // default 1 MiB thread stack. Logical operators are boolean, associative and short-circuit in
+    // source order, so a balanced tree preserves observable evaluation while bounding every
+    // compiler phase to O(log n) recursion depth.
+    std::vector<ast::ExpressionPtr> pending;
+    std::vector<ast::ExpressionPtr> operands;
+    pending.push_back(std::move(expression));
+    while (!pending.empty()) {
+        auto current = std::move(pending.back());
+        pending.pop_back();
+        auto* binary = current->get_if<ast::BinaryExpression>();
+        if (binary && binary->operation == operation) {
+            auto left = std::move(binary->left);
+            auto right = std::move(binary->right);
+            pending.push_back(std::move(right));
+            pending.push_back(std::move(left));
+        } else {
+            operands.push_back(std::move(current));
+        }
+    }
+
+    while (operands.size() > 1U) {
+        std::vector<ast::ExpressionPtr> level;
+        level.reserve((operands.size() + 1U) / 2U);
+        for (std::size_t index = 0; index < operands.size(); index += 2U) {
+            if (index + 1U == operands.size()) {
+                level.push_back(std::move(operands[index]));
+                continue;
+            }
+            auto binary =
+                make_expression(ast::ExpressionKind::binary, operation,
+                                joined(operands[index]->span, operands[index + 1U]->span));
+            auto* value = binary->get_if<ast::BinaryExpression>();
+            value->left = std::move(operands[index]);
+            value->right = std::move(operands[index + 1U]);
+            level.push_back(std::move(binary));
+        }
+        operands = std::move(level);
+    }
+    return std::move(operands.front());
+}
+
 bool is_assignment(TokenKind kind) {
     return kind == TokenKind::equal || kind == TokenKind::plus_equal ||
            kind == TokenKind::minus_equal || kind == TokenKind::star_equal ||
@@ -1198,6 +1248,8 @@ ast::ExpressionPtr Parser::parse_expression(int minimum_precedence) {
                                ast::LiteralKind::nil);
     }
     auto left = parse_postfix(parse_prefix());
+    std::size_t binary_chain_length = 0;
+    bool binary_chain_limit_reported = false;
     const auto is_not_in = [&] {
         return current().kind == TokenKind::kw_not && position_ + 1 < tokens_.size() &&
                tokens_[position_ + 1].kind == TokenKind::kw_in;
@@ -1214,6 +1266,16 @@ ast::ExpressionPtr Parser::parse_expression(int minimum_precedence) {
                                           ? precedence(effective_operation)
                                           : precedence(effective_operation) + 1;
         auto right = parse_expression(right_precedence);
+        const bool balanced_logical =
+            effective_operation == TokenKind::kw_and || effective_operation == TokenKind::kw_or;
+        if (!balanced_logical && ++binary_chain_length > limits_.max_binary_chain_length) {
+            if (!binary_chain_limit_reported) {
+                diagnostics_.error("GDS2031", "binary operator chain exceeds the configured limit",
+                                   joined(left->span, right->span));
+                binary_chain_limit_reported = true;
+            }
+            continue;
+        }
         auto binary = make_expression(ast::ExpressionKind::binary,
                                       negated_type_test    ? "is not"
                                       : negated_membership ? "not in"
@@ -1224,6 +1286,7 @@ ast::ExpressionPtr Parser::parse_expression(int minimum_precedence) {
         value->right = std::move(right);
         left = std::move(binary);
     }
+    left = balance_logical_chain(std::move(left));
     const bool multiline_lambda =
         left->kind() == ast::ExpressionKind::lambda && left->span.end.line > left->span.begin.line;
     if (minimum_precedence == 0 && !multiline_lambda && match(TokenKind::kw_if)) {
