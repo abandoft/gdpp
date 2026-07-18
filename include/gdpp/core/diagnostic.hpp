@@ -2,6 +2,7 @@
 
 #include "gdpp/core/source.hpp"
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,9 @@ struct Diagnostic {
 
 class DiagnosticBag final {
   public:
+    explicit DiagnosticBag(std::size_t max_diagnostics = 256U)
+        : max_diagnostics_(max_diagnostics) {}
+
     void report(Diagnostic diagnostic);
     void error(std::string code, std::string message, SourceSpan span);
     void warning(std::string code, std::string message, SourceSpan span);
@@ -28,6 +32,9 @@ class DiagnosticBag final {
 
   private:
     std::vector<Diagnostic> diagnostics_;
+    std::size_t max_diagnostics_{256U};
+    bool has_error_{false};
+    bool limit_reported_{false};
 };
 
 [[nodiscard]] std::string format_diagnostic(const Diagnostic& diagnostic, const SourceFile& source,

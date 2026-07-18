@@ -6,7 +6,22 @@
 
 namespace gdpp {
 
-void DiagnosticBag::report(Diagnostic diagnostic) { diagnostics_.push_back(std::move(diagnostic)); }
+void DiagnosticBag::report(Diagnostic diagnostic) {
+    if (diagnostic.severity == DiagnosticSeverity::error)
+        has_error_ = true;
+    if (diagnostics_.size() < max_diagnostics_) {
+        diagnostics_.push_back(std::move(diagnostic));
+        return;
+    }
+    if (!limit_reported_) {
+        diagnostics_.push_back({diagnostic.severity, "GDS0001",
+                                "diagnostic limit reached; further diagnostics are suppressed",
+                                diagnostic.span});
+        limit_reported_ = true;
+    } else if (diagnostic.severity == DiagnosticSeverity::error && !diagnostics_.empty()) {
+        diagnostics_.back().severity = DiagnosticSeverity::error;
+    }
+}
 
 void DiagnosticBag::error(std::string code, std::string message, SourceSpan span) {
     report({DiagnosticSeverity::error, std::move(code), std::move(message), span});
@@ -16,11 +31,7 @@ void DiagnosticBag::warning(std::string code, std::string message, SourceSpan sp
     report({DiagnosticSeverity::warning, std::move(code), std::move(message), span});
 }
 
-bool DiagnosticBag::has_errors() const noexcept {
-    return std::any_of(diagnostics_.begin(), diagnostics_.end(), [](const Diagnostic& item) {
-        return item.severity == DiagnosticSeverity::error;
-    });
-}
+bool DiagnosticBag::has_errors() const noexcept { return has_error_; }
 
 std::string format_diagnostic(const Diagnostic& diagnostic, const SourceFile& source,
                               bool use_color) {

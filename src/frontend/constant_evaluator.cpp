@@ -1,7 +1,7 @@
 #include "gdpp/frontend/constant_evaluator.hpp"
 
-#include <algorithm>
-#include <charconv>
+#include "gdpp/frontend/literal.hpp"
+
 #include <limits>
 
 namespace gdpp {
@@ -11,12 +11,14 @@ evaluate_integer_constant(const ast::Expression& expression,
                           const std::unordered_map<std::string, std::int64_t>& previous) {
     if (const auto* literal = expression.get_if<ast::LiteralExpression>();
         literal && literal->kind == ast::LiteralKind::integer) {
-        auto text = literal->text;
-        text.erase(std::remove(text.begin(), text.end(), '_'), text.end());
-        std::int64_t value = 0;
-        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
-        if (parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size())
-            return value;
+        const auto parsed = parse_integer_literal(literal->text);
+        if (!parsed)
+            return std::nullopt;
+        const auto maximum = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+        if (parsed->magnitude <= maximum)
+            return static_cast<std::int64_t>(parsed->magnitude);
+        if (parsed->base == 10 && parsed->magnitude == maximum + 1U)
+            return std::numeric_limits<std::int64_t>::min();
         return std::nullopt;
     }
     if (const auto* identifier = expression.get_if<ast::IdentifierExpression>()) {
@@ -31,8 +33,13 @@ evaluate_integer_constant(const ast::Expression& expression,
             return operand;
         if (unary->operation == "~")
             return ~*operand;
-        if (unary->operation == "-" && *operand != std::numeric_limits<std::int64_t>::min())
+        if (unary->operation == "-") {
+            // Godot reserves the decimal 2^63 magnitude so the source spelling of INT64_MIN is
+            // representable. Keep that sentinel stable instead of invoking signed overflow.
+            if (*operand == std::numeric_limits<std::int64_t>::min())
+                return *operand;
             return -*operand;
+        }
         return std::nullopt;
     }
     const auto* binary = expression.get_if<ast::BinaryExpression>();

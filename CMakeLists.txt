@@ -151,6 +151,7 @@ file(GLOB_RECURSE GDPP_CODEGEN_CONTRACT_FILES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/core/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/compiler/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/frontend/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/frontend/*.inc"
     "${CMAKE_SOURCE_DIR}/src/semantic/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/ir/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/codegen/*.cpp"
@@ -162,6 +163,7 @@ file(GLOB_RECURSE GDPP_CODEGEN_CONTRACT_FILES CONFIGURE_DEPENDS
 list(APPEND GDPP_CODEGEN_CONTRACT_FILES
     "${CMAKE_SOURCE_DIR}/include/gdpp/version.hpp.in"
     "${CMAKE_SOURCE_DIR}/tools/generate_godot_api.py"
+    "${CMAKE_SOURCE_DIR}/tools/generate_unicode_identifiers.py"
 )
 list(REMOVE_DUPLICATES GDPP_CODEGEN_CONTRACT_FILES)
 list(SORT GDPP_CODEGEN_CONTRACT_FILES)
@@ -365,8 +367,10 @@ set(GDPP_FRONTEND_SOURCES
     src/frontend/constant_evaluator.cpp
     src/frontend/language_features.cpp
     src/frontend/lexer.cpp
+    src/frontend/literal.cpp
     src/frontend/parser.cpp
     src/frontend/token.cpp
+    src/frontend/unicode.cpp
 )
 set(GDPP_SEMANTIC_SOURCES
     src/semantic/analyzer.cpp
