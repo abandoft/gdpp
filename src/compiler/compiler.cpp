@@ -24,6 +24,17 @@ std::uint64_t elapsed_ns(Clock::time_point begin, Clock::time_point end) {
 
 void count_ast_expression(const ast::Expression& expression, CompileResult::Metrics& metrics);
 
+void count_ast_pattern(const ast::MatchPattern& pattern, CompileResult::Metrics& metrics) {
+    if (pattern.expression())
+        count_ast_expression(*pattern.expression(), metrics);
+    for (const auto& key : pattern.keys) {
+        if (key)
+            count_ast_expression(*key, metrics);
+    }
+    for (const auto& element : pattern.elements)
+        count_ast_pattern(*element, metrics);
+}
+
 void count_ast_statements(const ast::Block& statements, CompileResult::Metrics& metrics) {
     for (const auto& statement : statements) {
         ++metrics.ast_statement_count;
@@ -36,10 +47,8 @@ void count_ast_statements(const ast::Block& statements, CompileResult::Metrics& 
         for (const auto& branch : statement.match_branches()) {
             if (branch.guard)
                 count_ast_expression(*branch.guard, metrics);
-            for (const auto& pattern : branch.patterns) {
-                if (pattern.expression())
-                    count_ast_expression(*pattern.expression(), metrics);
-            }
+            for (const auto& pattern : branch.patterns)
+                count_ast_pattern(pattern, metrics);
             count_ast_statements(branch.body, metrics);
         }
     }
@@ -74,6 +83,17 @@ void count_ast(const ast::Script& script, CompileResult::Metrics& metrics) {
 
 void count_hir_expression(const ir::Expression& expression, CompileResult::Metrics& metrics);
 
+void count_hir_pattern(const ir::MatchPattern& pattern, CompileResult::Metrics& metrics) {
+    if (pattern.expression)
+        count_hir_expression(*pattern.expression, metrics);
+    for (const auto& key : pattern.keys) {
+        if (key)
+            count_hir_expression(*key, metrics);
+    }
+    for (const auto& element : pattern.elements)
+        count_hir_pattern(element, metrics);
+}
+
 void count_hir_statements(const std::vector<ir::Statement>& statements,
                           CompileResult::Metrics& metrics) {
     for (const auto& statement : statements) {
@@ -82,12 +102,13 @@ void count_hir_statements(const std::vector<ir::Statement>& statements,
             count_hir_expression(*statement.expression, metrics);
         if (statement.condition)
             count_hir_expression(*statement.condition, metrics);
-        for (const auto& pattern : statement.patterns) {
-            if (pattern.expression)
-                count_hir_expression(*pattern.expression, metrics);
-        }
+        for (const auto& pattern : statement.patterns)
+            count_hir_pattern(pattern, metrics);
         count_hir_statements(statement.body, metrics);
         count_hir_statements(statement.else_body, metrics);
+        count_hir_statements(statement.guard_prefix, metrics);
+        count_hir_statements(statement.assert_condition_prefix, metrics);
+        count_hir_statements(statement.assert_message_prefix, metrics);
     }
 }
 
@@ -118,16 +139,16 @@ CompileResult Compiler::compile(std::string path, std::string source_text,
                                 const CompileOptions& options) const {
     const auto total_begin = Clock::now();
     const SourceFile source{std::move(path), std::move(source_text)};
-    DiagnosticBag diagnostics;
+    DiagnosticBag diagnostics{options.frontend_limits.max_diagnostics};
     CompileResult result;
     const auto lex_begin = Clock::now();
-    Lexer lexer{source, diagnostics};
+    Lexer lexer{source, diagnostics, options.frontend_limits};
     const auto tokens = lexer.scan();
     const auto lex_end = Clock::now();
     result.metrics.lex_ns = elapsed_ns(lex_begin, lex_end);
     result.metrics.token_count = tokens.size();
     const auto parse_begin = Clock::now();
-    Parser parser{tokens, diagnostics};
+    Parser parser{tokens, diagnostics, options.frontend_limits};
     const auto script = parser.parse_script();
     const auto parse_end = Clock::now();
     result.metrics.parse_ns = elapsed_ns(parse_begin, parse_end);

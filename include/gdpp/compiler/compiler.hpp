@@ -3,6 +3,7 @@
 #include "gdpp/codegen/cpp_generator.hpp"
 #include "gdpp/core/diagnostic.hpp"
 #include "gdpp/core/godot_version.hpp"
+#include "gdpp/frontend/limits.hpp"
 #include "gdpp/ir/optimizer.hpp"
 #include "gdpp/semantic/script_symbols.hpp"
 
@@ -16,6 +17,7 @@ struct CompileOptions {
     bool emit_debug_comments{false};
     bool optimize{true};
     GodotVersion target_version{minimum_godot_version};
+    FrontendLimits frontend_limits{};
     std::string native_class_suffix;
     // Project compilation resolves script inheritance before invoking the single-file pipeline.
     // These values keep the core compiler independent from project filesystem discovery.
