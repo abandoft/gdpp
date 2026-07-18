@@ -1,6 +1,7 @@
 #include "support/test.hpp"
 
 #include "gdpp/ir/mir.hpp"
+#include "gdpp/ir/mir_optimizer.hpp"
 
 #include <algorithm>
 
@@ -61,6 +62,72 @@ TEST_CASE("MIR builds explicit branches loops returns and suspension edges") {
     REQUIRE(std::any_of(mir.functions.front().blocks.begin(), mir.functions.front().blocks.end(),
                         [](const gdpp::mir::BasicBlock& block) {
                             return block.terminator.kind == gdpp::mir::TerminatorKind::suspend;
+                        }));
+}
+
+TEST_CASE("MIR optimizer simplifies typed boolean branches and rebuilds dense CFG metadata") {
+    gdpp::ir::Module hir;
+    hir.class_name = "OptimizedControlFlow";
+    gdpp::ir::Function function;
+    function.name = "run";
+
+    gdpp::ir::Statement conditional;
+    conditional.kind = gdpp::ir::StatementKind::if_statement;
+    conditional.condition = literal("true");
+    conditional.body.push_back(marker(gdpp::ir::StatementKind::expression));
+    conditional.else_body.push_back(marker(gdpp::ir::StatementKind::expression));
+    function.body.push_back(std::move(conditional));
+    hir.functions.push_back(std::move(function));
+
+    auto mir = gdpp::MirLowerer{}.lower(hir);
+    const auto original_blocks = mir.functions.front().blocks.size();
+    const auto stats = gdpp::MirOptimizer{}.optimize(mir);
+    gdpp::DiagnosticBag diagnostics;
+
+    REQUIRE(gdpp::MirVerifier{diagnostics}.verify(mir));
+    REQUIRE_EQ(stats.branches_simplified, std::size_t{1});
+    REQUIRE_EQ(stats.blocks_removed, std::size_t{1});
+    REQUIRE_EQ(stats.instructions_removed, std::size_t{1});
+    REQUIRE_EQ(mir.functions.front().blocks.size(), original_blocks - 1U);
+    REQUIRE(std::none_of(mir.functions.front().blocks.begin(), mir.functions.front().blocks.end(),
+                         [](const auto& block) {
+                             return block.terminator.kind == gdpp::mir::TerminatorKind::branch;
+                         }));
+
+    const auto second = gdpp::MirOptimizer{}.optimize(mir);
+    REQUIRE_EQ(second.branches_simplified, std::size_t{0});
+    REQUIRE_EQ(second.blocks_removed, std::size_t{0});
+    REQUIRE(gdpp::MirVerifier{diagnostics}.verify(mir));
+}
+
+TEST_CASE("MIR optimizer never treats match selectors as truthy branch conditions") {
+    gdpp::ir::Module hir;
+    gdpp::ir::Function function;
+    function.name = "match_value";
+    gdpp::ir::Statement match;
+    match.kind = gdpp::ir::StatementKind::match_statement;
+    match.condition = literal("true");
+    gdpp::ir::Statement branch;
+    branch.kind = gdpp::ir::StatementKind::match_branch;
+    gdpp::ir::MatchPattern wildcard;
+    wildcard.kind = gdpp::ir::MatchPatternKind::wildcard;
+    branch.patterns.push_back(std::move(wildcard));
+    branch.body.push_back(marker(gdpp::ir::StatementKind::expression));
+    match.body.push_back(std::move(branch));
+    function.body.push_back(std::move(match));
+    hir.functions.push_back(std::move(function));
+
+    auto mir = gdpp::MirLowerer{}.lower(hir);
+    const auto stats = gdpp::MirOptimizer{}.optimize(mir);
+    gdpp::DiagnosticBag diagnostics;
+
+    REQUIRE_EQ(stats.branches_simplified, std::size_t{0});
+    REQUIRE_EQ(stats.blocks_removed, std::size_t{0});
+    REQUIRE(gdpp::MirVerifier{diagnostics}.verify(mir));
+    REQUIRE(std::any_of(mir.functions.front().blocks.begin(), mir.functions.front().blocks.end(),
+                        [](const auto& block) {
+                            return block.terminator.branch_role ==
+                                   gdpp::mir::BranchRole::match_pattern;
                         }));
 }
 
