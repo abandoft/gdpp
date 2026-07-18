@@ -119,7 +119,7 @@ set(GDPP_GODOT_EXECUTABLE "" CACHE FILEPATH "Optional Godot executable used for 
 # content hashes in the compiler as well as every packaged SDK so an old or partially copied SDK
 # is rejected during preflight instead of failing later with thousands of C++ diagnostics.
 set(GDPP_NATIVE_SDK_SCHEMA 4)
-set(GDPP_NATIVE_RUNTIME_ABI 2)
+set(GDPP_NATIVE_RUNTIME_ABI 3)
 set(GDPP_NATIVE_RUNTIME_HEADER
     "${CMAKE_SOURCE_DIR}/include/gdpp/runtime/variant_ops.hpp")
 set(GDPP_NATIVE_RUNTIME_SOURCE

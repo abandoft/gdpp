@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <type_traits>
 #include <utility>
 
@@ -72,6 +73,12 @@ using AwaitContinuation = std::function<void(const godot::Array&)>;
 [[nodiscard]] bool await_signal(const godot::Variant& signal, godot::Object* owner,
                                 AwaitContinuation continuation);
 [[nodiscard]] godot::Variant await_result(const godot::Array& arguments);
+
+class CoroutineState;
+using CoroutineStatePtr = std::shared_ptr<CoroutineState>;
+[[nodiscard]] CoroutineStatePtr begin_coroutine(godot::Object* owner);
+[[nodiscard]] godot::Variant coroutine_result(const CoroutineStatePtr& state);
+void complete_coroutine(const CoroutineStatePtr& state, const godot::Variant& result);
 
 // Native method bindings cannot represent a GDScript default expression that depends on
 // the receiving instance.  A private marker preserves the distinction between an omitted

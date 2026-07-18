@@ -10,17 +10,35 @@
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/callable_custom.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/signal.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
+#include <atomic>
 #include <cstring>
 #include <mutex>
 #include <string>
 #include <unordered_map>
 
 namespace gdpp::runtime {
+
+class CoroutineState final {
+  public:
+    godot::ObjectID owner;
+    godot::StringName signal;
+    godot::Variant result;
+    std::mutex mutex;
+    bool completed{false};
+    bool exposed{false};
+};
+
 namespace {
+
+std::atomic<std::uint64_t>& coroutine_counter() {
+    static std::atomic<std::uint64_t> value{0};
+    return value;
+}
 
 const godot::StringName& default_argument_marker() {
     static const godot::StringName marker{
@@ -444,6 +462,74 @@ godot::Variant await_result(const godot::Array& arguments) {
     if (arguments.size() == 1)
         return arguments[0];
     return arguments;
+}
+
+CoroutineStatePtr begin_coroutine(godot::Object* owner) {
+    if (!owner) {
+        godot::UtilityFunctions::push_error("GDPP: cannot start a coroutine without an owner");
+        return {};
+    }
+    auto state = std::make_shared<CoroutineState>();
+    state->owner = owner->get_instance_id();
+    do {
+        const auto index = coroutine_counter().fetch_add(1, std::memory_order_relaxed);
+        const auto name = std::string{"__gdpp_coroutine_completed_"} + std::to_string(index);
+        state->signal = godot::StringName(name.c_str());
+    } while (owner->has_user_signal(state->signal));
+
+    godot::Dictionary argument;
+    argument["name"] = "result";
+    argument["type"] = static_cast<std::int64_t>(godot::Variant::NIL);
+    godot::Array arguments;
+    arguments.push_back(argument);
+    owner->add_user_signal(godot::String(state->signal), arguments);
+    return state;
+}
+
+godot::Variant coroutine_result(const CoroutineStatePtr& state) {
+    if (!state)
+        return {};
+    godot::Variant result;
+    bool completed = false;
+    {
+        const std::lock_guard<std::mutex> lock{state->mutex};
+        completed = state->completed;
+        if (completed)
+            result = state->result;
+        else
+            state->exposed = true;
+    }
+    auto* owner = godot::ObjectDB::get_instance(static_cast<std::uint64_t>(state->owner));
+    if (!owner)
+        return completed ? result : godot::Variant{};
+    if (completed) {
+        if (owner->has_user_signal(state->signal))
+            owner->remove_user_signal(state->signal);
+        return result;
+    }
+    return godot::Signal(owner, state->signal);
+}
+
+void complete_coroutine(const CoroutineStatePtr& state, const godot::Variant& result) {
+    if (!state)
+        return;
+    bool exposed = false;
+    {
+        const std::lock_guard<std::mutex> lock{state->mutex};
+        if (state->completed)
+            return;
+        state->result = result;
+        state->completed = true;
+        exposed = state->exposed;
+    }
+    if (!exposed)
+        return;
+    auto* owner = godot::ObjectDB::get_instance(static_cast<std::uint64_t>(state->owner));
+    if (!owner)
+        return;
+    owner->emit_signal(state->signal, result);
+    if (owner->has_user_signal(state->signal))
+        owner->remove_user_signal(state->signal);
 }
 
 godot::Callable make_callable(godot::Object* owner, std::size_t required_arguments,
