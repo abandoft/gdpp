@@ -178,10 +178,16 @@ CompileResult Compiler::compile(std::string path, std::string source_text,
             result.metrics.optimize_ns = elapsed_ns(optimize_begin, Clock::now());
         }
         const auto mir_begin = Clock::now();
-        const auto mir = MirLowerer{}.lower(module);
+        auto mir = MirLowerer{}.lower(module);
         MirVerifier mir_verifier{diagnostics};
         (void)mir_verifier.verify(mir);
         result.metrics.mir_lower_verify_ns = elapsed_ns(mir_begin, Clock::now());
+        if (!diagnostics.has_errors() && options.optimize) {
+            const auto mir_optimize_begin = Clock::now();
+            result.mir_optimization = MirOptimizer{}.optimize(mir);
+            (void)mir_verifier.verify(mir);
+            result.metrics.mir_optimize_ns = elapsed_ns(mir_optimize_begin, Clock::now());
+        }
         result.metrics.mir_function_count = mir.functions.size();
         for (const auto& function : mir.functions) {
             result.metrics.mir_block_count += function.blocks.size();

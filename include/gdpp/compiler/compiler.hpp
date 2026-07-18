@@ -4,6 +4,7 @@
 #include "gdpp/core/diagnostic.hpp"
 #include "gdpp/core/godot_version.hpp"
 #include "gdpp/frontend/limits.hpp"
+#include "gdpp/ir/mir_optimizer.hpp"
 #include "gdpp/ir/optimizer.hpp"
 #include "gdpp/semantic/script_symbols.hpp"
 
@@ -32,6 +33,7 @@ struct CompileResult {
     bool success{false};
     GeneratedUnit unit;
     OptimizationStats optimization;
+    MirOptimizationStats mir_optimization;
     std::vector<Diagnostic> diagnostics;
     struct Metrics {
         std::uint64_t total_ns{0};
@@ -41,6 +43,7 @@ struct CompileResult {
         std::uint64_t hir_lower_ns{0};
         std::uint64_t optimize_ns{0};
         std::uint64_t mir_lower_verify_ns{0};
+        std::uint64_t mir_optimize_ns{0};
         std::uint64_t codegen_ns{0};
         std::size_t token_count{0};
         std::size_t ast_expression_count{0};
