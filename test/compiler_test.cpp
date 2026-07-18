@@ -2434,6 +2434,35 @@ TEST_CASE("dynamic logical operators short circuit and utility arguments keep so
     REQUIRE(result.unit.source.find(" = static_cast<int64_t>(2);", second) != std::string::npos);
 }
 
+TEST_CASE("compiler handles generated logical guard chains with bounded stack depth") {
+    std::string source{"extends RefCounted\nfunc validate() -> bool:\n    return true"};
+    constexpr std::size_t operand_count = 1024;
+    for (std::size_t index = 1; index < operand_count; ++index)
+        source += " and true";
+    source += '\n';
+
+    const auto result = gdpp::Compiler{}.compile("large_logical_chain.gd", source);
+
+    REQUIRE(result.success);
+    REQUIRE(result.metrics.ast_expression_count >= operand_count);
+    REQUIRE(result.unit.source.find("bool GDPPNative_LargeLogicalChain::validate()") !=
+            std::string::npos);
+}
+
+TEST_CASE("compiler analyzes legal arithmetic chains without recursive stack growth") {
+    std::string source{"extends RefCounted\nfunc total() -> int:\n    return 1"};
+    constexpr std::size_t operand_count = 96;
+    for (std::size_t index = 1; index < operand_count; ++index)
+        source += " + 1";
+    source += '\n';
+
+    const auto result = gdpp::Compiler{}.compile("large_arithmetic_chain.gd", source);
+
+    REQUIRE(result.success);
+    REQUIRE(result.metrics.ast_expression_count >= operand_count);
+    REQUIRE(result.optimization.constants_folded >= operand_count - 1U);
+}
+
 TEST_CASE("instance Godot methods cannot be called through type references") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("invalid_static.gd", "extends Node\n"

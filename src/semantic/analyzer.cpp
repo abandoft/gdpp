@@ -552,6 +552,115 @@ Type SemanticAnalyzer::container_element_type(const Type& container, SourceSpan 
         container.name.substr(prefix.size(), container.name.size() - prefix.size() - 1), span);
 }
 
+Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expression,
+                                                 const Type& left, const Type& right) {
+    const auto& operation = expression.value();
+    if (operation == "is" || operation == "is not") {
+        const auto* target = model_.api_resolution_of(*expression.operand(1));
+        const bool valid_target = target &&
+                                  (target->kind == ApiResolutionKind::type_reference ||
+                                   target->kind == ApiResolutionKind::external_type_reference ||
+                                   target->kind == ApiResolutionKind::script_type_reference ||
+                                   target->kind == ApiResolutionKind::inner_type_reference) &&
+                                  right.kind != TypeKind::void_type;
+        if (!valid_target) {
+            diagnostics_.error("GDS4067", "the right operand of 'is' must be a type",
+                               expression.operand(1)->span);
+        }
+        const auto* value_resolution = model_.api_resolution_of(*expression.operand(0));
+        if (left.kind == TypeKind::void_type ||
+            (value_resolution &&
+             (value_resolution->kind == ApiResolutionKind::type_reference ||
+              value_resolution->kind == ApiResolutionKind::external_type_reference ||
+              value_resolution->kind == ApiResolutionKind::script_type_reference))) {
+            diagnostics_.error("GDS4068", "the left operand of 'is' must be a value",
+                               expression.operand(0)->span);
+        }
+        return {TypeKind::boolean, "bool"};
+    }
+    if (operation == "as") {
+        const auto* target = model_.api_resolution_of(*expression.operand(1));
+        const bool valid_target = target &&
+                                  (target->kind == ApiResolutionKind::type_reference ||
+                                   target->kind == ApiResolutionKind::external_type_reference ||
+                                   target->kind == ApiResolutionKind::script_type_reference ||
+                                   target->kind == ApiResolutionKind::inner_type_reference ||
+                                   target->kind == ApiResolutionKind::script_enum_type ||
+                                   target->kind == ApiResolutionKind::global_enum_type) &&
+                                  right.kind != TypeKind::void_type;
+        if (!valid_target) {
+            diagnostics_.error("GDS4074", "the right operand of 'as' must be a type",
+                               expression.operand(1)->span);
+            return unknown_type;
+        }
+        return right;
+    }
+    if (operation == "and" || operation == "or") {
+        // Logical operators use GDScript truthiness for every value category, including typed
+        // containers, strings and numeric values.
+        return {TypeKind::boolean, "bool"};
+    }
+    if (left.is_dynamic() || right.is_dynamic()) {
+        return operation == "==" || operation == "!=" || operation == "<" || operation == "<=" ||
+                       operation == ">" || operation == ">=" || operation == "in" ||
+                       operation == "not in"
+                   ? Type{TypeKind::boolean, "bool"}
+                   : variant_type;
+    }
+    if ((operation == "==" || operation == "!=") &&
+        ((left.kind == TypeKind::object && right.kind == TypeKind::object) ||
+         (left.kind == TypeKind::object && right.kind == TypeKind::nil) ||
+         (left.kind == TypeKind::nil && right.kind == TypeKind::object))) {
+        return {TypeKind::boolean, "bool"};
+    }
+
+    const auto left_name = builtin_operator_type(left);
+    const auto right_name = builtin_operator_type(right);
+    const auto lookup_operation = operation == "not in" ? "in" : operation;
+    auto* record = api_.find_builtin_operator(left_name, lookup_operation, right_name);
+    if (!record)
+        record = api_.find_builtin_operator(left_name, lookup_operation, "Variant");
+    if (!record) {
+        diagnostics_.error("GDS4005",
+                           "operator '" + operation + "' is not defined for " +
+                               left.display_name() + " and " + right.display_name(),
+                           expression.span);
+        return unknown_type;
+    }
+    return operation == "not in" ? Type{TypeKind::boolean, "bool"}
+                                 : type_from_godot_api(record->return_type);
+}
+
+Type SemanticAnalyzer::analyze_binary_tree(const ast::Expression& expression) {
+    struct Frame {
+        const ast::Expression* expression{nullptr};
+        bool children_analyzed{false};
+    };
+    std::vector<Frame> work{{&expression, false}};
+    while (!work.empty()) {
+        const auto frame = work.back();
+        work.pop_back();
+        if (frame.expression->kind() != ast::ExpressionKind::binary) {
+            (void)analyze_expression(*frame.expression);
+            continue;
+        }
+        if (frame.children_analyzed) {
+            const auto& left_expression = *frame.expression->operand(0);
+            const auto& right_expression = *frame.expression->operand(1);
+            const auto left = model_.type_of(left_expression);
+            const auto right = model_.type_of(right_expression);
+            model_.expression_types_[frame.expression] =
+                resolve_binary_expression(*frame.expression, left, right);
+            continue;
+        }
+
+        work.push_back({frame.expression, true});
+        work.push_back({frame.expression->operand(1).get(), false});
+        work.push_back({frame.expression->operand(0).get(), false});
+    }
+    return model_.type_of(expression);
+}
+
 Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
     Type result = unknown_type;
     switch (expression.kind()) {
@@ -882,90 +991,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         result = can_suspend ? variant_type : awaited;
         break;
     }
-    case ast::ExpressionKind::binary: {
-        const auto& operation = expression.value();
-        const auto left = analyze_expression(*expression.operand(0));
-        const auto right = analyze_expression(*expression.operand(1));
-        if (operation == "is" || operation == "is not") {
-            const auto* target = model_.api_resolution_of(*expression.operand(1));
-            const bool valid_target = target &&
-                                      (target->kind == ApiResolutionKind::type_reference ||
-                                       target->kind == ApiResolutionKind::external_type_reference ||
-                                       target->kind == ApiResolutionKind::script_type_reference ||
-                                       target->kind == ApiResolutionKind::inner_type_reference) &&
-                                      right.kind != TypeKind::void_type;
-            if (!valid_target) {
-                diagnostics_.error("GDS4067", "the right operand of 'is' must be a type",
-                                   expression.operand(1)->span);
-            }
-            const auto* value_resolution = model_.api_resolution_of(*expression.operand(0));
-            if (left.kind == TypeKind::void_type ||
-                (value_resolution &&
-                 (value_resolution->kind == ApiResolutionKind::type_reference ||
-                  value_resolution->kind == ApiResolutionKind::external_type_reference ||
-                  value_resolution->kind == ApiResolutionKind::script_type_reference))) {
-                diagnostics_.error("GDS4068", "the left operand of 'is' must be a value",
-                                   expression.operand(0)->span);
-            }
-            result = {TypeKind::boolean, "bool"};
-            break;
-        }
-        if (operation == "as") {
-            const auto* target = model_.api_resolution_of(*expression.operand(1));
-            const bool valid_target = target &&
-                                      (target->kind == ApiResolutionKind::type_reference ||
-                                       target->kind == ApiResolutionKind::external_type_reference ||
-                                       target->kind == ApiResolutionKind::script_type_reference ||
-                                       target->kind == ApiResolutionKind::inner_type_reference ||
-                                       target->kind == ApiResolutionKind::script_enum_type ||
-                                       target->kind == ApiResolutionKind::global_enum_type) &&
-                                      right.kind != TypeKind::void_type;
-            if (!valid_target) {
-                diagnostics_.error("GDS4074", "the right operand of 'as' must be a type",
-                                   expression.operand(1)->span);
-                result = unknown_type;
-            } else {
-                result = right;
-            }
-            break;
-        }
-        if (operation == "and" || operation == "or") {
-            // Logical operators use GDScript truthiness for every value category, including
-            // typed containers, strings and numeric values.
-            result = {TypeKind::boolean, "bool"};
-        } else if (left.is_dynamic() || right.is_dynamic()) {
-            result = operation == "==" || operation == "!=" || operation == "<" ||
-                             operation == "<=" || operation == ">" || operation == ">=" ||
-                             operation == "in" || operation == "not in" || operation == "and" ||
-                             operation == "or"
-                         ? Type{TypeKind::boolean, "bool"}
-                         : variant_type;
-        } else if ((operation == "==" || operation == "!=") &&
-                   ((left.kind == TypeKind::object && right.kind == TypeKind::object) ||
-                    (left.kind == TypeKind::object && right.kind == TypeKind::nil) ||
-                    (left.kind == TypeKind::nil && right.kind == TypeKind::object))) {
-            result = {TypeKind::boolean, "bool"};
-        } else {
-            const auto left_name = builtin_operator_type(left);
-            const auto right_name = builtin_operator_type(right);
-            const auto lookup_operation = operation == "not in" ? "in" : operation;
-            const auto* record =
-                api_.find_builtin_operator(left_name, lookup_operation, right_name);
-            if (!record)
-                record = api_.find_builtin_operator(left_name, lookup_operation, "Variant");
-            if (!record) {
-                diagnostics_.error("GDS4005",
-                                   "operator '" + operation + "' is not defined for " +
-                                       left.display_name() + " and " + right.display_name(),
-                                   expression.span);
-                result = unknown_type;
-            } else {
-                result = operation == "not in" ? Type{TypeKind::boolean, "bool"}
-                                               : type_from_godot_api(record->return_type);
-            }
-        }
+    case ast::ExpressionKind::binary:
+        result = analyze_binary_tree(expression);
         break;
-    }
     case ast::ExpressionKind::conditional: {
         const auto when_true = analyze_expression(*expression.operand(0));
         (void)analyze_expression(*expression.operand(1));

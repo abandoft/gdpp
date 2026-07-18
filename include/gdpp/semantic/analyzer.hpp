@@ -187,6 +187,9 @@ class SemanticAnalyzer final {
     [[nodiscard]] FlowResult analyze_statements(const std::vector<ast::Statement>& statements);
     [[nodiscard]] FlowResult analyze_statement(const ast::Statement& statement);
     [[nodiscard]] Type analyze_expression(const ast::Expression& expression);
+    [[nodiscard]] Type analyze_binary_tree(const ast::Expression& expression);
+    [[nodiscard]] Type resolve_binary_expression(const ast::Expression& expression,
+                                                 const Type& left, const Type& right);
     [[nodiscard]] bool is_constant_match_expression(const ast::Expression& expression) const;
     [[nodiscard]] std::optional<std::string>
     constant_string_expression(const ast::Expression& expression) const;
