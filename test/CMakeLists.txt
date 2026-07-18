@@ -4,6 +4,7 @@ add_executable(
     lexer_test.cpp
     frontend_limits_test.cpp
     parser_test.cpp
+    iteration_test.cpp
     ir_test.cpp
     mir_test.cpp
     godot_api_test.cpp
