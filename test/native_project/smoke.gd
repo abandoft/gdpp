@@ -31,6 +31,7 @@ func _run() -> void:
     var cross_a_class := _native_class_for("cross_ref_a.gd")
     var cross_b_class := _native_class_for("cross_ref_b.gd")
     var required_init_class := _native_class_for("required_initializer.gd")
+    var rpc_class := _native_class_for("rpc_case.gd")
     var long_await_class := _native_class_for("long_await_chain.gd")
     var await_expression_class := _native_class_for("await_expression_case.gd")
     if (
@@ -40,6 +41,7 @@ func _run() -> void:
         or cross_a_class.is_empty()
         or cross_b_class.is_empty()
         or required_init_class.is_empty()
+        or rpc_class.is_empty()
         or long_await_class.is_empty()
         or await_expression_class.is_empty()
     ):
@@ -59,6 +61,44 @@ func _run() -> void:
         quit(1)
         return
     instance.free()
+
+    var rpc_instance: Node = ClassDB.instantiate(rpc_class) as Node
+    if rpc_instance == null:
+        push_error("Generated native RPC class is unavailable")
+        quit(1)
+        return
+    root.add_child(rpc_instance)
+    var rpc_config: Dictionary
+    if rpc_instance.has_method(&"get_node_rpc_config"):
+        rpc_config = rpc_instance.call(&"get_node_rpc_config")
+    else:
+        rpc_config = rpc_instance.call(&"get_rpc_config")
+    var defaults: Dictionary = rpc_config.get(&"default_rpc", {})
+    var configured: Dictionary = rpc_config.get(&"configured_rpc", {})
+    if (
+        defaults.get("rpc_mode", -1) != MultiplayerAPI.RPC_MODE_AUTHORITY
+        or defaults.get("transfer_mode", -1) != MultiplayerPeer.TRANSFER_MODE_UNRELIABLE
+        or defaults.get("call_local", true) != false
+        or defaults.get("channel", -1) != 0
+        or configured.get("rpc_mode", -1) != MultiplayerAPI.RPC_MODE_ANY_PEER
+        or configured.get("transfer_mode", -1) != MultiplayerPeer.TRANSFER_MODE_RELIABLE
+        or configured.get("call_local", false) != true
+        or configured.get("channel", -1) != 3
+    ):
+        push_error("Generated native RPC configuration differs from GDScript semantics: %s" % rpc_config)
+        rpc_instance.queue_free()
+        quit(1)
+        return
+    var rpc_error: Error = rpc_instance.rpc(&"configured_rpc", 73)
+    if rpc_error != OK or rpc_instance.get("received_value") != 73:
+        push_error(
+            "Generated call-local RPC endpoint did not execute: error=%s value=%s"
+            % [rpc_error, rpc_instance.get("received_value")]
+        )
+        rpc_instance.queue_free()
+        quit(1)
+        return
+    rpc_instance.queue_free()
 
     var coroutine: Object = ClassDB.instantiate(long_await_class)
     if coroutine == null:
