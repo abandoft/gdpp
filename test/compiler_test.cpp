@@ -2205,6 +2205,35 @@ TEST_CASE("compiler optimization can be enabled or disabled without changing the
                                          "static_cast<int64_t>(2));") != std::string::npos);
 }
 
+TEST_CASE("compiler optimization removes constant dead branches without changing live output") {
+    const gdpp::Compiler compiler;
+    const std::string source = "func choose() -> int:\n"
+                               "    if 20 + 22 == 42:\n"
+                               "        return 7\n"
+                               "    else:\n"
+                               "        print(\"dead-branch\")\n"
+                               "        return 9\n"
+                               "func skip_loop() -> void:\n"
+                               "    while false:\n"
+                               "        print(\"dead-loop\")\n";
+    const auto optimized = compiler.compile("control_flow.gd", source);
+    gdpp::CompileOptions unoptimized_options;
+    unoptimized_options.optimize = false;
+    const auto unoptimized = compiler.compile("control_flow.gd", source, unoptimized_options);
+
+    REQUIRE(optimized.success);
+    REQUIRE(unoptimized.success);
+    REQUIRE_EQ(optimized.optimization.branches_simplified, std::size_t{2});
+    REQUIRE(optimized.mir_optimization.branches_simplified >= 1U);
+    REQUIRE(optimized.mir_optimization.blocks_removed >= 1U);
+    REQUIRE_EQ(unoptimized.optimization.branches_simplified, std::size_t{0});
+    REQUIRE_EQ(unoptimized.mir_optimization.blocks_removed, std::size_t{0});
+    REQUIRE(optimized.unit.source.find("dead-branch") == std::string::npos);
+    REQUIRE(optimized.unit.source.find("dead-loop") == std::string::npos);
+    REQUIRE(unoptimized.unit.source.find("dead-branch") != std::string::npos);
+    REQUIRE(unoptimized.unit.source.find("dead-loop") != std::string::npos);
+}
+
 TEST_CASE("Godot API inheritance resolves native methods properties and builtin types") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("mover.gd", "extends Node2D\n"
