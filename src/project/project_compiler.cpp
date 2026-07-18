@@ -43,6 +43,11 @@ struct ManifestEntry {
 
 using Manifest = std::map<std::string, ManifestEntry>;
 
+struct LoadedManifest {
+    Manifest entries;
+    bool cache_compatible{false};
+};
+
 struct EmbeddedScriptSource {
     std::string id;
     std::string source;
@@ -708,18 +713,26 @@ std::string native_inner_suffix(std::string_view qualified_name) {
     return result;
 }
 
-Manifest read_manifest(const std::filesystem::path& path) {
-    Manifest manifest;
+bool managed_translation_unit_name(std::string_view name) {
+    if (name.empty() || name.find_first_of("/\\") != std::string_view::npos)
+        return false;
+    return (name.size() > 7U && name.substr(name.size() - 7U) == ".gd.hpp") ||
+           (name.size() > 7U && name.substr(name.size() - 7U) == ".gd.cpp");
+}
+
+LoadedManifest read_manifest(const std::filesystem::path& path) {
+    LoadedManifest loaded;
     std::ifstream input{path};
     std::string magic;
     std::string version;
     std::string compiler_version;
     std::string codegen_fingerprint;
-    if (!(input >> magic >> version >> compiler_version >> codegen_fingerprint) ||
-        magic != "GDPP_MANIFEST" || version != "3" || compiler_version != GDPP_VERSION_STRING ||
-        codegen_fingerprint != GDPP_CODEGEN_FINGERPRINT) {
-        return manifest;
-    }
+    if (!(input >> magic >> version >> compiler_version >> codegen_fingerprint))
+        return loaded;
+    if (magic != "GDPP_MANIFEST" || version != "3")
+        return loaded;
+    loaded.cache_compatible =
+        compiler_version == GDPP_VERSION_STRING && codegen_fingerprint == GDPP_CODEGEN_FINGERPRINT;
     std::string source_path;
     ManifestEntry entry;
     std::size_t dependency_count = 0;
@@ -734,9 +747,13 @@ Manifest read_manifest(const std::filesystem::path& path) {
                 return {};
             entry.dependencies.push_back(std::move(dependency));
         }
-        manifest.emplace(source_path, entry);
+        if (!managed_translation_unit_name(entry.header) ||
+            !managed_translation_unit_name(entry.source)) {
+            return {};
+        }
+        loaded.entries.emplace(source_path, entry);
     }
-    return manifest;
+    return loaded;
 }
 
 std::string write_manifest(const Manifest& manifest) {
@@ -1124,7 +1141,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
 
     const auto generated = output / "generated";
     const auto manifest_path = output / "manifest.txt";
-    const auto old_manifest = read_manifest(manifest_path);
+    const auto loaded_manifest = read_manifest(manifest_path);
+    const auto& old_manifest = loaded_manifest.entries;
     const auto project_autoloads = read_project_autoloads(root / "project.godot");
     std::vector<std::filesystem::path> source_paths;
     std::vector<std::filesystem::path> text_resource_paths;
@@ -2229,7 +2247,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                                                native_inner_suffix(inner.name));
         }
         const auto cached = old_manifest.find(input.relative);
-        if (cached != old_manifest.end() &&
+        if (loaded_manifest.cache_compatible && cached != old_manifest.end() &&
             cached->second.implementation_hash == input.implementation_hash &&
             cached->second.public_abi_hash == input.public_abi_hash &&
             cached->second.class_name == expected_class_name &&
@@ -2314,20 +2332,52 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         }
     }
     for (const auto& [path, entry] : old_manifest) {
-        if (new_manifest.find(path) != new_manifest.end())
+        const auto replacement = new_manifest.find(path);
+        if (replacement != new_manifest.end() && replacement->second.header == entry.header &&
+            replacement->second.source == entry.source) {
             continue;
+        }
         // A moved globally named script can keep the same generated file names. The new
         // translation unit is written before stale manifest entries are removed, so deleting by
-        // old source path alone would also delete the freshly generated output.
-        if (!output_names.count(entry.header)) {
+        // old source path alone would also delete the freshly generated output. The same guard
+        // also handles class-name changes that replace the outputs of an existing source path.
+        if (!output_names.count(entry.header))
             std::filesystem::remove(generated / entry.header, error);
-            error.clear();
-        }
-        if (!output_names.count(entry.source)) {
+        if (!error && !output_names.count(entry.source))
             std::filesystem::remove(generated / entry.source, error);
-            error.clear();
+        if (error) {
+            result.diagnostics.push_back(
+                {generated,
+                 project_error("PRJ0019", "cannot remove stale generated translation unit")});
+            return result;
         }
         ++result.removed_count;
+    }
+    // The generated directory is compiler-owned. Reconcile it against the new manifest so files
+    // orphaned by an older manifest schema, interrupted upgrade, or historical cleanup bug cannot
+    // leak into the next native CMake source list.
+    std::vector<std::filesystem::path> orphaned_outputs;
+    for (std::filesystem::directory_iterator generated_iterator{generated, error}, generated_end;
+         !error && generated_iterator != generated_end; generated_iterator.increment(error)) {
+        std::error_code entry_error;
+        if (!generated_iterator->is_regular_file(entry_error)) {
+            if (entry_error)
+                error = entry_error;
+            continue;
+        }
+        const auto name = path_to_utf8(generated_iterator->path().filename());
+        if (managed_translation_unit_name(name) && !output_names.count(name))
+            orphaned_outputs.push_back(generated_iterator->path());
+    }
+    for (const auto& orphan : orphaned_outputs) {
+        if (error)
+            break;
+        std::filesystem::remove(orphan, error);
+    }
+    if (error) {
+        result.diagnostics.push_back(
+            {generated, project_error("PRJ0019", "cannot reconcile generated translation units")});
+        return result;
     }
 
     const auto relative_library_directory = native_library_directory.lexically_relative(root);
