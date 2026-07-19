@@ -25,6 +25,10 @@ const LITERAL_TRIPLE = """first
 last"""
 
 signal greeted(name: String)
+signal typed_containers_changed(
+    values: Array[int],
+    weights: Dictionary[String, int]
+)
 @export var greeting: String = "Hello"
 @export_range(0.0, 100.0, 0.5, "or_greater") var movement_speed: float = 10.0
 var aliases := []
@@ -62,6 +66,9 @@ var matrix_frame_checksum: int = 0
 var matrix_frame_intervals_us: Array[float] = []
 var matrix_frame_workload_us: Array[int] = []
 var matrix_frame_workload: Node
+@export var typed_integers: Array[int] = [1, 2]
+var typed_weights: Dictionary[String, int] = {"left": 1}
+var typed_nodes: Array[Node] = []
 
 func greet(name: String) -> void:
     var names := [name, "Godot"]
@@ -130,6 +137,7 @@ func _on_ready() -> void:
         and validate_accessor() == true
         and validate_inheritance() == true
         and validate_latest_literals() == true
+        and validate_typed_containers() == true
         and assertion_evaluation_count() == 0
     ):
         print("GDPP_EXPORTED_PROPERTIES_OK")
@@ -178,6 +186,32 @@ func validate_latest_literals() -> bool:
         and LITERAL_TRIPLE == "first\n\"quoted\"\nlast"
         and 计算标识符(6) == 21
     )
+
+
+func validate_typed_containers() -> bool:
+    var local_values: Array[int] = [3, 4]
+    var local_weights: Dictionary[String, int] = {"right": 2}
+    return (
+        typed_integers.is_typed()
+        and typed_integers.get_typed_builtin() == TYPE_INT
+        and typed_integers == [1, 2]
+        and typed_weights.is_typed_key()
+        and typed_weights.is_typed_value()
+        and typed_weights.get_typed_key_builtin() == TYPE_STRING
+        and typed_weights.get_typed_value_builtin() == TYPE_INT
+        and typed_weights["left"] == 1
+        and typed_nodes.is_typed()
+        and typed_nodes.get_typed_builtin() == TYPE_OBJECT
+        and typed_nodes.get_typed_class_name() == &"Node"
+        and local_values.is_typed()
+        and local_values.get_typed_builtin() == TYPE_INT
+        and local_weights.is_typed_key()
+        and local_weights.is_typed_value()
+    )
+
+
+func typed_container_roundtrip(values: Array[int]) -> Dictionary[String, int]:
+    return {"size": values.size()}
 
 
 func 计算标识符(值: int) -> int:
