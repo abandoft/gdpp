@@ -234,6 +234,34 @@ TEST_CASE("parser accepts current Godot local constants separators and Lua dicti
     REQUIRE_EQ(script.functions.front().body.back().condition()->value(), std::string{"return"});
 }
 
+TEST_CASE("parser rejects non-Godot multiple variable declarations without cascading") {
+    const gdpp::SourceFile source{
+        "multiple_variables.gd",
+        "var first = 1, second = 2\n"
+        "func test() -> int:\n"
+        "    var local = 3, other = 4\n"
+        "    var recovered := 5\n"
+        "    return recovered\n"};
+    gdpp::DiagnosticBag diagnostics;
+    gdpp::Lexer lexer{source, diagnostics};
+    const auto tokens = lexer.scan();
+    gdpp::Parser parser{tokens, diagnostics};
+    const auto script = parser.parse_script();
+
+    REQUIRE(diagnostics.has_errors());
+    REQUIRE_EQ(std::count_if(diagnostics.items().begin(), diagnostics.items().end(),
+                             [](const auto& diagnostic) {
+                                 return diagnostic.code == "GDS2032";
+                             }),
+               std::ptrdiff_t{2});
+    REQUIRE_EQ(script.variables.size(), std::size_t{1});
+    REQUIRE_EQ(script.functions.size(), std::size_t{1});
+    REQUIRE_EQ(script.functions.front().body.size(), std::size_t{3});
+    REQUIRE_EQ(script.functions.front().body.at(1).name(), std::string{"recovered"});
+    REQUIRE_EQ(script.functions.front().body.back().kind(),
+               gdpp::ast::StatementKind::return_statement);
+}
+
 TEST_CASE("parser attaches export annotations to fields across line layouts") {
     const gdpp::SourceFile source{"exports.gd", "@export var title: String = \"Player\"\n"
                                                 "@export_range(-10.0, 10.0, 0.5, \"or_greater\")\n"

@@ -554,8 +554,12 @@ ast::VariableDeclaration Parser::parse_variable(bool is_constant,
     } else if (match(TokenKind::semicolon)) {
         skip_newlines();
     } else if (!check(TokenKind::newline) && !check(TokenKind::end_of_file)) {
-        diagnostics_.error("GDS2003", "unexpected token after variable declaration",
-                           current().span);
+        diagnostics_.error(
+            check(TokenKind::comma) ? "GDS2032" : "GDS2003",
+            check(TokenKind::comma)
+                ? "GDScript declares one variable per statement; start a new declaration"
+                : "unexpected token after variable declaration",
+            current().span);
         synchronize();
     } else {
         skip_newlines();
@@ -785,6 +789,13 @@ ast::Statement Parser::parse_variable_statement(const bool is_constant) {
         variable.initializer->kind() == ast::ExpressionKind::await_expression) {
         diagnostics_.error("GDS2025", "a local constant initializer cannot await a signal",
                            variable.initializer->span);
+    }
+    if (check(TokenKind::comma)) {
+        diagnostics_.error(
+            "GDS2032",
+            "GDScript declares one variable per statement; start a new declaration",
+            current().span);
+        synchronize();
     }
     return ast::Statement{std::move(variable), joined(begin, previous().span)};
 }
