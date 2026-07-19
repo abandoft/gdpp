@@ -56,6 +56,7 @@ class CodeGenerator final {
     };
 
     [[nodiscard]] std::string emit_expression(const ir::Expression& expression) const;
+    [[nodiscard]] std::string emit_integer_binary(const ir::Expression& expression) const;
     [[nodiscard]] std::string emit_truthy(const ir::Expression& expression) const;
     [[nodiscard]] std::string emit_conversion(const Type& target, const Type& source,
                                               std::string value) const;

@@ -881,7 +881,8 @@ TEST_CASE("project compiler consumes runtime contracts reflected from ClassDB") 
     REQUIRE(source.find("instantiate_external_class") != std::string::npos);
     REQUIRE(source.find("call_dynamic") != std::string::npos);
     REQUIRE(source.find("call_external_static") != std::string::npos);
-    REQUIRE(source.find("40 +") != std::string::npos);
+    REQUIRE(source.find("gdpp::integer::add(") != std::string::npos);
+    REQUIRE(source.find(" = 40;") != std::string::npos);
     REQUIRE(source.find("FORMAT_PCM:1,FORMAT_FLOAT:2") != std::string::npos);
     REQUIRE(source.find("CHANNEL_LEFT:1,CHANNEL_RIGHT:2") != std::string::npos);
     REQUIRE(source.find("godot::PROPERTY_HINT_FLAGS") != std::string::npos);

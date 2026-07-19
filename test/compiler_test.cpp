@@ -1883,8 +1883,9 @@ TEST_CASE("compiler resolves inherited engine constants and qualified class enum
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("find_engine_singleton") == std::string::npos);
-    REQUIRE(result.unit.source.find("== 2000") != std::string::npos);
-    REQUIRE(result.unit.source.find("== 1007") != std::string::npos);
+    REQUIRE(result.unit.source.find(" = 2000;") != std::string::npos);
+    REQUIRE(result.unit.source.find(" = 1007;") != std::string::npos);
+    REQUIRE(result.unit.source.find("return (_gdpp_integer_left_") != std::string::npos);
     REQUIRE(result.unit.source.find("static_cast<int64_t>(0)") != std::string::npos);
 }
 
@@ -1923,9 +1924,8 @@ TEST_CASE("compiler generates single-evaluation match control flow") {
     REQUIRE(result.unit.source.find("godot::Variant _gdpp_match_bind_") != std::string::npos);
     REQUIRE(result.unit.source.find("int64_t captured = static_cast<int64_t>(") !=
             std::string::npos);
-    REQUIRE(
-        result.unit.source.find("if (static_cast<bool>((captured == State::_gdpp_enum_RUN)))") !=
-        std::string::npos);
+    REQUIRE(result.unit.source.find("if (static_cast<bool>(([&]() -> bool") != std::string::npos);
+    REQUIRE(result.unit.source.find(" = State::_gdpp_enum_RUN;") != std::string::npos);
     REQUIRE(result.unit.source.find("    return {};\n}") != std::string::npos);
 }
 
@@ -2122,6 +2122,33 @@ TEST_CASE("compiler retains local lambda adapters for direct native calls") {
     REQUIRE(result.unit.source.find("godot::Callable operation") == std::string::npos);
 }
 
+TEST_CASE("compiler emits ordered portable operations for typed integers") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "integer_operators.gd",
+        "func calculate(left: int, right: int) -> Array:\n"
+        "    return [left + right, left - right, left * right, left / right, left % right, "
+        "left << right, left >> right, left & right, left | right, left ^ right, "
+        "left < right, -left, ~right]\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("#include <gdpp/support/integer_semantics.hpp>") !=
+            std::string::npos);
+    for (const auto* helper :
+         {"gdpp::integer::add(", "gdpp::integer::subtract(", "gdpp::integer::multiply(",
+          "gdpp::runtime::integer_divide(", "gdpp::runtime::integer_modulo(",
+          "gdpp::integer::shift_left(", "gdpp::integer::shift_right(", "gdpp::integer::bit_and(",
+          "gdpp::integer::bit_or(", "gdpp::integer::bit_xor(", "gdpp::integer::negate(",
+          "gdpp::integer::bit_not("}) {
+        REQUIRE(result.unit.source.find(helper) != std::string::npos);
+    }
+    const auto left = result.unit.source.find("const int64_t _gdpp_integer_left_");
+    const auto right = result.unit.source.find("const int64_t _gdpp_integer_right_");
+    REQUIRE(left != std::string::npos);
+    REQUIRE(right != std::string::npos);
+    REQUIRE(left < right);
+}
+
 TEST_CASE("compiler preserves native scalar paths across dynamic boundaries") {
     const gdpp::Compiler compiler;
     const auto result =
@@ -2137,7 +2164,7 @@ TEST_CASE("compiler preserves native scalar paths across dynamic boundaries") {
     REQUIRE(result.unit.source.find("gdpp::runtime::compound_assign_integer(") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::compound_assign(") != std::string::npos);
-    REQUIRE(result.unit.source.find("total + static_cast<int64_t>(") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::integer::add(") != std::string::npos);
     REQUIRE(result.unit.source.find("const auto _gdpp_callable_argument_") != std::string::npos);
     REQUIRE(result.unit.source.find("const godot::Variant _gdpp_callable_argument_") ==
             std::string::npos);
@@ -2536,8 +2563,9 @@ TEST_CASE("compiler optimization can be enabled or disabled without changing the
     REQUIRE_EQ(optimized.optimization.constants_folded, std::size_t{1});
     REQUIRE_EQ(unoptimized.optimization.constants_folded, std::size_t{0});
     REQUIRE(optimized.unit.source.find("return static_cast<int64_t>(42);") != std::string::npos);
-    REQUIRE(unoptimized.unit.source.find("return (static_cast<int64_t>(40) + "
-                                         "static_cast<int64_t>(2));") != std::string::npos);
+    REQUIRE(unoptimized.unit.source.find("gdpp::integer::add(") != std::string::npos);
+    REQUIRE(unoptimized.unit.source.find(" = static_cast<int64_t>(40);") != std::string::npos);
+    REQUIRE(unoptimized.unit.source.find(" = static_cast<int64_t>(2);") != std::string::npos);
 }
 
 TEST_CASE("compiler optimization removes constant dead branches without changing live output") {

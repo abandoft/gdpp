@@ -1794,6 +1794,39 @@ std::string CodeGenerator::emit_truthy(const ir::Expression& expression) const {
     return "static_cast<bool>(godot::Variant(" + value + "))";
 }
 
+std::string CodeGenerator::emit_integer_binary(const ir::Expression& expression) const {
+    const auto suffix = std::to_string(temporary_counter_++);
+    const auto left = "_gdpp_integer_left_" + suffix;
+    const auto right = "_gdpp_integer_right_" + suffix;
+    const auto& operation = expression.value;
+    std::string evaluated;
+    if (operation == "+")
+        evaluated = "gdpp::integer::add(" + left + ", " + right + ")";
+    else if (operation == "-")
+        evaluated = "gdpp::integer::subtract(" + left + ", " + right + ")";
+    else if (operation == "*")
+        evaluated = "gdpp::integer::multiply(" + left + ", " + right + ")";
+    else if (operation == "/")
+        evaluated = "gdpp::runtime::integer_divide(" + left + ", " + right + ")";
+    else if (operation == "%")
+        evaluated = "gdpp::runtime::integer_modulo(" + left + ", " + right + ")";
+    else if (operation == "<<")
+        evaluated = "gdpp::integer::shift_left(" + left + ", " + right + ")";
+    else if (operation == ">>")
+        evaluated = "gdpp::integer::shift_right(" + left + ", " + right + ")";
+    else if (operation == "&")
+        evaluated = "gdpp::integer::bit_and(" + left + ", " + right + ")";
+    else if (operation == "|")
+        evaluated = "gdpp::integer::bit_or(" + left + ", " + right + ")";
+    else if (operation == "^")
+        evaluated = "gdpp::integer::bit_xor(" + left + ", " + right + ")";
+    else
+        evaluated = "(" + left + " " + operation + " " + right + ")";
+    return "([&]() -> " + cpp_type(expression.type) + " { const int64_t " + left + " = " +
+           emit_expression(*expression.operands.at(0)) + "; const int64_t " + right + " = " +
+           emit_expression(*expression.operands.at(1)) + "; return " + evaluated + "; }())";
+}
+
 std::string CodeGenerator::emit_expression(const ir::Expression& expression) const {
     switch (expression.kind) {
     case ir::ExpressionKind::literal: {
@@ -1951,6 +1984,14 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             expression.operands.at(0)->value == "9223372036854775808")
             return emit_expression(*expression.operands.at(0));
         const auto& operand_type = expression.operands.at(0)->type;
+        const auto integer_like =
+            operand_type.kind == TypeKind::integer || operand_type.kind == TypeKind::enumeration;
+        if (integer_like && expression.value == "-") {
+            return "gdpp::integer::negate(" + emit_expression(*expression.operands.at(0)) + ")";
+        }
+        if (integer_like && expression.value == "~") {
+            return "gdpp::integer::bit_not(" + emit_expression(*expression.operands.at(0)) + ")";
+        }
         const bool has_direct_cpp_operator =
             (expression.value == "+" || expression.value == "-") && operand_type.is_numeric();
         const bool has_direct_cpp_not =
@@ -2187,6 +2228,11 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 emit_expression(*expression.operands.at(1)) + ")";
             return emit_conversion(expression.type, {TypeKind::variant, "Variant"}, evaluated);
         }
+        const auto integer_like = [](const Type& type) {
+            return type.kind == TypeKind::integer || type.kind == TypeKind::enumeration;
+        };
+        if (integer_like(left_type) && integer_like(right_type))
+            return emit_integer_binary(expression);
         return "(" + emit_expression(*expression.operands.at(0)) + " " + operation + " " +
                emit_expression(*expression.operands.at(1)) + ")";
     }
@@ -5070,7 +5116,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
            << "#include <godot_cpp/variant/dictionary.hpp>\n"
            << "#include <godot_cpp/variant/utility_functions.hpp>\n"
            << "#include <godot_cpp/variant/variant.hpp>\n\n"
-           << "#include <gdpp/runtime/variant_ops.hpp>\n\n"
+           << "#include <gdpp/runtime/variant_ops.hpp>\n"
+           << "#include <gdpp/support/integer_semantics.hpp>\n\n"
            << "#include <cstdint>\n"
            << "#include <atomic>\n"
            << "#include <functional>\n"
