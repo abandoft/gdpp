@@ -813,6 +813,8 @@ TEST_CASE("project compiler consumes runtime contracts reflected from ClassDB") 
                "extends Node\n"
                "class_name WaveformConsumer\n"
                "var data: WaveformData\n"
+               "var data_items: Array[WaveformData] = []\n"
+               "var data_by_name: Dictionary[String, WaveformData] = {}\n"
                "@export var format: WaveformData.Format = WaveformData.Format.FORMAT_PCM\n"
                "@export var channels: WaveformData.Channels = "
                "WaveformData.Channels.CHANNEL_LEFT | WaveformData.CHANNEL_RIGHT\n"
@@ -822,7 +824,10 @@ TEST_CASE("project compiler consumes runtime contracts reflected from ClassDB") 
                "    data.clear_data()\n"
                "    format = data.get_format()\n"
                "    return WaveformData.FORMAT_BIAS + WaveformData.get_format_version() + "
-               "data.get_sample_count()\n");
+               "data.get_sample_count()\n"
+               "func preserve(values: Array[WaveformData]) -> Array[WaveformData]:\n"
+               "    data_items = values\n"
+               "    return data_items\n");
 
     gdpp::ExtensionBridge reflected;
     reflected.manifest_path = root / ".godot/gdpp_classdb/WaveformData.runtime";
@@ -872,6 +877,7 @@ TEST_CASE("project compiler consumes runtime contracts reflected from ClassDB") 
     REQUIRE(result.success);
     REQUIRE_EQ(result.scripts.size(), std::size_t{1});
     const auto source = read_text(options.output_directory / "generated/waveform_consumer.gd.cpp");
+    const auto header = read_text(options.output_directory / "generated/waveform_consumer.gd.hpp");
     REQUIRE(source.find("instantiate_external_class") != std::string::npos);
     REQUIRE(source.find("call_dynamic") != std::string::npos);
     REQUIRE(source.find("call_external_static") != std::string::npos);
@@ -879,6 +885,13 @@ TEST_CASE("project compiler consumes runtime contracts reflected from ClassDB") 
     REQUIRE(source.find("FORMAT_PCM:1,FORMAT_FLOAT:2") != std::string::npos);
     REQUIRE(source.find("CHANNEL_LEFT:1,CHANNEL_RIGHT:2") != std::string::npos);
     REQUIRE(source.find("godot::PROPERTY_HINT_FLAGS") != std::string::npos);
+    REQUIRE(header.find("struct ContainerObjectTag_WaveformData") != std::string::npos);
+    REQUIRE(header.find("godot::StringName(\"WaveformData\")") != std::string::npos);
+    REQUIRE(header.find("godot::TypedArray<waveform_consumer_gdpp_detail::"
+                        "ContainerObjectTag_WaveformData>") != std::string::npos);
+    REQUIRE(header.find("godot::TypedDictionary<godot::String, "
+                        "waveform_consumer_gdpp_detail::ContainerObjectTag_WaveformData>") !=
+            std::string::npos);
     const auto lock = read_text(options.output_directory / "bridge.lock");
     REQUIRE(lock.find("classdb:WaveformData") != std::string::npos);
 
@@ -1380,6 +1393,54 @@ TEST_CASE("project cache invalidates only direct ABI dependents") {
     REQUIRE(unrelated != abi_change.scripts.end());
     REQUIRE(unrelated->cache_hit);
     REQUIRE_EQ(unrelated->content_hash, initial_unrelated_hash);
+}
+
+TEST_CASE("typed container object arguments participate in precise dependency invalidation") {
+    const auto root = fixture_root("project-typed-container-dependency");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "item.gd", "extends RefCounted\nclass_name ContainerItem\n"
+                                 "func value() -> int:\n    return 1\n");
+    write_text(root / "consumer.gd", "extends Node\nclass_name ContainerConsumer\n"
+                                     "var items: Array[ContainerItem] = []\n"
+                                     "func replace(values: Array[ContainerItem]) -> void:\n"
+                                     "    items = values\n");
+    const auto options = project_options(root);
+    const gdpp::ProjectCompiler compiler;
+
+    const auto initial = compiler.compile(options);
+    REQUIRE(initial.success);
+    REQUIRE_EQ(initial.compiled_count, std::size_t{2});
+    const auto initial_item_class = native_class_for(initial, "item.gd");
+    const auto initial_consumer_class = native_class_for(initial, "consumer.gd");
+    const auto initial_consumer =
+        std::find_if(initial.scripts.begin(), initial.scripts.end(), [](const auto& script) {
+            return script.relative_path.filename() == "consumer.gd";
+        });
+    REQUIRE(initial_consumer != initial.scripts.end());
+    REQUIRE_EQ(initial_consumer->dependencies, std::vector<std::string>{"item.gd"});
+    const auto initial_header =
+        read_text(options.output_directory / "generated" / initial_consumer->header_file_name);
+    REQUIRE(initial_header.find("godot::TypedArray<") != std::string::npos);
+    REQUIRE(initial_header.find(initial_item_class) != std::string::npos);
+
+    write_text(root / "item.gd", "extends RefCounted\nclass_name ContainerItem\n"
+                                 "func value() -> float:\n    return 1.0\n");
+    const auto changed = compiler.compile(options);
+    REQUIRE(changed.success);
+    REQUIRE_EQ(changed.compiled_count, std::size_t{2});
+    REQUIRE_EQ(changed.cache_hit_count, std::size_t{0});
+    REQUIRE(native_class_for(changed, "item.gd") != initial_item_class);
+    REQUIRE_EQ(native_class_for(changed, "consumer.gd"), initial_consumer_class);
+    const auto changed_consumer =
+        std::find_if(changed.scripts.begin(), changed.scripts.end(), [](const auto& script) {
+            return script.relative_path.filename() == "consumer.gd";
+        });
+    REQUIRE(changed_consumer != changed.scripts.end());
+    const auto changed_header =
+        read_text(options.output_directory / "generated" / changed_consumer->header_file_name);
+    REQUIRE(changed_header.find(native_class_for(changed, "item.gd")) != std::string::npos);
+    REQUIRE(changed_header.find(initial_item_class) == std::string::npos);
 }
 
 TEST_CASE("project cache treats inspector annotations as public ABI") {
