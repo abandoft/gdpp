@@ -15,6 +15,7 @@ from pathlib import Path
 
 
 SUPPORTED_GODOT_VERSIONS = ("4.4", "4.5", "4.6", "4.7")
+SDK_SCHEMA = 5
 STATIC_ADDON_FILES = (
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
@@ -124,8 +125,8 @@ def read_sdk_manifest(path: Path) -> tuple[int, dict[str, str]]:
 def require_fields(
     path: Path, schema: int, fields: dict[str, str], expected: dict[str, str]
 ) -> None:
-    if schema != 4:
-        fail(f"SDK schema must be 4 in {path}, got {schema}")
+    if schema != SDK_SCHEMA:
+        fail(f"SDK schema must be {SDK_SCHEMA} in {path}, got {schema}")
     for key, value in expected.items():
         if fields.get(key) != value:
             fail(f"SDK field {key} must be {value!r} in {path}, got {fields.get(key)!r}")
@@ -198,6 +199,7 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
         "runtime_abi",
         "runtime_header_sha256",
         "runtime_source_sha256",
+        "integer_semantics_header_sha256",
     )
     for field in runtime_contract:
         if android_fields.get(field) != host_fields.get(field):

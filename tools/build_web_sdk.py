@@ -110,7 +110,13 @@ def main() -> int:
     godot_cpp = source_root / "third/godot-cpp"
     runtime_header = source_root / "include/gdpp/runtime/variant_ops.hpp"
     runtime_source = source_root / "src/runtime/variant_ops.cpp"
-    for required in (godot_cpp / "CMakeLists.txt", runtime_header, runtime_source):
+    integer_semantics_header = source_root / "include/gdpp/support/integer_semantics.hpp"
+    for required in (
+        godot_cpp / "CMakeLists.txt",
+        runtime_header,
+        runtime_source,
+        integer_semantics_header,
+    ):
         if not required.is_file():
             raise SystemExit(f"missing Web SDK input: {required}")
 
@@ -120,6 +126,7 @@ def main() -> int:
     if stage.exists():
         shutil.rmtree(stage)
     (stage / "include/gdpp/runtime").mkdir(parents=True)
+    (stage / "include/gdpp/support").mkdir(parents=True)
     (stage / "src/runtime").mkdir(parents=True)
     (stage / "godot-cpp/gen").mkdir(parents=True)
     (stage / "lib").mkdir(parents=True)
@@ -167,6 +174,10 @@ def main() -> int:
     shutil.copy2(godot_cpp / "LICENSE.md", stage / "godot-cpp/LICENSE.md")
     shutil.copy2(runtime_header, stage / "include/gdpp/runtime/variant_ops.hpp")
     shutil.copy2(runtime_source, stage / "src/runtime/variant_ops.cpp")
+    shutil.copy2(
+        integer_semantics_header,
+        stage / "include/gdpp/support/integer_semantics.hpp",
+    )
 
     manifest = (
         f"GDPP_SDK {args.schema}\n"
@@ -180,6 +191,7 @@ def main() -> int:
         f"runtime_abi {args.runtime_abi}\n"
         f"runtime_header_sha256 {sha256(runtime_header)}\n"
         f"runtime_source_sha256 {sha256(runtime_source)}\n"
+        f"integer_semantics_header_sha256 {sha256(integer_semantics_header)}\n"
         "compiler Emscripten\n"
         f"compiler_version {compiler_version}\n"
         "source_paths mapped\n"

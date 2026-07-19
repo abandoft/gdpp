@@ -106,7 +106,14 @@ def main() -> int:
     toolchain = godot_cpp / "cmake/ios.toolchain.cmake"
     runtime_header = source_root / "include/gdpp/runtime/variant_ops.hpp"
     runtime_source = source_root / "src/runtime/variant_ops.cpp"
-    for required in (godot_cpp / "CMakeLists.txt", toolchain, runtime_header, runtime_source):
+    integer_semantics_header = source_root / "include/gdpp/support/integer_semantics.hpp"
+    for required in (
+        godot_cpp / "CMakeLists.txt",
+        toolchain,
+        runtime_header,
+        runtime_source,
+        integer_semantics_header,
+    ):
         if not required.is_file():
             raise SystemExit(f"missing iOS SDK input: {required}")
 
@@ -116,6 +123,7 @@ def main() -> int:
         shutil.rmtree(stage)
     for directory in (
         stage / "include/gdpp/runtime",
+        stage / "include/gdpp/support",
         stage / "src/runtime",
         stage / "godot-cpp/gen",
         stage / "lib/device",
@@ -185,6 +193,10 @@ def main() -> int:
     shutil.copy2(godot_cpp / "LICENSE.md", stage / "godot-cpp/LICENSE.md")
     shutil.copy2(runtime_header, stage / "include/gdpp/runtime/variant_ops.hpp")
     shutil.copy2(runtime_source, stage / "src/runtime/variant_ops.cpp")
+    shutil.copy2(
+        integer_semantics_header,
+        stage / "include/gdpp/support/integer_semantics.hpp",
+    )
 
     manifest = (
         f"GDPP_SDK {args.schema}\n"
@@ -197,6 +209,7 @@ def main() -> int:
         f"runtime_abi {args.runtime_abi}\n"
         f"runtime_header_sha256 {sha256(runtime_header)}\n"
         f"runtime_source_sha256 {sha256(runtime_source)}\n"
+        f"integer_semantics_header_sha256 {sha256(integer_semantics_header)}\n"
         f"compiler {xcode_version}\n"
         f"iphoneos_sdk {iphoneos_sdk}\n"
         f"iphonesimulator_sdk {simulator_sdk}\n"
