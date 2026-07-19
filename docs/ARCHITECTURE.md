@@ -25,6 +25,7 @@ GDScript 源码
 ```text
 include/gdpp/                 src/
 ├── core/                    ├── core/
+├── numeric/                 │
 ├── frontend/                ├── frontend/
 ├── semantic/                ├── semantic/
 ├── ir/                      ├── ir/
@@ -42,19 +43,22 @@ include/gdpp/                 src/
 ```text
 core → frontend → semantic → ir → codegen → compiler → project
 support（独立基础工具） ───────────────────────────────────→ project
+numeric（纯 C++17 数值契约） ───────────────→ frontend、ir、runtime、生成代码
 
-runtime（生成代码 ABI，独立） → integration/godot、用户项目动态库
+runtime（生成代码 ABI） → integration/godot、用户项目动态库
 compiler/project             → integration/godot、cli
 ```
 
-`support` 是无业务状态的基础工具根，不得反向依赖编译链；`runtime` 只依赖 godot-cpp，不得依赖
-编译器实现。`integration/godot` 与 `cli` 是宿主适配层，不允许把 Godot 类型泄漏进 `gdpp_core`。
+`numeric` 是不依赖 Godot 和编译器实现的 header-only 固定宽度数值契约；`support` 是无业务状态的
+宿主工具根，不得反向依赖编译链；`runtime` 只依赖 `numeric` 与 godot-cpp，不得依赖编译器实现。
+`integration/godot` 与 `cli` 是宿主适配层，不允许把 Godot 类型泄漏进 `gdpp_core`。
 `tools/check_architecture.py` 在本地测试和质量流水线中检查目录集合、平铺文件和跨层 include，防止
 后续功能迭代破坏这些边界。
 
 | 模块 | 职责 | 主要内容 |
 |---|---|---|
 | `core` | 无业务依赖的编译器基础模型 | 源文件/范围、诊断、目标 Godot 版本 |
+| `numeric` | 跨编译期/运行期的纯数值契约 | 64 位整数位模式、溢出、移位、除余与范围推进 |
 | `frontend` | 源码到强类型 AST | token、lexer、parser、语言特性注册、常量表达式求值 |
 | `semantic` | 类型与符号解析 | 类型系统、语义分析、项目脚本符号、intrinsic、Godot API 能力表 |
 | `ir` | 与语法解耦的中间表示 | 类型化 HIR、显式 CFG/MIR、lowering、验证和优化 |
@@ -68,6 +72,9 @@ compiler/project             → integration/godot、cli
 
 ## 关键组件
 
+- `include/gdpp/numeric/integer_semantics.hpp`：前端常量求值、HIR 优化、动态 runtime 与生成 C++
+  共用的 64 位整数真值来源；全部溢出通过无符号位模式定义，移位计数归一化为 0～63，
+  `INT64_MIN / -1`、取余和边界范围推进均不触发宿主 C++ 未定义行为。
 - `include/gdpp/support/path_utf8.hpp`：UTF-8 文本协议与原生文件系统路径的唯一转换边界；Windows
   内部保留 UTF-16 `path`，禁止用 ANSI `string()` 序列化 Godot 路径、清单或进程参数。
 - `include/gdpp/frontend/literal.hpp`：数字字面量的唯一语义规范化入口；整数基数、分隔符和范围
@@ -209,6 +216,8 @@ GDPP 自身使用 CMake、Python 和 godot-cpp 生成器，以保证开发构建
 - C++ 后端只接受验证通过的类型化 IR。
 - 动态成员 IR 必须显式区分方法和属性；生成代码必须按 GDScript 顺序且只求值一次接收者、
   参数、键和复合赋值旧值。
+- 静态常量折叠、优化器、类型化 C++ 快速路径与动态 `Variant` 整数路径必须调用同一 `numeric`
+  契约；禁止直接使用可能发生有符号溢出、非法移位或 `INT64_MIN / -1` 的宿主 C++ 运算。
 - 每个 `for` 必须携带经 verifier 验证的 `IterationPlan`。String 使用单码点快照，Array 与
   PackedArray 的同步快速路径引用原容器并逐轮读取实时长度，Dictionary/Variant 使用三阶段协议；
   迭代器推进必须位于循环更新边，确保容器变更、`continue` 与普通落出路径行为一致。
