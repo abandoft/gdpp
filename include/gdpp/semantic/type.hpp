@@ -43,11 +43,22 @@ struct Type {
     }
 };
 
+enum class ContainerTypeKind { array, dictionary };
+
+struct ContainerTypeDescriptor {
+    ContainerTypeKind kind{ContainerTypeKind::array};
+    std::vector<std::string> arguments;
+
+    [[nodiscard]] bool has_runtime_constraint() const noexcept;
+};
+
 [[nodiscard]] Type type_from_annotation(const std::string& annotation);
 [[nodiscard]] Type packed_array_element_type(const Type& packed_array);
 [[nodiscard]] std::optional<std::vector<std::string>>
 generic_type_arguments(std::string_view type_name, std::string_view container_name,
                        std::size_t expected_arguments);
+[[nodiscard]] std::optional<ContainerTypeDescriptor> describe_container_type(const Type& type);
+[[nodiscard]] bool is_explicitly_typed_container(const Type& type);
 [[nodiscard]] bool is_assignable(const Type& target, const Type& source) noexcept;
 
 } // namespace gdpp

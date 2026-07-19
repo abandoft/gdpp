@@ -20,6 +20,25 @@ TEST_CASE("generic container arguments preserve nested type boundaries") {
     REQUIRE(!gdpp::generic_type_arguments("Array[String, int]", "Array", 1));
 }
 
+TEST_CASE("typed container descriptors preserve source constraints") {
+    const auto array =
+        gdpp::describe_container_type(gdpp::type_from_annotation("Array[Dictionary[String, int]]"));
+    const auto dictionary =
+        gdpp::describe_container_type(gdpp::type_from_annotation("Dictionary[Variant, Variant]"));
+
+    REQUIRE(array.has_value());
+    REQUIRE(array->kind == gdpp::ContainerTypeKind::array);
+    REQUIRE_EQ(array->arguments.at(0), std::string{"Dictionary[String, int]"});
+    REQUIRE(array->has_runtime_constraint());
+    REQUIRE(dictionary.has_value());
+    REQUIRE_EQ(dictionary->kind, gdpp::ContainerTypeKind::dictionary);
+    REQUIRE_EQ(dictionary->arguments.size(), std::size_t{2});
+    REQUIRE(!dictionary->has_runtime_constraint());
+    REQUIRE(gdpp::is_explicitly_typed_container(gdpp::type_from_annotation("Array[Variant]")));
+    REQUIRE(!gdpp::is_explicitly_typed_container(gdpp::type_from_annotation("Array")));
+    REQUIRE(!gdpp::describe_container_type(gdpp::type_from_annotation("Dictionary")));
+}
+
 TEST_CASE("iteration plans classify every accepted iterable family") {
     const gdpp::Type integer{gdpp::TypeKind::integer, "int"};
     const gdpp::Type string{gdpp::TypeKind::string, "String"};

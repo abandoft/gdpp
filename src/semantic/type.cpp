@@ -1,5 +1,6 @@
 #include "gdpp/semantic/type.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <unordered_map>
 #include <unordered_set>
@@ -181,6 +182,29 @@ generic_type_arguments(const std::string_view type_name, const std::string_view 
     return arguments;
 }
 
+bool ContainerTypeDescriptor::has_runtime_constraint() const noexcept {
+    return std::any_of(arguments.begin(), arguments.end(),
+                       [](const std::string& argument) { return argument != "Variant"; });
+}
+
+std::optional<ContainerTypeDescriptor> describe_container_type(const Type& type) {
+    if (type.kind == TypeKind::array) {
+        const auto arguments = generic_type_arguments(type.name, "Array", 1);
+        if (arguments)
+            return ContainerTypeDescriptor{ContainerTypeKind::array, *arguments};
+    }
+    if (type.kind == TypeKind::dictionary) {
+        const auto arguments = generic_type_arguments(type.name, "Dictionary", 2);
+        if (arguments)
+            return ContainerTypeDescriptor{ContainerTypeKind::dictionary, *arguments};
+    }
+    return std::nullopt;
+}
+
+bool is_explicitly_typed_container(const Type& type) {
+    return describe_container_type(type).has_value();
+}
+
 bool is_assignable(const Type& target, const Type& source) noexcept {
     if (target.is_dynamic() || source.is_dynamic())
         return true;
@@ -202,12 +226,18 @@ bool is_assignable(const Type& target, const Type& source) noexcept {
          target.kind == TypeKind::string_name)) {
         return true;
     }
-    if (target.kind == TypeKind::array && source.kind == TypeKind::array)
-        return true;
+    if (target.kind == TypeKind::array && source.kind == TypeKind::array) {
+        const bool target_typed = target.name.rfind("Array[", 0) == 0;
+        const bool source_typed = source.name.rfind("Array[", 0) == 0;
+        return !target_typed || !source_typed || target.name == source.name;
+    }
     if (target.kind == TypeKind::array && source.is_packed_array())
         return true;
-    if (target.kind == TypeKind::dictionary && source.kind == TypeKind::dictionary)
-        return true;
+    if (target.kind == TypeKind::dictionary && source.kind == TypeKind::dictionary) {
+        const bool target_typed = target.name.rfind("Dictionary[", 0) == 0;
+        const bool source_typed = source.name.rfind("Dictionary[", 0) == 0;
+        return !target_typed || !source_typed || target.name == source.name;
+    }
     if (target.kind == TypeKind::enumeration &&
         (source.kind == TypeKind::integer ||
          (source.kind == TypeKind::enumeration && target.name == source.name)))
