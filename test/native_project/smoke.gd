@@ -36,6 +36,7 @@ func _run() -> void:
     var rpc_class := _native_class_for("rpc_case.gd")
     var long_await_class := _native_class_for("long_await_chain.gd")
     var await_expression_class := _native_class_for("await_expression_case.gd")
+    var typed_container_class := _native_class_for("typed_container_case.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -48,6 +49,7 @@ func _run() -> void:
         or rpc_class.is_empty()
         or long_await_class.is_empty()
         or await_expression_class.is_empty()
+        or typed_container_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
@@ -76,6 +78,25 @@ func _run() -> void:
         return
     native_iteration = null
     script_iteration = null
+    var native_typed_container: Object = ClassDB.instantiate(typed_container_class)
+    var script_typed_container: Object = load("res://typed_container_case.gd").new()
+    if native_typed_container == null or script_typed_container == null:
+        push_error("Typed-container differential fixtures are unavailable")
+        quit(1)
+        return
+    var native_typed_report: Dictionary = native_typed_container.call("run")
+    var script_typed_report: Dictionary = script_typed_container.call("run")
+    if native_typed_report != script_typed_report:
+        push_error(
+            "Typed-container runtime differs from GDScript: native=%s script=%s"
+            % [native_typed_report, script_typed_report]
+        )
+        native_typed_container = null
+        script_typed_container = null
+        quit(1)
+        return
+    native_typed_container = null
+    script_typed_container = null
     var instance: Object = ClassDB.instantiate(player_class)
     if (
         instance == null
@@ -493,6 +514,23 @@ func _run() -> void:
             cross_b.free()
         quit(1)
         return
+    var cross_a_peers: Array = cross_a.call("typed_peers", [cross_b])
+    var cross_b_peers: Dictionary = cross_b.call("typed_peers", {"primary": cross_a})
+    if (
+        not cross_a_peers.is_typed()
+        or cross_a_peers.get_typed_class_name() != cross_b_class
+        or cross_a_peers != [cross_b]
+        or not cross_b_peers.is_typed_key()
+        or not cross_b_peers.is_typed_value()
+        or cross_b_peers.get_typed_key_builtin() != TYPE_STRING
+        or cross_b_peers.get_typed_value_class_name() != cross_a_class
+        or cross_b_peers.get("primary") != cross_a
+    ):
+        push_error("Generated cross-script typed containers lost native class identity")
+        cross_a.free()
+        cross_b.free()
+        quit(1)
+        return
     cross_a.free()
     cross_b.free()
 
@@ -521,7 +559,15 @@ func _run() -> void:
     for property: Dictionary in exported.get_property_list():
         property_by_name[str(property.get("name", ""))] = property
     for required in [
-        "greeting", "movement_speed", "accent", "icon", "movement_mode", "accessor_score"
+        "greeting",
+        "movement_speed",
+        "accent",
+        "icon",
+        "movement_mode",
+        "accessor_score",
+        "typed_integers",
+        "typed_weights",
+        "typed_nodes",
     ]:
         if not property_by_name.has(required):
             push_error("Generated native class is missing exported property '%s'" % required)
@@ -554,6 +600,74 @@ func _run() -> void:
         or str(mode_info.get("hint_string", "")) != "IDLE:0,WALK:4,RUN:8"
     ):
         push_error("Generated enum property lost its member metadata")
+        exported.free()
+        quit(1)
+        return
+    var integers_info: Dictionary = property_by_name.typed_integers
+    var weights_info: Dictionary = property_by_name.typed_weights
+    var nodes_info: Dictionary = property_by_name.typed_nodes
+    if (
+        int(integers_info.get("hint", -1)) != PROPERTY_HINT_ARRAY_TYPE
+        or str(integers_info.get("hint_string", "")) != "int"
+        or int(weights_info.get("hint", -1)) != PROPERTY_HINT_DICTIONARY_TYPE
+        or str(weights_info.get("hint_string", "")) != "String;int"
+        or int(nodes_info.get("hint", -1)) != PROPERTY_HINT_ARRAY_TYPE
+        or str(nodes_info.get("hint_string", "")) != "Node"
+    ):
+        push_error("Generated typed-container properties lost their ClassDB metadata")
+        exported.free()
+        quit(1)
+        return
+    if exported.call("validate_typed_containers") != true:
+        push_error("Generated typed containers lost runtime type metadata")
+        exported.free()
+        quit(1)
+        return
+    var roundtrip_info: Dictionary = {}
+    for method: Dictionary in exported.get_method_list():
+        if str(method.get("name", "")) == "typed_container_roundtrip":
+            roundtrip_info = method
+            break
+    var roundtrip_arguments: Array = roundtrip_info.get("args", [])
+    var roundtrip_return: Dictionary = roundtrip_info.get("return", {})
+    if (
+        roundtrip_arguments.size() != 1
+        or int(roundtrip_arguments[0].get("hint", -1)) != PROPERTY_HINT_ARRAY_TYPE
+        or str(roundtrip_arguments[0].get("hint_string", "")) != "int"
+        or int(roundtrip_return.get("hint", -1)) != PROPERTY_HINT_DICTIONARY_TYPE
+        or str(roundtrip_return.get("hint_string", "")) != "String;int"
+    ):
+        push_error("Generated typed-container method lost its ClassDB ABI metadata")
+        exported.free()
+        quit(1)
+        return
+    var typed_signal_info: Dictionary = {}
+    for signal_info: Dictionary in exported.get_signal_list():
+        if str(signal_info.get("name", "")) == "typed_containers_changed":
+            typed_signal_info = signal_info
+            break
+    var typed_signal_arguments: Array = typed_signal_info.get("args", [])
+    if (
+        typed_signal_arguments.size() != 2
+        or int(typed_signal_arguments[0].get("hint", -1)) != PROPERTY_HINT_ARRAY_TYPE
+        or str(typed_signal_arguments[0].get("hint_string", "")) != "int"
+        or int(typed_signal_arguments[1].get("hint", -1))
+        != PROPERTY_HINT_DICTIONARY_TYPE
+        or str(typed_signal_arguments[1].get("hint_string", "")) != "String;int"
+    ):
+        push_error("Generated typed-container signal lost its ClassDB ABI metadata")
+        exported.free()
+        quit(1)
+        return
+    var typed_result: Dictionary = exported.call("typed_container_roundtrip", [1, 2, 3])
+    if (
+        typed_result.get("size", -1) != 3
+        or not typed_result.is_typed_key()
+        or not typed_result.is_typed_value()
+        or typed_result.get_typed_key_builtin() != TYPE_STRING
+        or typed_result.get_typed_value_builtin() != TYPE_INT
+    ):
+        push_error("Typed container method ABI did not preserve its return contract")
         exported.free()
         quit(1)
         return
