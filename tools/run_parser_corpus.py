@@ -140,6 +140,8 @@ def main() -> int:
         "target_godot": args.target_godot,
         "valid": [],
         "invalid": [],
+        "semantic_accepted": [],
+        "semantic_rejected": [],
         "failures": [],
     }
 
@@ -185,6 +187,29 @@ def main() -> int:
         elif result["exit_code"] == 0:
             report["failures"].append(f"compiler accepted invalid script: {result['path']}")
 
+    semantic_cases = manifest.get("semantic_cases", {})
+    for relative in semantic_cases.get("accepted", []):
+        script = corpus / relative
+        if not script.is_file():
+            raise RuntimeError(f"semantic acceptance case is missing: {relative}")
+        result = compile_script(script, "semantic-accepted")
+        report["semantic_accepted"].append(result)
+        if result["timed_out"] or result["crashed"]:
+            report["failures"].append(f"unsafe semantic acceptance result: {relative}")
+        elif result["exit_code"] != 0:
+            report["failures"].append(f"compiler rejected semantic acceptance case: {relative}")
+
+    for relative in semantic_cases.get("rejected", []):
+        script = corpus / relative
+        if not script.is_file():
+            raise RuntimeError(f"semantic rejection case is missing: {relative}")
+        result = compile_script(script, "semantic-rejected")
+        report["semantic_rejected"].append(result)
+        if result["timed_out"] or result["crashed"]:
+            report["failures"].append(f"unsafe semantic rejection result: {relative}")
+        elif result["exit_code"] == 0:
+            report["failures"].append(f"compiler accepted semantic rejection case: {relative}")
+
     report["summary"] = {
         "valid_script_count": len(valid_scripts),
         "valid_frontend_acceptances": sum(
@@ -206,6 +231,12 @@ def main() -> int:
         "invalid_frontend_rejections": sum(
             result["frontend_rejected"] for result in report["invalid"]
         ),
+        "semantic_acceptances": sum(
+            result["exit_code"] == 0 for result in report["semantic_accepted"]
+        ),
+        "semantic_rejections": sum(
+            result["exit_code"] != 0 for result in report["semantic_rejected"]
+        ),
         "failure_count": len(report["failures"]),
     }
     report["status"] = "passed" if not report["failures"] else "failed"
@@ -217,7 +248,11 @@ def main() -> int:
         "Godot 4.7 parser corpus: "
         f"valid frontend {summary['valid_frontend_acceptances']}/{len(valid_scripts)}, "
         f"invalid rejected {summary['invalid_rejections']}/{len(invalid_scripts)} "
-        f"({summary['invalid_frontend_rejections']} at frontend); report: {report_path}",
+        f"({summary['invalid_frontend_rejections']} at frontend), "
+        f"semantic accepted {summary['semantic_acceptances']}/"
+        f"{len(report['semantic_accepted'])}, semantic rejected "
+        f"{summary['semantic_rejections']}/{len(report['semantic_rejected'])}; "
+        f"report: {report_path}",
         flush=True,
     )
     for failure in report["failures"]:

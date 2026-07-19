@@ -7,11 +7,18 @@
     "license_file": "LICENSE.txt",
     "license": "MIT",
     "sparse_paths": [
-      "modules/gdscript/tests/scripts/parser"
+      "modules/gdscript/tests/scripts/parser",
+      "modules/gdscript/tests/scripts/runtime/features",
+      "modules/gdscript/tests/scripts/analyzer/errors"
     ],
     "required_files": [
       "modules/gdscript/tests/scripts/parser/features/match.gd",
-      "modules/gdscript/tests/scripts/parser/errors/lambda_standalone.gd"
+      "modules/gdscript/tests/scripts/parser/errors/lambda_standalone.gd",
+      "modules/gdscript/tests/scripts/runtime/features/for_loop_iterator_specified_types.gd",
+      "modules/gdscript/tests/scripts/runtime/features/for_loop_iterator_types.gd",
+      "modules/gdscript/tests/scripts/runtime/features/object_iterators.gd",
+      "modules/gdscript/tests/scripts/analyzer/errors/for_loop_wrong_specified_type.gd",
+      "modules/gdscript/tests/scripts/analyzer/errors/for_loop_inferred_type.gd"
     ]
   },
   "parser_corpus": {
@@ -25,5 +32,16 @@
     ],
     "expected_valid_scripts": 114,
     "expected_invalid_scripts": 76
+  },
+  "semantic_cases": {
+    "accepted": [
+      "modules/gdscript/tests/scripts/runtime/features/for_loop_iterator_specified_types.gd",
+      "modules/gdscript/tests/scripts/runtime/features/for_loop_iterator_types.gd",
+      "modules/gdscript/tests/scripts/runtime/features/object_iterators.gd"
+    ],
+    "rejected": [
+      "modules/gdscript/tests/scripts/analyzer/errors/for_loop_wrong_specified_type.gd",
+      "modules/gdscript/tests/scripts/analyzer/errors/for_loop_inferred_type.gd"
+    ]
   }
 }
