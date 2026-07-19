@@ -36,8 +36,7 @@ TEST_CASE("integer constants use the same wrapped arithmetic as GDScript") {
     REQUIRE_EQ(evaluate("-9223372036854775808 - 1"), std::optional<std::int64_t>{maximum});
     REQUIRE_EQ(evaluate("9223372036854775807 * 2"), std::optional<std::int64_t>{-2});
     REQUIRE_EQ(evaluate("-(-9223372036854775808)"), std::optional<std::int64_t>{minimum});
-    REQUIRE_EQ(evaluate("-9223372036854775808 / -1"),
-               std::optional<std::int64_t>{minimum});
+    REQUIRE_EQ(evaluate("-9223372036854775808 / -1"), std::optional<std::int64_t>{minimum});
     REQUIRE_EQ(evaluate("-9223372036854775808 % -1"), std::optional<std::int64_t>{0});
 }
 
@@ -48,10 +47,8 @@ TEST_CASE("integer constants normalize shifts and preserve signed bit operations
     REQUIRE_EQ(evaluate("1 << 63"), std::optional<std::int64_t>{minimum});
     REQUIRE_EQ(evaluate("1 << 64"), std::optional<std::int64_t>{1});
     REQUIRE_EQ(evaluate("1 << -1"), std::optional<std::int64_t>{minimum});
-    REQUIRE_EQ(evaluate("-9223372036854775808 >> 1"),
-               std::optional<std::int64_t>{minimum / 2});
-    REQUIRE_EQ(evaluate("9223372036854775807 >> 64"),
-               std::optional<std::int64_t>{maximum});
+    REQUIRE_EQ(evaluate("-9223372036854775808 >> 1"), std::optional<std::int64_t>{minimum / 2});
+    REQUIRE_EQ(evaluate("9223372036854775807 >> 64"), std::optional<std::int64_t>{maximum});
     REQUIRE_EQ(evaluate("~0"), std::optional<std::int64_t>{-1});
     REQUIRE_EQ(evaluate("-1 & 0x55aa"), std::optional<std::int64_t>{0x55AA});
     REQUIRE_EQ(evaluate("0x5500 | 0xaa"), std::optional<std::int64_t>{0x55AA});
