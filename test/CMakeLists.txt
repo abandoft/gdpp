@@ -41,6 +41,13 @@ add_test(
 )
 
 add_test(
+    NAME gdpp.web.browser_smoke
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/web_browser_smoke_test.py"
+)
+
+add_test(
     NAME gdpp.addon.clean
     COMMAND "${CMAKE_COMMAND}"
             -DGDPP_TEST_SOURCE_DIR=${PROJECT_SOURCE_DIR}

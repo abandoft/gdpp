@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import json
 import os
 import secrets
+import shutil
 import socket
 import struct
 import subprocess
@@ -16,8 +18,40 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import urlparse
+
+
+def remove_directory_with_retries(
+    path: Path, *, attempts: int = 12, initial_delay: float = 0.05
+) -> None:
+    """Remove a browser profile after Chromium's helper processes finish writing."""
+    if attempts <= 0:
+        raise ValueError("cleanup attempts must be positive")
+    if initial_delay < 0:
+        raise ValueError("cleanup delay must not be negative")
+
+    delay = initial_delay
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt + 1 == attempts:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2.0, 0.5)
+
+
+@contextlib.contextmanager
+def browser_profile() -> Iterator[Path]:
+    profile = Path(tempfile.mkdtemp(prefix="gdpp-chrome-"))
+    try:
+        yield profile
+    finally:
+        remove_directory_with_retries(profile)
 
 
 def parse_args() -> argparse.Namespace:
@@ -222,7 +256,7 @@ def run(args: argparse.Namespace) -> int:
     args.log_output.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + args.timeout
     port = reserve_port()
-    with tempfile.TemporaryDirectory(prefix="gdpp-chrome-") as profile:
+    with browser_profile() as profile:
         chrome_log = args.log_output.with_suffix(args.log_output.suffix + ".chrome")
         with chrome_log.open("wb") as stderr:
             command = [
@@ -282,14 +316,21 @@ def run(args: argparse.Namespace) -> int:
                 failure = str(error)
             finally:
                 if session is not None:
+                    try:
+                        session.command("Browser.close")
+                    except (ConnectionError, OSError, RuntimeError):
+                        pass
                     session.close()
                 if process.poll() is None:
-                    process.terminate()
                     try:
                         process.wait(timeout=5.0)
                     except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait()
+                        process.terminate()
+                        try:
+                            process.wait(timeout=5.0)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait()
         chrome_output = chrome_log.read_text(encoding="utf-8", errors="replace")
         chrome_log.unlink(missing_ok=True)
         events = "\n".join(session.events if session is not None else [])
