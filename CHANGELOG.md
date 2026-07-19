@@ -4,6 +4,7 @@
 - Defined deterministic wrapping, normalized shifts, signed division/modulo boundaries, compound assignments, and overflow-safe native range termination without C++ undefined behavior.
 - Advanced the packaged SDK to schema 5 and runtime ABI 4, hashing and validating the shared integer-semantics header for every host and export target.
 - Added real Godot GDScript/AOT integer differential coverage, strict generated-C++ compilation, and a blocking Linux UBSan core workflow.
+- Hardened the Chromium delivery oracle against asynchronous profile writes while preserving strict cleanup failure reporting.
 
 ## 1.3.0
 
