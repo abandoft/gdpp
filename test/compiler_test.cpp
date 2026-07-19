@@ -1372,6 +1372,37 @@ TEST_CASE("compiler preserves explicit typed iterator variables") {
     REQUIRE(result.unit.source.find("gdpp::runtime::iter_init") == std::string::npos);
 }
 
+TEST_CASE("compiler emits native Godot mathematical range loops") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "mathematical_ranges.gd",
+        "func collect(count: float, float_bounds: Vector2, int_bounds: Vector2i, "
+        "float_steps: Vector3, int_steps: Vector3i) -> Array:\n"
+        "    var values: Array = []\n"
+        "    for value: float in count:\n"
+        "        values.append(value)\n"
+        "    for value: float in float_bounds:\n"
+        "        values.append(value)\n"
+        "    for value: int in int_bounds:\n"
+        "        values.append(value)\n"
+        "    for value: float in float_steps:\n"
+        "        values.append(value)\n"
+        "    for value: int in int_steps:\n"
+        "        values.append(value)\n"
+        "    return values\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("const double _gdpp_float_limit_") != std::string::npos);
+    REQUIRE(result.unit.source.find("for (double _gdpp_float_value_") != std::string::npos);
+    REQUIRE(result.unit.source.find("const auto _gdpp_vector2_bounds_") != std::string::npos);
+    REQUIRE(result.unit.source.find("for (double _gdpp_vector2_value_") != std::string::npos);
+    REQUIRE(result.unit.source.find("for (int64_t _gdpp_vector2_value_") != std::string::npos);
+    REQUIRE(result.unit.source.find("const auto _gdpp_vector3_bounds_") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_vector3_step_") != std::string::npos);
+    REQUIRE(result.unit.source.find("? _gdpp_vector3_value_") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::iter_init") == std::string::npos);
+}
+
 TEST_CASE("compiler iterates packed arrays with their Godot element types") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(

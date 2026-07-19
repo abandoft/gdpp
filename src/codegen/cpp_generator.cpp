@@ -3993,6 +3993,82 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                 result += emit_statement(child, indentation + 2);
             return result + indent(indentation + 1) + "}\n" + prefix + "}\n";
         }
+        if (statement.iteration.strategy == IterationStrategy::floating_count) {
+            const auto suffix = std::to_string(temporary_counter_++);
+            const auto limit = "_gdpp_float_limit_" + suffix;
+            const auto value = "_gdpp_float_value_" + suffix;
+            const auto nested_prefix = indent(indentation + 1);
+            const auto body_prefix = indent(indentation + 2);
+            std::string result =
+                prefix + "{\n" + nested_prefix + "const double " + limit + " = " +
+                emit_expression(*statement.condition) + ";\n" + nested_prefix +
+                "for (double " + value + " = 0.0; " + value + " < " + limit + "; " + value +
+                " += 1.0) {\n" + body_prefix +
+                (statement.declared_type.is_dynamic() ? std::string{"godot::Variant"}
+                                                      : cpp_type(statement.declared_type)) +
+                " " + sanitize_identifier(statement.name) + " = " +
+                emit_conversion(statement.declared_type, {TypeKind::floating, "float"}, value) +
+                ";\n";
+            for (const auto& child : statement.body)
+                result += emit_statement(child, indentation + 2);
+            return result + nested_prefix + "}\n" + prefix + "}\n";
+        }
+        if (statement.iteration.strategy == IterationStrategy::vector2_range ||
+            statement.iteration.strategy == IterationStrategy::vector2i_range) {
+            const bool integral =
+                statement.iteration.strategy == IterationStrategy::vector2i_range;
+            const auto suffix = std::to_string(temporary_counter_++);
+            const auto bounds = "_gdpp_vector2_bounds_" + suffix;
+            const auto value = "_gdpp_vector2_value_" + suffix;
+            const auto scalar = integral ? std::string{"int64_t"} : std::string{"double"};
+            const auto source_type = integral ? Type{TypeKind::integer, "int"}
+                                              : Type{TypeKind::floating, "float"};
+            const auto nested_prefix = indent(indentation + 1);
+            const auto body_prefix = indent(indentation + 2);
+            std::string result =
+                prefix + "{\n" + nested_prefix + "const auto " + bounds + " = " +
+                emit_expression(*statement.condition) + ";\n" + nested_prefix + "for (" + scalar +
+                " " + value + " = " + bounds + ".x; " + value + " < " + bounds + ".y; ++" +
+                value + ") {\n" + body_prefix +
+                (statement.declared_type.is_dynamic() ? std::string{"godot::Variant"}
+                                                      : cpp_type(statement.declared_type)) +
+                " " + sanitize_identifier(statement.name) + " = " +
+                emit_conversion(statement.declared_type, source_type, value) + ";\n";
+            for (const auto& child : statement.body)
+                result += emit_statement(child, indentation + 2);
+            return result + nested_prefix + "}\n" + prefix + "}\n";
+        }
+        if (statement.iteration.strategy == IterationStrategy::vector3_range ||
+            statement.iteration.strategy == IterationStrategy::vector3i_range) {
+            const bool integral =
+                statement.iteration.strategy == IterationStrategy::vector3i_range;
+            const auto suffix = std::to_string(temporary_counter_++);
+            const auto bounds = "_gdpp_vector3_bounds_" + suffix;
+            const auto value = "_gdpp_vector3_value_" + suffix;
+            const auto stop = "_gdpp_vector3_stop_" + suffix;
+            const auto step = "_gdpp_vector3_step_" + suffix;
+            const auto scalar = integral ? std::string{"int64_t"} : std::string{"double"};
+            const auto zero = integral ? std::string{"0"} : std::string{"0.0"};
+            const auto source_type = integral ? Type{TypeKind::integer, "int"}
+                                              : Type{TypeKind::floating, "float"};
+            const auto nested_prefix = indent(indentation + 1);
+            const auto body_prefix = indent(indentation + 2);
+            std::string result =
+                prefix + "{\n" + nested_prefix + "const auto " + bounds + " = " +
+                emit_expression(*statement.condition) + ";\n" + nested_prefix + "const " +
+                scalar + " " + stop + " = " + bounds + ".y;\n" + nested_prefix + "const " +
+                scalar + " " + step + " = " + bounds + ".z;\n" + nested_prefix + "for (" +
+                scalar + " " + value + " = " + bounds + ".x; " + step + " != " + zero +
+                " && (" + step + " > " + zero + " ? " + value + " < " + stop + " : " + value +
+                " > " + stop + "); " + value + " += " + step + ") {\n" + body_prefix +
+                (statement.declared_type.is_dynamic() ? std::string{"godot::Variant"}
+                                                      : cpp_type(statement.declared_type)) +
+                " " + sanitize_identifier(statement.name) + " = " +
+                emit_conversion(statement.declared_type, source_type, value) + ";\n";
+            for (const auto& child : statement.body)
+                result += emit_statement(child, indentation + 2);
+            return result + nested_prefix + "}\n" + prefix + "}\n";
+        }
         if (statement.iteration.strategy == IterationStrategy::indexed_packed_array) {
             const auto suffix = std::to_string(temporary_counter_++);
             const auto iterable_name = "_gdpp_packed_iterable_" + suffix;
