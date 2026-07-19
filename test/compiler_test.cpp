@@ -157,6 +157,143 @@ TEST_CASE("compiler converts packed arrays to compatible typed Array parameters"
     REQUIRE(result.unit.source.find("godot::Array(") != std::string::npos);
 }
 
+TEST_CASE("semantic analysis validates typed container arguments eagerly") {
+    const gdpp::Compiler compiler;
+    const auto legal = compiler.compile("legal_containers.gd",
+                                        "var arrays: Array[Array] = []\n"
+                                        "var dictionaries: Dictionary[String, Dictionary] = {}\n");
+    const auto unknown =
+        compiler.compile("unknown_container.gd", "var values: Array[MissingType] = []\n");
+    const auto nested = compiler.compile("nested_container.gd",
+                                         "var values: Dictionary[String, Array[int]] = {}\n");
+    const auto void_element =
+        compiler.compile("void_container.gd", "var values: Array[void] = []\n");
+    const auto incompatible = compiler.compile(
+        "incompatible_containers.gd", "func convert(values: Array[int]) -> void:\n"
+                                      "    var floats: Array[float] = values\n"
+                                      "    var labels: Dictionary[String, int] = {}\n"
+                                      "    var other: Dictionary[String, float] = labels\n");
+
+    REQUIRE(legal.success);
+    REQUIRE(!unknown.success);
+    REQUIRE(!nested.success);
+    REQUIRE(!void_element.success);
+    REQUIRE(!incompatible.success);
+    REQUIRE(std::any_of(unknown.diagnostics.begin(), unknown.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4059"; }));
+    REQUIRE(std::any_of(nested.diagnostics.begin(), nested.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4138"; }));
+    REQUIRE(std::any_of(void_element.diagnostics.begin(), void_element.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4139"; }));
+}
+
+TEST_CASE("compiler preserves typed container metadata in the native ABI") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "typed_containers.gd", "extends Node\n"
+                               "enum Mode { IDLE, RUN }\n"
+                               "signal changed(values: Array[int])\n"
+                               "var integers: Array[int] = [1, 2]\n"
+                               "var weights: Dictionary[String, float] = {\"left\": 1.0}\n"
+                               "var nodes: Array[Node] = []\n"
+                               "var modes: Array[Mode] = [Mode.IDLE]\n"
+                               "func summarize(values: Array[int]) -> Dictionary[String, int]:\n"
+                               "    var copy: Array[int] = values\n"
+                               "    return {\"first\": copy[0]}\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("#include <godot_cpp/variant/typed_array.hpp>") !=
+            std::string::npos);
+    REQUIRE(result.unit.header.find("#include <godot_cpp/variant/typed_dictionary.hpp>") !=
+            std::string::npos);
+    REQUIRE(result.unit.header.find("godot::TypedArray<int64_t> integers") != std::string::npos);
+    REQUIRE(result.unit.header.find("godot::TypedDictionary<godot::String, double> weights") !=
+            std::string::npos);
+    REQUIRE(result.unit.header.find("struct ContainerObjectTag_Node") != std::string::npos);
+    REQUIRE(result.unit.header.find("godot::StringName(\"Node\")") != std::string::npos);
+    REQUIRE(result.unit.header.find(
+                "godot::TypedArray<typed_containers_gdpp_detail::ContainerObjectTag_Node> nodes") !=
+            std::string::npos);
+    REQUIRE(result.unit.header.find("godot::TypedArray<int64_t> modes") != std::string::npos);
+    REQUIRE(result.unit.header.find("godot::TypedDictionary<godot::String, int64_t> summarize(") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("godot::TypedArray<int64_t>(") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::TypedDictionary<godot::String, int64_t>(") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("godot::GetTypeInfo<godot::TypedArray<int64_t>>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("godot::PROPERTY_USAGE_SCRIPT_VARIABLE") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::MethodInfo(\"changed\", ([] { auto info = "
+                                    "godot::GetTypeInfo<godot::TypedArray<int64_t>>") !=
+            std::string::npos);
+}
+
+TEST_CASE("Variant-only container annotations use Godot's untyped runtime ABI") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile("variant_containers.gd",
+                                         "var values: Array[Variant] = []\n"
+                                         "var mappings: Dictionary[Variant, Variant] = {}\n"
+                                         "var constrained: Dictionary[Variant, int] = {}\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("godot::Array values") != std::string::npos);
+    REQUIRE(result.unit.header.find("godot::Dictionary mappings") != std::string::npos);
+    REQUIRE(
+        result.unit.header.find("godot::TypedDictionary<godot::Variant, int64_t> constrained") !=
+        std::string::npos);
+    REQUIRE(result.unit.header.find("godot::TypedArray<godot::Variant>") == std::string::npos);
+}
+
+TEST_CASE("typed container literals are validated in every contextual position") {
+    const gdpp::Compiler compiler;
+    const auto valid = compiler.compile("contextual_containers.gd",
+                                        "func consume(values: Array[int]) -> Array[int]:\n"
+                                        "    return values\n"
+                                        "func run() -> Array[int]:\n"
+                                        "    var local: Array[int] = [1, 2]\n"
+                                        "    local = [3, 4]\n"
+                                        "    return consume([5, 6])\n");
+    const auto invalid = compiler.compile("invalid_contextual_containers.gd",
+                                          "var values: Array[int] = [\"bad\"]\n"
+                                          "var mappings: Dictionary[String, int] = {1: \"bad\"}\n"
+                                          "func consume(items: Array[int]) -> void:\n"
+                                          "    pass\n"
+                                          "func run() -> Array[int]:\n"
+                                          "    consume([\"bad\"])\n"
+                                          "    return [\"bad\"]\n");
+
+    REQUIRE(valid.success);
+    REQUIRE(!invalid.success);
+    REQUIRE(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                          [](const auto& diagnostic) { return diagnostic.code == "GDS4002"; }) >=
+            4);
+}
+
+TEST_CASE("typed container mutation APIs enforce element key and value contracts") {
+    const gdpp::Compiler compiler;
+    const auto valid = compiler.compile(
+        "valid_container_mutation.gd",
+        "func mutate(values: Array[int], labels: Dictionary[String, int]) -> void:\n"
+        "    values.append(1)\n"
+        "    values.insert(0, 2)\n"
+        "    labels[\"left\"] = 3\n"
+        "    labels.set(\"right\", 4)\n");
+    const auto invalid = compiler.compile("invalid_container_mutation.gd",
+                                          "func mutate(values: Array[int], floats: Array[float], "
+                                          "labels: Dictionary[String, int]) -> void:\n"
+                                          "    values.append(\"bad\")\n"
+                                          "    values.insert(0, \"bad\")\n"
+                                          "    values.append_array(floats)\n"
+                                          "    labels[1] = 3\n"
+                                          "    labels.set(\"right\", \"bad\")\n");
+
+    REQUIRE(valid.success);
+    REQUIRE(!invalid.success);
+    REQUIRE(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                          [](const auto& diagnostic) { return diagnostic.code == "GDS4002"; }) >=
+            5);
+}
+
 TEST_CASE("compiler generates serializable Godot export properties and inspector hints") {
     const std::string source =
         "extends Node\n"
@@ -246,6 +383,25 @@ TEST_CASE("compiler generates registered internal classes and native lambda Call
             std::string::npos);
     REQUIRE(result.unit.source.find("InternalClassResource<GDPPNative_Modern__Payload>") !=
             std::string::npos);
+}
+
+TEST_CASE("typed containers preserve internal class runtime identity without include cycles") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile("inner_typed_containers.gd",
+                                         "class Payload:\n"
+                                         "    var value: int = 1\n"
+                                         "var payloads: Array[Payload] = []\n"
+                                         "func replace(values: Array[Payload]) -> Array[Payload]:\n"
+                                         "    payloads = values\n"
+                                         "    return payloads\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("struct ContainerObjectTag_Payload") != std::string::npos);
+    REQUIRE(result.unit.header.find(
+                "godot::StringName(\"GDPPNative_InnerTypedContainers__Payload\")") !=
+            std::string::npos);
+    REQUIRE(result.unit.header.find("godot::TypedArray<inner_typed_containers_gdpp_detail::"
+                                    "ContainerObjectTag_Payload> payloads") != std::string::npos);
 }
 
 TEST_CASE("compiler topologically lowers internal class inheritance and super calls") {
