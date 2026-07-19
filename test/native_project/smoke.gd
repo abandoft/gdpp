@@ -158,10 +158,10 @@ func _run() -> void:
         )
         quit(1)
         return
-    var godot_version: Dictionary = Engine.get_version_info()
-    # Godot 4.4.1 x86_64 traps inside its GDScript VM for INT64_MIN / -1 and modulo. The AOT
-    # implementation is still required to execute and validate those edges on every target.
-    if int(godot_version.get("minor", 0)) >= 5:
+    # Official x86_64 Godot builds trap inside the GDScript VM for INT64_MIN / -1 and modulo.
+    # The AOT implementation is still required to execute and validate those edges on every
+    # target, while architectures with a defined interpreter result retain the full differential.
+    if Engine.get_architecture_name() != "x86_64":
         var script_integer_report: Dictionary = script_integers.call("run")
         if script_integer_report != expected_integer_report:
             push_error(
