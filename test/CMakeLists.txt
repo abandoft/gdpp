@@ -3,6 +3,7 @@ add_executable(
     main.cpp
     lexer_test.cpp
     frontend_limits_test.cpp
+    integer_semantics_test.cpp
     parser_test.cpp
     iteration_test.cpp
     ir_test.cpp
