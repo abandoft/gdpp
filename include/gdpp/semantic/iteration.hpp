@@ -14,11 +14,17 @@ enum class IterationStrategy : std::uint8_t {
     none,
     dynamic_protocol,
     integer_count,
+    floating_count,
     intrinsic_range,
+    vector2_range,
+    vector2i_range,
+    vector3_range,
+    vector3i_range,
     indexed_string,
     indexed_array,
     indexed_packed_array,
     dictionary_protocol,
+    object_protocol,
 };
 
 struct IterationPlan {

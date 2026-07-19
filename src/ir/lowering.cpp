@@ -1089,6 +1089,9 @@ bool IrVerifier::verify_statement(const ir::Statement& statement) {
             case IterationStrategy::integer_count:
                 strategy_matches = iterable.kind == TypeKind::integer;
                 break;
+            case IterationStrategy::floating_count:
+                strategy_matches = iterable.kind == TypeKind::floating;
+                break;
             case IterationStrategy::intrinsic_range:
                 strategy_matches =
                     statement.condition->kind == ir::ExpressionKind::call &&
@@ -1096,6 +1099,22 @@ bool IrVerifier::verify_statement(const ir::Statement& statement) {
                     statement.condition->operands.front()->resolution ==
                         ir::ResolutionKind::intrinsic &&
                     statement.condition->operands.front()->intrinsic == IntrinsicKind::range;
+                break;
+            case IterationStrategy::vector2_range:
+                strategy_matches = iterable.kind == TypeKind::builtin &&
+                                   iterable.name == "Vector2";
+                break;
+            case IterationStrategy::vector2i_range:
+                strategy_matches = iterable.kind == TypeKind::builtin &&
+                                   iterable.name == "Vector2i";
+                break;
+            case IterationStrategy::vector3_range:
+                strategy_matches = iterable.kind == TypeKind::builtin &&
+                                   iterable.name == "Vector3";
+                break;
+            case IterationStrategy::vector3i_range:
+                strategy_matches = iterable.kind == TypeKind::builtin &&
+                                   iterable.name == "Vector3i";
                 break;
             case IterationStrategy::indexed_string:
                 strategy_matches = iterable.kind == TypeKind::string;
@@ -1108,6 +1127,9 @@ bool IrVerifier::verify_statement(const ir::Statement& statement) {
                 break;
             case IterationStrategy::dictionary_protocol:
                 strategy_matches = iterable.kind == TypeKind::dictionary;
+                break;
+            case IterationStrategy::object_protocol:
+                strategy_matches = iterable.kind == TypeKind::object;
                 break;
             case IterationStrategy::none:
                 break;

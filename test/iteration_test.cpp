@@ -41,14 +41,30 @@ TEST_CASE("typed container descriptors preserve source constraints") {
 
 TEST_CASE("iteration plans classify every accepted iterable family") {
     const gdpp::Type integer{gdpp::TypeKind::integer, "int"};
+    const gdpp::Type floating{gdpp::TypeKind::floating, "float"};
+    const gdpp::Type vector2{gdpp::TypeKind::builtin, "Vector2"};
+    const gdpp::Type vector2i{gdpp::TypeKind::builtin, "Vector2i"};
+    const gdpp::Type vector3{gdpp::TypeKind::builtin, "Vector3"};
+    const gdpp::Type vector3i{gdpp::TypeKind::builtin, "Vector3i"};
     const gdpp::Type string{gdpp::TypeKind::string, "String"};
     const gdpp::Type array{gdpp::TypeKind::array, "Array[int]"};
     const gdpp::Type dictionary{gdpp::TypeKind::dictionary, "Dictionary[String, int]"};
     const gdpp::Type packed{gdpp::TypeKind::builtin, "PackedInt64Array"};
     const gdpp::Type dynamic{gdpp::TypeKind::variant, "Variant"};
+    const gdpp::Type object{gdpp::TypeKind::object, "CustomIterator"};
 
     REQUIRE_EQ(gdpp::make_iteration_plan(integer, integer, false).strategy,
                gdpp::IterationStrategy::integer_count);
+    REQUIRE_EQ(gdpp::make_iteration_plan(floating, floating, false).strategy,
+               gdpp::IterationStrategy::floating_count);
+    REQUIRE_EQ(gdpp::make_iteration_plan(vector2, floating, false).strategy,
+               gdpp::IterationStrategy::vector2_range);
+    REQUIRE_EQ(gdpp::make_iteration_plan(vector2i, integer, false).strategy,
+               gdpp::IterationStrategy::vector2i_range);
+    REQUIRE_EQ(gdpp::make_iteration_plan(vector3, floating, false).strategy,
+               gdpp::IterationStrategy::vector3_range);
+    REQUIRE_EQ(gdpp::make_iteration_plan(vector3i, integer, false).strategy,
+               gdpp::IterationStrategy::vector3i_range);
     REQUIRE_EQ(gdpp::make_iteration_plan(string, string, false).strategy,
                gdpp::IterationStrategy::indexed_string);
     REQUIRE_EQ(gdpp::make_iteration_plan(array, integer, false).strategy,
@@ -59,6 +75,8 @@ TEST_CASE("iteration plans classify every accepted iterable family") {
                gdpp::IterationStrategy::indexed_packed_array);
     REQUIRE_EQ(gdpp::make_iteration_plan(dynamic, dynamic, false).strategy,
                gdpp::IterationStrategy::dynamic_protocol);
+    REQUIRE_EQ(gdpp::make_iteration_plan(object, dynamic, false).strategy,
+               gdpp::IterationStrategy::object_protocol);
     REQUIRE_EQ(gdpp::make_iteration_plan(array, integer, true).strategy,
                gdpp::IterationStrategy::intrinsic_range);
 }
