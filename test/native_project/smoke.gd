@@ -37,6 +37,7 @@ func _run() -> void:
     var long_await_class := _native_class_for("long_await_chain.gd")
     var await_expression_class := _native_class_for("await_expression_case.gd")
     var typed_container_class := _native_class_for("typed_container_case.gd")
+    var integer_semantics_class := _native_class_for("integer_semantics_case.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -50,6 +51,7 @@ func _run() -> void:
         or long_await_class.is_empty()
         or await_expression_class.is_empty()
         or typed_container_class.is_empty()
+        or integer_semantics_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
@@ -106,6 +108,50 @@ func _run() -> void:
         return
     native_typed_container = null
     script_typed_container = null
+    var native_integers: Object = ClassDB.instantiate(integer_semantics_class)
+    var script_integers: Object = load("res://integer_semantics_case.gd").new()
+    if native_integers == null or script_integers == null:
+        push_error("Integer-semantics differential fixtures are unavailable")
+        quit(1)
+        return
+    var native_integer_report: Dictionary = native_integers.call("run")
+    var script_integer_report: Dictionary = script_integers.call("run")
+    var expected_integer_report: Dictionary = {
+        "add": -9223372036854775808,
+        "subtract": 9223372036854775807,
+        "multiply": -2,
+        "negate": -9223372036854775808,
+        "divide": -9223372036854775808,
+        "modulo": 0,
+        "shift_left_sign": -9223372036854775808,
+        "shift_left_64": 1,
+        "shift_left_negative_count": -9223372036854775808,
+        "shift_right_negative": -4611686018427387904,
+        "shift_right_64": 9223372036854775807,
+        "bit_not": -1,
+        "bit_and": 21930,
+        "bit_or": 21930,
+        "bit_xor": 21930,
+        "compound": -9223372036854775808,
+        "indexed": [-9223372036854775808],
+        "dynamic_add": -9223372036854775808,
+        "dynamic_subtract": 9223372036854775807,
+        "dynamic_multiply": -2,
+        "dynamic_shift_left_64": 1,
+        "dynamic_shift_left_negative": -9223372036854775808,
+    }
+    if (
+        native_integer_report != script_integer_report
+        or native_integer_report != expected_integer_report
+    ):
+        push_error(
+            "Native integer semantics differ from GDScript: native=%s script=%s"
+            % [native_integer_report, script_integer_report]
+        )
+        quit(1)
+        return
+    native_integers = null
+    script_integers = null
     var instance: Object = ClassDB.instantiate(player_class)
     if (
         instance == null
