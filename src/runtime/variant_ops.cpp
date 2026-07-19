@@ -1,5 +1,7 @@
 #include "gdpp/runtime/variant_ops.hpp"
 
+#include "gdpp/support/integer_semantics.hpp"
+
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/object.hpp>
@@ -16,8 +18,8 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 
 #include <atomic>
-#include <cstring>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -44,6 +46,49 @@ const godot::StringName& default_argument_marker() {
     static const godot::StringName marker{
         "__gdpp_internal_omitted_argument_7f7b20d940d64b33aebdbdc51ca21ab3__"};
     return marker;
+}
+
+std::optional<integer::Result> evaluate_integer_operator(const godot::Variant::Operator operation,
+                                                         const std::int64_t left,
+                                                         const std::int64_t right) {
+    switch (operation) {
+    case godot::Variant::OP_ADD:
+        return integer::Result{integer::add(left, right)};
+    case godot::Variant::OP_SUBTRACT:
+        return integer::Result{integer::subtract(left, right)};
+    case godot::Variant::OP_MULTIPLY:
+        return integer::Result{integer::multiply(left, right)};
+    case godot::Variant::OP_DIVIDE:
+        return integer::divide(left, right);
+    case godot::Variant::OP_MODULE:
+        return integer::modulo(left, right);
+    case godot::Variant::OP_SHIFT_LEFT:
+        return integer::Result{integer::shift_left(left, right)};
+    case godot::Variant::OP_SHIFT_RIGHT:
+        return integer::Result{integer::shift_right(left, right)};
+    case godot::Variant::OP_BIT_AND:
+        return integer::Result{integer::bit_and(left, right)};
+    case godot::Variant::OP_BIT_OR:
+        return integer::Result{integer::bit_or(left, right)};
+    case godot::Variant::OP_BIT_XOR:
+        return integer::Result{integer::bit_xor(left, right)};
+    default:
+        return std::nullopt;
+    }
+}
+
+void report_integer_error(const integer::ArithmeticError error) {
+    if (error == integer::ArithmeticError::division_by_zero)
+        godot::UtilityFunctions::push_error("GDPP: division by zero error in operator '/'");
+    else if (error == integer::ArithmeticError::modulo_by_zero)
+        godot::UtilityFunctions::push_error("GDPP: modulo by zero error in operator '%'");
+}
+
+std::int64_t integer_result_or_zero(const integer::Result result) {
+    if (result)
+        return result.value;
+    report_integer_error(result.error);
+    return 0;
 }
 
 std::mutex& autoload_registry_mutex() {
@@ -210,18 +255,12 @@ godot::Variant binary(godot::Variant::Operator operation, const godot::Variant& 
     if (left.get_type() == godot::Variant::INT && right.get_type() == godot::Variant::INT) {
         const auto left_value = static_cast<std::int64_t>(left);
         const auto right_value = static_cast<std::int64_t>(right);
-        if (operation == godot::Variant::OP_ADD || operation == godot::Variant::OP_BIT_AND) {
-            // Godot integers are fixed-width signed 64-bit values. Perform the operation in the
-            // corresponding unsigned domain so addition has defined modulo-2^64 behavior, then
-            // preserve the result bits when returning to the language integer representation.
-            const auto left_bits = static_cast<std::uint64_t>(left_value);
-            const auto right_bits = static_cast<std::uint64_t>(right_value);
-            const auto result_bits = operation == godot::Variant::OP_ADD ? left_bits + right_bits
-                                                                         : left_bits & right_bits;
-            std::int64_t result = 0;
-            static_assert(sizeof(result) == sizeof(result_bits));
-            std::memcpy(&result, &result_bits, sizeof(result));
-            return result;
+        if (const auto result = evaluate_integer_operator(operation, left_value, right_value)) {
+            if (!*result) {
+                report_integer_error(result->error);
+                return {};
+            }
+            return result->value;
         }
     }
     godot::Variant result;
@@ -245,14 +284,12 @@ godot::Variant binary_integer(const godot::Variant::Operator operation, const go
                               const std::int64_t right) {
     if (left.get_type() == godot::Variant::INT) {
         const auto left_value = static_cast<std::int64_t>(left);
-        if (operation == godot::Variant::OP_ADD || operation == godot::Variant::OP_BIT_AND) {
-            const auto left_bits = static_cast<std::uint64_t>(left_value);
-            const auto right_bits = static_cast<std::uint64_t>(right);
-            const auto result_bits = operation == godot::Variant::OP_ADD ? left_bits + right_bits
-                                                                         : left_bits & right_bits;
-            std::int64_t result = 0;
-            std::memcpy(&result, &result_bits, sizeof(result));
-            return result;
+        if (const auto result = evaluate_integer_operator(operation, left_value, right)) {
+            if (!*result) {
+                report_integer_error(result->error);
+                return {};
+            }
+            return result->value;
         }
     }
     return binary(operation, left, godot::Variant(right));
@@ -262,14 +299,12 @@ godot::Variant binary_integer(const godot::Variant::Operator operation, const st
                               const godot::Variant& right) {
     if (right.get_type() == godot::Variant::INT) {
         const auto right_value = static_cast<std::int64_t>(right);
-        if (operation == godot::Variant::OP_ADD || operation == godot::Variant::OP_BIT_AND) {
-            const auto left_bits = static_cast<std::uint64_t>(left);
-            const auto right_bits = static_cast<std::uint64_t>(right_value);
-            const auto result_bits = operation == godot::Variant::OP_ADD ? left_bits + right_bits
-                                                                         : left_bits & right_bits;
-            std::int64_t result = 0;
-            std::memcpy(&result, &result_bits, sizeof(result));
-            return result;
+        if (const auto result = evaluate_integer_operator(operation, left, right_value)) {
+            if (!*result) {
+                report_integer_error(result->error);
+                return {};
+            }
+            return result->value;
         }
     }
     return binary(operation, godot::Variant(left), right);
@@ -286,6 +321,15 @@ void compound_assign_integer(godot::Variant& target, const godot::Variant::Opera
 }
 
 godot::Variant unary(godot::Variant::Operator operation, const godot::Variant& operand) {
+    if (operand.get_type() == godot::Variant::INT) {
+        const auto value = static_cast<std::int64_t>(operand);
+        if (operation == godot::Variant::OP_POSITIVE)
+            return value;
+        if (operation == godot::Variant::OP_NEGATE)
+            return integer::negate(value);
+        if (operation == godot::Variant::OP_BIT_NEGATE)
+            return integer::bit_not(value);
+    }
     godot::Variant result;
     bool valid = false;
     godot::Variant::evaluate(operation, operand, godot::Variant{}, result, valid);
@@ -294,6 +338,14 @@ godot::Variant unary(godot::Variant::Operator operation, const godot::Variant& o
         return {};
     }
     return result;
+}
+
+std::int64_t integer_divide(const std::int64_t left, const std::int64_t right) {
+    return integer_result_or_zero(integer::divide(left, right));
+}
+
+std::int64_t integer_modulo(const std::int64_t left, const std::int64_t right) {
+    return integer_result_or_zero(integer::modulo(left, right));
 }
 
 bool is_instance_valid(const godot::Variant& value) noexcept {
@@ -312,8 +364,13 @@ godot::Array make_range(std::int64_t start, std::int64_t stop, std::int64_t step
         godot::UtilityFunctions::push_error("GDPP: range step cannot be zero");
         return result;
     }
-    for (auto value = start; step > 0 ? value < stop : value > stop; value += step)
+    for (auto value = start; step > 0 ? value < stop : value > stop;) {
         result.push_back(value);
+        const auto next = integer::add(value, step);
+        if ((step > 0 && next <= value) || (step < 0 && next >= value))
+            break;
+        value = next;
+    }
     return result;
 }
 
