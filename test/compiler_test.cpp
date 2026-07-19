@@ -1403,6 +1403,43 @@ TEST_CASE("compiler emits native Godot mathematical range loops") {
     REQUIRE(result.unit.source.find("gdpp::runtime::iter_init") == std::string::npos);
 }
 
+TEST_CASE("typed iterator variables constrain collection literal elements") {
+    const gdpp::Compiler compiler;
+    const auto valid = compiler.compile(
+        "typed_literal_loops.gd",
+        "func collect() -> Array:\n"
+        "    var result: Array = []\n"
+        "    for value: float in [1, 2, 3]:\n"
+        "        result.append(value)\n"
+        "    for key: StringName in { first = 1, second = 2 }:\n"
+        "        result.append(key)\n"
+        "    return result\n");
+    const auto invalid_array = compiler.compile(
+        "invalid_typed_array_loop.gd",
+        "func visit() -> void:\n"
+        "    for value: String in [1, 2, 3]:\n"
+        "        pass\n");
+    const auto invalid_dictionary = compiler.compile(
+        "invalid_typed_dictionary_loop.gd",
+        "func visit() -> void:\n"
+        "    for key: int in { \"name\": 1 }:\n"
+        "        pass\n");
+
+    REQUIRE(valid.success);
+    REQUIRE(valid.unit.source.find("godot::TypedArray<double> _gdpp_array_") !=
+            std::string::npos);
+    REQUIRE(valid.unit.source.find("godot::TypedDictionary<godot::StringName, godot::Variant> ") !=
+            std::string::npos);
+    REQUIRE(!invalid_array.success);
+    REQUIRE(std::count_if(invalid_array.diagnostics.begin(), invalid_array.diagnostics.end(),
+                          [](const auto& diagnostic) { return diagnostic.code == "GDS4002"; }) >=
+            3);
+    REQUIRE(!invalid_dictionary.success);
+    REQUIRE(std::any_of(
+        invalid_dictionary.diagnostics.begin(), invalid_dictionary.diagnostics.end(),
+        [](const auto& diagnostic) { return diagnostic.code == "GDS4002"; }));
+}
+
 TEST_CASE("compiler iterates packed arrays with their Godot element types") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(

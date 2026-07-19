@@ -2860,7 +2860,29 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         return FlowResult{!constant_true || body_flow.breaks, body_flow.returns, false, false};
     }
     case ast::StatementKind::for_statement: {
-        const auto iterable = analyze_expression(*statement.condition());
+        auto iterable = analyze_expression(*statement.condition());
+        const auto specified_element_type = statement.type()
+                                                ? type_from_name(*statement.type(), statement.span)
+                                                : variant_type;
+        if (statement.type() && !specified_element_type.is_dynamic() &&
+            statement.condition()->kind() == ast::ExpressionKind::array_literal) {
+            const Type constrained{TypeKind::array,
+                                   "Array[" + specified_element_type.display_name() + "]"};
+            require_expression_assignable(constrained, *statement.condition(), iterable,
+                                          statement.condition()->span,
+                                          "typed for-loop iterable");
+            iterable = model_.type_of(*statement.condition());
+        } else if (statement.type() && !specified_element_type.is_dynamic() &&
+                   statement.condition()->kind() ==
+                       ast::ExpressionKind::dictionary_literal) {
+            const Type constrained{
+                TypeKind::dictionary,
+                "Dictionary[" + specified_element_type.display_name() + ", Variant]"};
+            require_expression_assignable(constrained, *statement.condition(), iterable,
+                                          statement.condition()->span,
+                                          "typed for-loop iterable");
+            iterable = model_.type_of(*statement.condition());
+        }
         const bool mathematical_range =
             iterable.kind == TypeKind::floating ||
             (iterable.kind == TypeKind::builtin &&
@@ -2893,9 +2915,7 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         }
         model_.iteration_plans_[&statement] =
             make_iteration_plan(iterable, inferred_element_type, intrinsic_range);
-        const auto element_type = statement.type()
-                                      ? type_from_name(*statement.type(), statement.span)
-                                      : inferred_element_type;
+        const auto element_type = statement.type() ? specified_element_type : inferred_element_type;
         if (statement.type())
             require_assignable(element_type, inferred_element_type, statement.span,
                                "invalid iterator variable type");
