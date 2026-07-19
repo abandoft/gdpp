@@ -483,10 +483,26 @@ struct NativeTypeIncludes {
     // Script display names are not identities: unnamed scripts can share a stem and project
     // globals can shadow engine types. Resolved native names remain unique across the project.
     std::set<std::string> resolved_native_scripts;
+    std::set<std::string> container_objects;
+    bool typed_array{false};
+    bool typed_dictionary{false};
 };
 
 void collect_type(const Type& type, NativeTypeIncludes& includes, const GodotApi& api,
                   const ScriptSymbolTable* script_symbols) {
+    if (const auto container = describe_container_type(type)) {
+        includes.typed_array = includes.typed_array || container->kind == ContainerTypeKind::array;
+        includes.typed_dictionary =
+            includes.typed_dictionary || container->kind == ContainerTypeKind::dictionary;
+        for (const auto& argument : container->arguments) {
+            const auto argument_type = type_from_annotation(argument);
+            if (argument_type.kind == TypeKind::object) {
+                includes.container_objects.insert(argument);
+            } else {
+                collect_type(argument_type, includes, api, script_symbols);
+            }
+        }
+    }
     if (type.kind == TypeKind::builtin)
         includes.builtins.insert(type.name);
     else if (type.kind == TypeKind::object && api.find_class(type.name))
@@ -851,7 +867,22 @@ bool is_bound_property(const ir::Field& field) {
 }
 
 std::string property_info(const ir::Field& field, const GodotApi& api,
-                          const ScriptSymbolTable* script_symbols) {
+                          const ScriptSymbolTable* script_symbols, const std::string& native_type) {
+    if (describe_container_type(field.property_type) &&
+        (!field.property || field.property->name == "export" ||
+         field.property->name == "export_storage")) {
+        std::string usage;
+        if (!field.property)
+            usage = "godot::PROPERTY_USAGE_SCRIPT_VARIABLE";
+        else if (field.property->name == "export_storage")
+            usage = "godot::PROPERTY_USAGE_STORAGE";
+        std::string result = "[] { auto info = godot::GetTypeInfo<" + native_type +
+                             ">::get_class_info(); info.name = " + godot_string_name(field.name) +
+                             ";";
+        if (!usage.empty())
+            result += " info.usage = " + usage + ";";
+        return "(" + result + " return info; }())";
+    }
     std::string result = "godot::PropertyInfo(" + variant_type(field.property_type) + ", " +
                          godot_text_argument(field.name);
     const auto hint = property_hint(field, api, script_symbols);
@@ -997,8 +1028,20 @@ std::string CodeGenerator::cpp_type(const Type& type) const {
     case TypeKind::string_name:
         return "godot::StringName";
     case TypeKind::array:
+        if (const auto container = describe_container_type(type)) {
+            if (!container->has_runtime_constraint())
+                return "godot::Array";
+            return "godot::TypedArray<" + container_cpp_argument(container->arguments.front()) +
+                   ">";
+        }
         return "godot::Array";
     case TypeKind::dictionary:
+        if (const auto container = describe_container_type(type)) {
+            if (!container->has_runtime_constraint())
+                return "godot::Dictionary";
+            return "godot::TypedDictionary<" + container_cpp_argument(container->arguments.at(0)) +
+                   ", " + container_cpp_argument(container->arguments.at(1)) + ">";
+        }
         return "godot::Dictionary";
     case TypeKind::enumeration:
         return "int64_t";
@@ -1029,6 +1072,94 @@ std::string CodeGenerator::cpp_type(const Type& type) const {
     default:
         return "godot::Variant";
     }
+}
+
+std::string CodeGenerator::native_property_info(const Type& type,
+                                                const std::string_view name) const {
+    if (describe_container_type(type)) {
+        return "([] { auto info = godot::GetTypeInfo<" + cpp_type(type) +
+               ">::get_class_info(); info.name = " + godot_string_name(std::string{name}) +
+               "; return info; }())";
+    }
+    return "godot::PropertyInfo(" + variant_type(type) + ", " +
+           godot_text_argument(std::string{name}) + ")";
+}
+
+Type CodeGenerator::container_argument_type(const std::string_view type_name) const {
+    const auto name = std::string{type_name};
+    if (container_enum_types_.find(name) != container_enum_types_.end() ||
+        api_.has_global_enum(name)) {
+        return {TypeKind::enumeration, name};
+    }
+    if (const auto separator = name.rfind('.'); separator != std::string::npos) {
+        const auto owner_name = name.substr(0, separator);
+        const auto enum_name = name.substr(separator + 1);
+        if (api_.has_class_enum(owner_name, enum_name))
+            return {TypeKind::enumeration, name};
+        if (script_symbols_) {
+            if (const auto* owner = script_symbols_->find_global(owner_name);
+                owner && script_symbols_->find_enum(*owner, enum_name)) {
+                return {TypeKind::enumeration, name};
+            }
+            if (const auto* owner = script_symbols_->find_external(owner_name);
+                owner && script_symbols_->find_external_enum(*owner, enum_name)) {
+                return {TypeKind::enumeration, name};
+            }
+        }
+    }
+    if (current_script_ && script_symbols_ && script_symbols_->find_enum(*current_script_, name))
+        return {TypeKind::enumeration, name};
+    if (current_inner_script_ &&
+        std::any_of(current_inner_script_->enums.begin(), current_inner_script_->enums.end(),
+                    [&](const auto& enumeration) { return enumeration.name == name; }))
+        return {TypeKind::enumeration, name};
+    return type_from_annotation(name);
+}
+
+std::string CodeGenerator::container_cpp_argument(const std::string_view type_name) const {
+    const auto type = container_argument_type(type_name);
+    switch (type.kind) {
+    case TypeKind::variant:
+    case TypeKind::unknown:
+        return "godot::Variant";
+    case TypeKind::boolean:
+        return "bool";
+    case TypeKind::integer:
+    case TypeKind::enumeration:
+        return "int64_t";
+    case TypeKind::floating:
+        return "double";
+    case TypeKind::string:
+        return "godot::String";
+    case TypeKind::string_name:
+        return "godot::StringName";
+    case TypeKind::array:
+        return "godot::Array";
+    case TypeKind::dictionary:
+        return "godot::Dictionary";
+    case TypeKind::builtin:
+        return "godot::" + type.name;
+    case TypeKind::object:
+        return detail_namespace_ + "::ContainerObjectTag_" +
+               sanitize_identifier(std::string{type_name});
+    case TypeKind::nil:
+    case TypeKind::script_resource:
+    case TypeKind::void_type:
+        return "godot::Variant";
+    }
+    return "godot::Variant";
+}
+
+std::string CodeGenerator::container_object_runtime_name(const std::string_view type_name) const {
+    if (const auto inner = inner_cpp_type(type_name); !inner.empty())
+        return inner;
+    if (script_symbols_) {
+        if (const auto* script = script_symbols_->find_class(std::string{type_name}))
+            return script->native_class_name;
+        if (const auto* external = script_symbols_->find_external(std::string{type_name}))
+            return external->name;
+    }
+    return std::string{type_name};
 }
 
 std::string CodeGenerator::inner_cpp_type(std::string_view name) const {
@@ -1183,6 +1314,11 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
          target.kind == TypeKind::dictionary || target.kind == TypeKind::string ||
          target.kind == TypeKind::string_name))
         return "{}";
+    if (describe_container_type(target)) {
+        if (source.is_packed_array())
+            value = "godot::Array(" + value + ")";
+        return cpp_type(target) + "(" + value + ")";
+    }
     if (target.kind == TypeKind::object && source.kind == TypeKind::object &&
         target.name != source.name) {
         auto source_object = value;
@@ -4403,14 +4539,14 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                << native_name << "::_gdpp_get_" << name << ");\n"
                << "    godot::ClassDB::bind_method(godot::D_METHOD(\"_gdpp_set_" << name
                << "\", \"value\"), &" << native_name << "::_gdpp_set_" << name << ");\n"
-               << "    ADD_PROPERTY(" << property_info(field, api_, script_symbols_)
+               << "    ADD_PROPERTY("
+               << property_info(field, api_, script_symbols_, cpp_type(field.type))
                << ", \"_gdpp_set_" << name << "\", \"_gdpp_get_" << name << "\");\n";
     }
     for (const auto& signal : declaration.signals) {
         source << "    ADD_SIGNAL(godot::MethodInfo(" << godot_text_argument(signal.name);
         for (const auto& parameter : signal.parameters)
-            source << ", godot::PropertyInfo(" << variant_type(parameter.type) << ", "
-                   << godot_text_argument(parameter.name) << ")";
+            source << ", " << native_property_info(parameter.type, parameter.name);
         source << "));\n";
     }
     if (std::any_of(declaration.functions.begin(), declaration.functions.end(),
@@ -4546,6 +4682,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     inner_base_names_.clear();
     inner_method_names_.clear();
     inner_ref_types_.clear();
+    container_enum_types_.clear();
     local_function_parameters_.clear();
     local_functions_.clear();
     for (const auto& function : module.functions) {
@@ -4553,6 +4690,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         auto& parameters = local_function_parameters_[function.name];
         for (const auto& parameter : function.parameters)
             parameters.push_back(parameter.type);
+    }
+    for (const auto& enumeration : module.enums) {
+        if (!enumeration.name.empty())
+            container_enum_types_.insert(enumeration.name);
     }
     std::vector<std::pair<std::string, const ir::Class*>> named_inner_classes;
     const auto collect_inner_classes = [&](const auto& self, const auto& declarations,
@@ -4785,6 +4926,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     for (const auto& type : native_types.objects) {
         header << "#include <godot_cpp/classes/" << to_snake_case(type) << ".hpp>\n";
     }
+    if (native_types.typed_array)
+        header << "#include <godot_cpp/variant/typed_array.hpp>\n";
+    if (native_types.typed_dictionary)
+        header << "#include <godot_cpp/variant/typed_dictionary.hpp>\n";
     if (script_symbols_) {
         for (const auto& type : native_types.complete_scripts) {
             const auto* symbol = script_symbols_->find_global(type);
@@ -4838,8 +4983,14 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
            << "#include <mutex>\n"
            << "#include <type_traits>\n"
            << "#include <utility>\n\n"
-           << "namespace " << detail_namespace_ << " {\n"
-           << "template <typename T> struct ScriptResource {\n"
+           << "namespace " << detail_namespace_ << " {\n";
+    for (const auto& type_name : native_types.container_objects) {
+        header << "struct ContainerObjectTag_" << sanitize_identifier(type_name) << " {\n"
+               << "    static godot::StringName get_class_static() { return "
+               << godot_string_name(container_object_runtime_name(type_name)) << "; }\n"
+               << "};\n";
+    }
+    header << "template <typename T> struct ScriptResource {\n"
            << "    operator godot::Variant() const {\n"
            << "        return godot::Variant(godot::StringName(T::get_class_static()));\n"
            << "    }\n"
@@ -5339,7 +5490,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                << unit.class_name << "::_gdpp_get_" << name << ");\n"
                << "    godot::ClassDB::bind_method(godot::D_METHOD(\"_gdpp_set_" << name
                << "\", \"value\"), &" << unit.class_name << "::_gdpp_set_" << name << ");\n"
-               << "    ADD_PROPERTY(" << property_info(variable, api_, script_symbols_)
+               << "    ADD_PROPERTY("
+               << property_info(variable, api_, script_symbols_, cpp_type(variable.type))
                << ", \"_gdpp_set_" << name << "\", \"_gdpp_get_" << name << "\");\n";
     }
     for (const auto& function : module.functions) {
@@ -5362,8 +5514,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     for (const auto& signal : module.signals) {
         source << "    ADD_SIGNAL(godot::MethodInfo(" << godot_text_argument(signal.name);
         for (const auto& parameter : signal.parameters) {
-            source << ", godot::PropertyInfo(" << variant_type(parameter.type) << ", "
-                   << godot_text_argument(parameter.name) << ")";
+            source << ", " << native_property_info(parameter.type, parameter.name);
         }
         source << "));\n";
     }

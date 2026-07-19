@@ -122,6 +122,10 @@ class CodeGenerator final {
     [[nodiscard]] std::string lift_async_loop_locals(const ir::Statement& statement,
                                                      std::size_t indent) const;
     [[nodiscard]] std::string cpp_type(const Type& type) const;
+    [[nodiscard]] std::string native_property_info(const Type& type, std::string_view name) const;
+    [[nodiscard]] Type container_argument_type(std::string_view type_name) const;
+    [[nodiscard]] std::string container_cpp_argument(std::string_view type_name) const;
+    [[nodiscard]] std::string container_object_runtime_name(std::string_view type_name) const;
     [[nodiscard]] std::string inner_cpp_type(std::string_view name) const;
     [[nodiscard]] std::string inner_godot_base_type(std::string_view name) const;
     [[nodiscard]] std::string native_super_owner(std::string_view owner) const;
@@ -159,6 +163,7 @@ class CodeGenerator final {
     mutable std::unordered_map<std::string, std::string> inner_base_names_;
     mutable std::unordered_map<std::string, std::unordered_set<std::string>> inner_method_names_;
     mutable std::unordered_set<std::string> inner_ref_types_;
+    mutable std::unordered_set<std::string> container_enum_types_;
     mutable std::unordered_map<std::string, std::vector<Type>> local_function_parameters_;
     mutable std::unordered_map<std::string, const ir::Function*> local_functions_;
     mutable std::unordered_map<std::string, Type> current_local_types_;
