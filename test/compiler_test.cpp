@@ -217,8 +217,19 @@ TEST_CASE("compiler preserves typed container metadata in the native ABI") {
     REQUIRE(result.unit.header.find("godot::TypedArray<int64_t> modes") != std::string::npos);
     REQUIRE(result.unit.header.find("godot::TypedDictionary<godot::String, int64_t> summarize(") !=
             std::string::npos);
-    REQUIRE(result.unit.source.find("godot::TypedArray<int64_t>(") != std::string::npos);
-    REQUIRE(result.unit.source.find("godot::TypedDictionary<godot::String, int64_t>(") !=
+    REQUIRE(result.unit.source.find(
+                "-> godot::TypedArray<int64_t> { godot::TypedArray<int64_t> _gdpp_array_") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("-> godot::TypedDictionary<godot::String, double> { "
+                                    "godot::TypedDictionary<godot::String, double> "
+                                    "_gdpp_dictionary_") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::TypedArray<int64_t>(([]() -> godot::Array") ==
+            std::string::npos);
+    REQUIRE(
+        result.unit.source.find("godot::TypedArray<int64_t>(([]() -> godot::TypedArray<int64_t>") ==
+        std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "godot::TypedArray<int64_t>(([&]() -> godot::TypedArray<int64_t>") ==
             std::string::npos);
     REQUIRE(result.unit.source.find("godot::GetTypeInfo<godot::TypedArray<int64_t>>") !=
             std::string::npos);

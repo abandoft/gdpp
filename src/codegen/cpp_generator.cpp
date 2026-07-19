@@ -1315,6 +1315,8 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
          target.kind == TypeKind::string_name))
         return "{}";
     if (describe_container_type(target)) {
+        if (target == source)
+            return value;
         if (source.is_packed_array())
             value = "godot::Array(" + value + ")";
         return cpp_type(target) + "(" + value + ")";
@@ -2772,36 +2774,55 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                                    emit_expression(*expression.operands.at(0)) + "[" +
                                        emit_expression(*expression.operands.at(1)) + "]");
     case ir::ExpressionKind::array_literal: {
+        const auto descriptor = describe_container_type(expression.type);
+        const auto runtime_typed = descriptor && descriptor->has_runtime_constraint();
+        const auto native_type = runtime_typed ? cpp_type(expression.type) : "godot::Array";
         if (expression.operands.empty())
-            return "godot::Array()";
+            return native_type + "()";
         const auto suffix = std::to_string(temporary_counter_++);
         const auto array = "_gdpp_array_" + suffix;
         const auto capture = in_function_body_ ? "[&]" : "[]";
-        std::string result = std::string{"("} + capture + "() -> godot::Array { godot::Array " +
-                             array + "; " + array + ".resize(" +
+        std::string result = std::string{"("} + capture + "() -> " + native_type + " { " +
+                             native_type + " " + array + "; " + array + ".resize(" +
                              std::to_string(expression.operands.size()) + "); ";
         for (std::size_t index = 0; index < expression.operands.size(); ++index) {
             const auto value = "_gdpp_array_value_" + suffix + "_" + std::to_string(index);
-            result += "{ const godot::Variant " + value + " = " +
-                      emit_expression(*expression.operands[index]) + "; " + array + "[" +
+            auto emitted = emit_expression(*expression.operands[index]);
+            if (runtime_typed) {
+                emitted = emit_conversion(container_argument_type(descriptor->arguments.front()),
+                                          expression.operands[index]->type, std::move(emitted));
+            }
+            result += "{ const auto " + value + " = " + emitted + "; " + array + "[" +
                       std::to_string(index) + "] = " + value + "; } ";
         }
         return result + "return " + array + "; }())";
     }
     case ir::ExpressionKind::dictionary_literal: {
+        const auto descriptor = describe_container_type(expression.type);
+        const auto runtime_typed = descriptor && descriptor->has_runtime_constraint();
+        const auto native_type = runtime_typed ? cpp_type(expression.type) : "godot::Dictionary";
         const auto suffix = std::to_string(temporary_counter_++);
         const auto dictionary = "_gdpp_dictionary_" + suffix;
         const auto capture = in_function_body_ ? "[&]" : "[]";
-        std::string result = std::string{"("} + capture +
-                             "() -> godot::Dictionary { godot::Dictionary " + dictionary + "; ";
+        std::string result = std::string{"("} + capture + "() -> " + native_type + " { " +
+                             native_type + " " + dictionary + "; ";
         for (std::size_t index = 0; index + 1 < expression.operands.size(); index += 2) {
             const auto entry = suffix + "_" + std::to_string(index / 2);
             const auto key = "_gdpp_dictionary_key_" + entry;
             const auto value = "_gdpp_dictionary_value_" + entry;
-            result += "{ const godot::Variant " + key + " = " +
-                      emit_expression(*expression.operands[index]) + "; const godot::Variant " +
-                      value + " = " + emit_expression(*expression.operands[index + 1]) + "; " +
-                      dictionary + ".set(" + key + ", " + value + "); } ";
+            auto emitted_key = emit_expression(*expression.operands[index]);
+            auto emitted_value = emit_expression(*expression.operands[index + 1]);
+            if (runtime_typed) {
+                emitted_key =
+                    emit_conversion(container_argument_type(descriptor->arguments.at(0)),
+                                    expression.operands[index]->type, std::move(emitted_key));
+                emitted_value =
+                    emit_conversion(container_argument_type(descriptor->arguments.at(1)),
+                                    expression.operands[index + 1]->type, std::move(emitted_value));
+            }
+            result += "{ const auto " + key + " = " + emitted_key + "; const auto " + value +
+                      " = " + emitted_value + "; " + dictionary + ".set(" + key + ", " + value +
+                      "); } ";
         }
         return result + "return " + dictionary + "; }())";
     }
