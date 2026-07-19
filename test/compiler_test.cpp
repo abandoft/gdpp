@@ -1468,6 +1468,24 @@ TEST_CASE("compiler lowers static object iterators through Godot's Variant proto
             std::string::npos);
 }
 
+TEST_CASE("semantic failures stop before HIR verifier diagnostics") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile("invalid_iterator.gd",
+                                         "func visit() -> void:\n"
+                                         "    for value in true:\n"
+                                         "        pass\n");
+
+    REQUIRE(!result.success);
+    REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4007"; }));
+    REQUIRE(std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                         [](const auto& diagnostic) {
+                             return diagnostic.code.rfind("GDS5", 0) == 0;
+                         }));
+    REQUIRE_EQ(result.metrics.hir_statement_count, std::size_t{0});
+    REQUIRE_EQ(result.metrics.mir_block_count, std::size_t{0});
+}
+
 TEST_CASE("compiler iterates packed arrays with their Godot element types") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(

@@ -162,6 +162,12 @@ CompileResult Compiler::compile(std::string path, std::string source_text,
         const auto semantic = analyzer.analyze(script);
         const auto semantic_end = Clock::now();
         result.metrics.semantic_ns = elapsed_ns(semantic_begin, semantic_end);
+        if (diagnostics.has_errors()) {
+            result.success = false;
+            result.diagnostics = diagnostics.items();
+            result.metrics.total_ns = elapsed_ns(total_begin, Clock::now());
+            return result;
+        }
         const auto hir_begin = Clock::now();
         IrLowerer lowerer{semantic};
         auto module = lowerer.lower(script);
