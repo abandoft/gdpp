@@ -922,12 +922,13 @@ ast::Statement Parser::parse_for_statement() {
     const auto& iterator = consume(TokenKind::identifier, "expected an iterator variable");
     loop.iterator = iterator.lexeme;
     loop.iterator_span = iterator.span;
-    const auto type_begin = check(TokenKind::colon) && position_ + 1 < tokens_.size()
-                                ? std::optional<SourceSpan>{tokens_[position_ + 1].span}
-                                : std::nullopt;
+    SourceSpan type_begin{};
+    const bool has_type_begin = check(TokenKind::colon) && position_ + 1 < tokens_.size();
+    if (has_type_begin)
+        type_begin = tokens_[position_ + 1].span;
     loop.type = parse_type_annotation();
-    if (loop.type && type_begin)
-        loop.type_span = joined(*type_begin, previous().span);
+    if (loop.type && has_type_begin)
+        loop.type_span = joined(type_begin, previous().span);
     consume(TokenKind::kw_in, "expected 'in' after iterator variable");
     loop.iterable = parse_expression();
     consume(TokenKind::colon, "expected ':' after iterable expression");
