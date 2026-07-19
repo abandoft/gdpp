@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -216,8 +217,14 @@ class SemanticAnalyzer final {
                                             const ast::ExpressionPtr& initializer);
     void require_assignable(const Type& target, const Type& source, SourceSpan span,
                             const std::string& context);
+    void require_expression_assignable(const Type& target, const ast::Expression& expression,
+                                       const Type& source, SourceSpan span,
+                                       const std::string& context);
     void validate_script_call(const ScriptMemberSymbol& member, const std::vector<Type>& arguments,
-                              SourceSpan span);
+                              const ast::Expression& call, SourceSpan span);
+    void validate_container_method_call(const Type& container, std::string_view method,
+                                        const std::vector<Type>& arguments,
+                                        const ast::Expression& call);
     [[nodiscard]] const ScriptInnerClassSymbol*
     find_inner_class(const std::string& name) const noexcept;
     [[nodiscard]] const ScriptInnerClassSymbol*

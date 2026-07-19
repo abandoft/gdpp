@@ -410,8 +410,47 @@ void SemanticAnalyzer::require_assignable(const Type& target, const Type& source
     }
 }
 
+void SemanticAnalyzer::require_expression_assignable(const Type& target,
+                                                     const ast::Expression& expression,
+                                                     const Type& source, const SourceSpan span,
+                                                     const std::string& context) {
+    require_assignable(target, source, span, context);
+    const auto container = describe_container_type(target);
+    if (!container)
+        return;
+    if (container->kind == ContainerTypeKind::array &&
+        expression.kind() == ast::ExpressionKind::array_literal) {
+        const auto element_type = type_from_name(container->arguments.front(), expression.span);
+        for (std::size_t index = 0; index < expression.operand_count(); ++index) {
+            const auto& element = *expression.operand(index);
+            require_expression_assignable(element_type, element, model_.type_of(element),
+                                          element.span,
+                                          context + " array element " + std::to_string(index + 1));
+        }
+        model_.expression_types_[&expression] = target;
+        return;
+    }
+    if (container->kind == ContainerTypeKind::dictionary &&
+        expression.kind() == ast::ExpressionKind::dictionary_literal) {
+        const auto key_type = type_from_name(container->arguments.at(0), expression.span);
+        const auto value_type = type_from_name(container->arguments.at(1), expression.span);
+        for (std::size_t index = 0; index + 1 < expression.operand_count(); index += 2) {
+            const auto& key = *expression.operand(index);
+            const auto& value = *expression.operand(index + 1);
+            require_expression_assignable(key_type, key, model_.type_of(key), key.span,
+                                          context + " dictionary key " +
+                                              std::to_string(index / 2 + 1));
+            require_expression_assignable(value_type, value, model_.type_of(value), value.span,
+                                          context + " dictionary value " +
+                                              std::to_string(index / 2 + 1));
+        }
+        model_.expression_types_[&expression] = target;
+    }
+}
+
 void SemanticAnalyzer::validate_script_call(const ScriptMemberSymbol& member,
-                                            const std::vector<Type>& arguments, SourceSpan span) {
+                                            const std::vector<Type>& arguments,
+                                            const ast::Expression& call, SourceSpan span) {
     if (member.kind != ScriptMemberKind::function) {
         diagnostics_.error("GDS4053", "script member '" + member.name + "' is not callable", span);
         return;
@@ -432,8 +471,48 @@ void SemanticAnalyzer::validate_script_call(const ScriptMemberSymbol& member,
     }
     const auto checked = std::min(arguments.size(), member.parameters.size());
     for (std::size_t index = 0; index < checked; ++index) {
-        require_assignable(member.parameters[index], arguments[index], span,
-                           "argument " + std::to_string(index + 1) + " of '" + member.name + "'");
+        require_expression_assignable(
+            member.parameters[index], *call.operand(index + 1), arguments[index], span,
+            "argument " + std::to_string(index + 1) + " of '" + member.name + "'");
+    }
+}
+
+void SemanticAnalyzer::validate_container_method_call(const Type& container,
+                                                      const std::string_view method,
+                                                      const std::vector<Type>& arguments,
+                                                      const ast::Expression& call) {
+    const auto descriptor = describe_container_type(container);
+    if (!descriptor)
+        return;
+    const auto require_argument = [&](const std::size_t index, const Type& target) {
+        if (index >= arguments.size() || index + 1 >= call.operand_count())
+            return;
+        const auto& expression = *call.operand(index + 1);
+        require_expression_assignable(target, expression, arguments[index], expression.span,
+                                      "argument " + std::to_string(index + 1) + " of '" +
+                                          std::string{method} + "'");
+    };
+    if (descriptor->kind == ContainerTypeKind::array) {
+        const auto element = type_from_name(descriptor->arguments.front(), call.span);
+        if (method == "append" || method == "push_back" || method == "push_front" ||
+            method == "fill") {
+            require_argument(0, element);
+        } else if (method == "insert") {
+            require_argument(1, element);
+        } else if (method == "append_array" || method == "assign") {
+            require_argument(0, container);
+        }
+        return;
+    }
+    const auto key = type_from_name(descriptor->arguments.at(0), call.span);
+    const auto value = type_from_name(descriptor->arguments.at(1), call.span);
+    if (method == "set") {
+        require_argument(0, key);
+        require_argument(1, value);
+    } else if (method == "get" || method == "has" || method == "erase" || method == "get_or_add") {
+        require_argument(0, key);
+        if (method == "get_or_add")
+            require_argument(1, value);
     }
 }
 
@@ -559,6 +638,22 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
         return {TypeKind::enumeration, name};
     }
     const auto type = type_from_annotation(name);
+    if (const auto container = describe_container_type(type)) {
+        for (const auto& argument : container->arguments) {
+            const auto argument_type = type_from_name(argument, span);
+            if (argument_type.kind == TypeKind::void_type) {
+                diagnostics_.error("GDS4139", "typed container arguments cannot use the void type",
+                                   span);
+            }
+            if (is_explicitly_typed_container(argument_type)) {
+                diagnostics_.error(
+                    "GDS4138",
+                    "nested typed containers are not supported by Godot; use an untyped "
+                    "Array or Dictionary for the nested value",
+                    span);
+            }
+        }
+    }
     const auto* project_type = script_symbols_ ? script_symbols_->find_global(name) : nullptr;
     const auto* external_type = script_symbols_ ? script_symbols_->find_external(name) : nullptr;
     if (external_type)
@@ -1293,7 +1388,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 const auto* method =
                     member ? nullptr : api_.find_method(base_type_, current_function_name_);
                 if (member && member->kind == ScriptMemberKind::function) {
-                    validate_script_call(*member, argument_types, expression.span);
+                    validate_script_call(*member, argument_types, expression, expression.span);
                     result = member->type;
                     mark_coroutine_call(member->is_coroutine);
                 } else if (method) {
@@ -1363,7 +1458,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 if (symbol->kind == SymbolKind::function && script_symbols_ && current_script_) {
                     if (const auto* member =
                             script_symbols_->find_member(*current_script_, callee.value())) {
-                        validate_script_call(*member, argument_types, expression.span);
+                        validate_script_call(*member, argument_types, expression, expression.span);
                         result = member->type;
                         if (script_symbols_->requires_dynamic_dispatch(*current_script_,
                                                                        callee.value())) {
@@ -1429,7 +1524,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     result = unknown_type;
                     break;
                 }
-                validate_script_call(*member, argument_types, expression.span);
+                validate_script_call(*member, argument_types, expression, expression.span);
                 result = member->type;
                 model_.api_resolutions_.emplace(
                     &callee, ApiResolution{ApiResolutionKind::external_static_method,
@@ -1454,7 +1549,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                        expression.span);
                 }
                 if (const auto* initializer = script_symbols_->find_member(*target, "_init")) {
-                    validate_script_call(*initializer, argument_types, expression.span);
+                    validate_script_call(*initializer, argument_types, expression, expression.span);
                 } else if (argument_count != 0) {
                     diagnostics_.error("GDS4063",
                                        "script new() received arguments but target has no _init",
@@ -1480,7 +1575,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                    member.name == "_init";
                         });
                     if (initializer != inner->members.end()) {
-                        validate_script_call(*initializer, argument_types, expression.span);
+                        validate_script_call(*initializer, argument_types, expression,
+                                             expression.span);
                     } else if (argument_count != 0) {
                         diagnostics_.error(
                             "GDS4063",
@@ -1513,7 +1609,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                              "' is called on an instance",
                                          expression.span);
                 }
-                validate_script_call(*member, argument_types, expression.span);
+                validate_script_call(*member, argument_types, expression, expression.span);
                 result = member->type;
                 mark_coroutine_call(member->is_coroutine);
                 if (called_on_super) {
@@ -1555,7 +1651,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     }
                     if (const auto* initializer =
                             script_symbols_->find_member(*script_owner, "_init")) {
-                        validate_script_call(*initializer, argument_types, expression.span);
+                        validate_script_call(*initializer, argument_types, expression,
+                                             expression.span);
                     } else if (argument_count != 0) {
                         diagnostics_.error(
                             "GDS4063", "script new() received arguments but target has no _init",
@@ -1633,7 +1730,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                              "' is called on a script instance",
                                          expression.span);
                 }
-                validate_script_call(*member, argument_types, expression.span);
+                validate_script_call(*member, argument_types, expression, expression.span);
                 result = member->type;
                 const bool dynamic_dispatch =
                     !called_on_type && !called_on_super &&
@@ -1673,7 +1770,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                            expression.span);
                         result = unknown_type;
                     } else {
-                        validate_script_call(*member, argument_types, expression.span);
+                        validate_script_call(*member, argument_types, expression, expression.span);
                         result = member->type;
                         model_.api_resolutions_.emplace(
                             &callee,
@@ -1758,6 +1855,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                          "' is called on a Godot value instance",
                                      expression.span);
             }
+            if (method && !called_on_type)
+                validate_container_method_call(object_type, callee.value(), argument_types,
+                                               expression);
             if (resolve_method(method)) {
                 if (called_on_super) {
                     model_.api_resolutions_[&callee] =
@@ -2307,6 +2407,12 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             container.is_packed_array()) {
             require_assignable({TypeKind::integer, "int"}, index, expression.operand(1)->span,
                                "container index");
+        } else if (container.kind == TypeKind::dictionary) {
+            if (const auto descriptor = describe_container_type(container)) {
+                const auto key_type = type_from_name(descriptor->arguments.at(0), expression.span);
+                require_expression_assignable(key_type, *expression.operand(1), index,
+                                              expression.operand(1)->span, "dictionary key");
+            }
         }
         result = container_element_type(container, expression.span);
         break;
@@ -2569,7 +2675,12 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
                                                    : (expected_return_.kind == TypeKind::void_type
                                                           ? Type{TypeKind::void_type, "void"}
                                                           : Type{TypeKind::nil, "null"});
-        require_assignable(expected_return_, actual, statement.span, "invalid return value");
+        if (statement.expression()) {
+            require_expression_assignable(expected_return_, *statement.expression(), actual,
+                                          statement.span, "invalid return value");
+        } else {
+            require_assignable(expected_return_, actual, statement.span, "invalid return value");
+        }
         return FlowResult{false, true, false, false};
     }
     case ast::StatementKind::assert_statement: {
@@ -2598,7 +2709,8 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         if (statement.infer_type() || (statement.is_constant() && !statement.type()))
             type = initializer;
         if (statement.type().has_value() && statement.expression()) {
-            require_assignable(type, initializer, statement.span, "invalid initializer");
+            require_expression_assignable(type, *statement.expression(), initializer,
+                                          statement.span, "invalid initializer");
         }
         model_.local_types_[&statement] = type;
         const auto constant_string = statement.is_constant() && statement.expression()
@@ -2653,7 +2765,12 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
                 assigned = unknown_type;
             }
         }
-        require_assignable(target, assigned, statement.span, "invalid assignment");
+        if (statement.operation() == "=") {
+            require_expression_assignable(target, *statement.expression(), assigned, statement.span,
+                                          "invalid assignment");
+        } else {
+            require_assignable(target, assigned, statement.span, "invalid assignment");
+        }
         return FlowResult{true, false, false, false};
     }
     case ast::StatementKind::if_statement: {
@@ -3027,7 +3144,8 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
         model_.parameter_types_[&parameter] = type;
         declare({SymbolKind::parameter, parameter.name, type, parameter.span, false});
         if (analyzed_default)
-            require_assignable(type, *analyzed_default, parameter.span, "invalid default value");
+            require_expression_assignable(type, *parameter.default_value, *analyzed_default,
+                                          parameter.span, "invalid default value");
     }
     if (virtual_method && function.parameters.size() != virtual_method->maximum_arguments) {
         diagnostics_.error("GDS4102",
@@ -3089,8 +3207,8 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
         model_.parameter_types_[&parameter] = type;
         declare({SymbolKind::parameter, parameter.name, type, parameter.span, false});
         if (analyzed_default)
-            require_assignable(type, *analyzed_default, parameter.span,
-                               "invalid lambda default value");
+            require_expression_assignable(type, *parameter.default_value, *analyzed_default,
+                                          parameter.span, "invalid lambda default value");
     }
     const auto flow = analyze_statements(expression.body);
     if (current_callable_suspends_)
@@ -3234,8 +3352,8 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
         if (variable.infer_type || (variable.is_constant && !variable.type)) {
             type = initializer;
         } else if (variable.type && variable.initializer) {
-            require_assignable(type, initializer, variable.span,
-                               "invalid internal field initializer");
+            require_expression_assignable(type, *variable.initializer, initializer, variable.span,
+                                          "invalid internal field initializer");
         }
         model_.variable_types_[&variable] = type;
         const auto property_type = has_property_annotation(variable)
@@ -4016,7 +4134,8 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
         if (variable.infer_type || (variable.is_constant && !variable.type.has_value())) {
             type = initializer;
         } else if (variable.type.has_value() && variable.initializer) {
-            require_assignable(type, initializer, variable.span, "invalid field initializer");
+            require_expression_assignable(type, *variable.initializer, initializer, variable.span,
+                                          "invalid field initializer");
         }
         model_.variable_types_[&variable] = type;
         const auto property_type = has_property_annotation(variable)
