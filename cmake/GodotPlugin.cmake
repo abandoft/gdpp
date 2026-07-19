@@ -336,12 +336,13 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
     file(GENERATE
         OUTPUT "${GDPP_SDK_MANIFEST}"
         CONTENT
-            "GDPP_SDK ${GDPP_NATIVE_SDK_SCHEMA}\napi ${GDPP_SDK_VERSION}\nplatform ${GDPP_PLATFORM}\narch ${GDPP_ARCH}\nprofiles development,debug,release\nplatform_minimum ${GDPP_PLATFORM_MINIMUM}\ngdpp_version ${PROJECT_VERSION}\nruntime_abi ${GDPP_NATIVE_RUNTIME_ABI}\nruntime_header_sha256 ${GDPP_NATIVE_RUNTIME_HEADER_SHA256}\nruntime_source_sha256 ${GDPP_NATIVE_RUNTIME_SOURCE_SHA256}\ncompiler ${CMAKE_CXX_COMPILER_ID}\ncompiler_version ${CMAKE_CXX_COMPILER_VERSION}\n"
+            "GDPP_SDK ${GDPP_NATIVE_SDK_SCHEMA}\napi ${GDPP_SDK_VERSION}\nplatform ${GDPP_PLATFORM}\narch ${GDPP_ARCH}\nprofiles development,debug,release\nplatform_minimum ${GDPP_PLATFORM_MINIMUM}\ngdpp_version ${PROJECT_VERSION}\nruntime_abi ${GDPP_NATIVE_RUNTIME_ABI}\nruntime_header_sha256 ${GDPP_NATIVE_RUNTIME_HEADER_SHA256}\nruntime_source_sha256 ${GDPP_NATIVE_RUNTIME_SOURCE_SHA256}\ninteger_semantics_header_sha256 ${GDPP_INTEGER_SEMANTICS_HEADER_SHA256}\ncompiler ${CMAKE_CXX_COMPILER_ID}\ncompiler_version ${CMAKE_CXX_COMPILER_VERSION}\n"
     )
 
     set(GDPP_SDK_PACKAGE_COMMANDS
         COMMAND "${CMAKE_COMMAND}" -E make_directory
                 "${GDPP_SDK_DIRECTORY}/include/gdpp/runtime"
+                "${GDPP_SDK_DIRECTORY}/include/gdpp/support"
                 "${GDPP_SDK_DIRECTORY}/src/runtime"
                 "${GDPP_SDK_DIRECTORY}/godot-cpp/gen"
                 "${GDPP_SDK_DIRECTORY}/lib"
@@ -351,6 +352,9 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${GDPP_NATIVE_RUNTIME_SOURCE}"
                 "${GDPP_SDK_DIRECTORY}/src/runtime/variant_ops.cpp"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_INTEGER_SEMANTICS_HEADER}"
+                "${GDPP_SDK_DIRECTORY}/include/gdpp/support/integer_semantics.hpp"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${CMAKE_SOURCE_DIR}/third/godot-cpp/include"
                 "${GDPP_SDK_DIRECTORY}/godot-cpp/include"
@@ -403,6 +407,7 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
             "${CMAKE_SOURCE_DIR}/third/godot-cpp/LICENSE.md"
             "${GDPP_NATIVE_RUNTIME_HEADER}"
             "${GDPP_NATIVE_RUNTIME_SOURCE}"
+            "${GDPP_INTEGER_SEMANTICS_HEADER}"
         COMMENT "Packaging compiler-only Godot ${GDPP_SDK_VERSION} SDK"
         VERBATIM
     )

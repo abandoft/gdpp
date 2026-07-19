@@ -35,6 +35,7 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
     write_input(root / "project/build_id.txt", "0123456789abcdef\n");
     std::filesystem::create_directories(root / "sdk/src/runtime");
     std::filesystem::create_directories(root / "sdk/include/gdpp/runtime");
+    std::filesystem::create_directories(root / "sdk/include/gdpp/support");
     std::filesystem::copy_file(std::filesystem::path{GDPP_TEST_SOURCE_DIR} /
                                    "src/runtime/variant_ops.cpp",
                                root / "sdk/src/runtime/variant_ops.cpp",
@@ -42,6 +43,10 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
     std::filesystem::copy_file(std::filesystem::path{GDPP_TEST_SOURCE_DIR} /
                                    "include/gdpp/runtime/variant_ops.hpp",
                                root / "sdk/include/gdpp/runtime/variant_ops.hpp",
+                               std::filesystem::copy_options::overwrite_existing);
+    std::filesystem::copy_file(std::filesystem::path{GDPP_TEST_SOURCE_DIR} /
+                                   "include/gdpp/support/integer_semantics.hpp",
+                               root / "sdk/include/gdpp/support/integer_semantics.hpp",
                                std::filesystem::copy_options::overwrite_existing);
     write_input(root / "sdk/godot-cpp/include/godot_cpp/godot.hpp");
     write_input(root / "sdk/godot-cpp/gen/include/godot_cpp/core/version.hpp");
@@ -84,7 +89,8 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
                     "\nprofiles development,debug,release\nruntime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
-                    GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\n" + platform_contract + web_threads +
+                    GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\ninteger_semantics_header_sha256 " +
+                    GDPP_INTEGER_SEMANTICS_HEADER_SHA256 + "\n" + platform_contract + web_threads +
                     ios_contract + "compiler fixture\n");
     return root;
 }
@@ -211,6 +217,26 @@ TEST_CASE("native builder rejects a modified SDK runtime before creating compile
     REQUIRE(!plan.success);
     REQUIRE(plan.commands.empty());
     REQUIRE(diagnostic_contains(plan, "runtime header failed integrity validation"));
+}
+
+TEST_CASE("native builder rejects modified integer semantics before creating commands") {
+    const auto root =
+        make_sdk_fixture("native-builder-corrupt-integers", "libgodot-cpp.editor.arm64.a");
+    write_input(root / "sdk/include/gdpp/support/integer_semantics.hpp",
+                "// modified after packaging\n");
+    gdpp::NativeBuildOptions options;
+    options.project_output_directory = root / "project";
+    options.binary_output_directory = root / "addons/gdpp/binary";
+    options.sdk_root = root / "sdk";
+    options.compiler_executable = "clang++";
+    options.platform = gdpp::NativePlatform::macos;
+    options.architecture = "arm64";
+
+    const auto plan = gdpp::NativeBuilder{}.plan(options);
+
+    REQUIRE(!plan.success);
+    REQUIRE(plan.commands.empty());
+    REQUIRE(diagnostic_contains(plan, "integer semantics header failed integrity validation"));
 }
 
 TEST_CASE("native builder rejects unsupported architecture names before planning commands") {
@@ -623,7 +649,8 @@ TEST_CASE("native builder fails closed for incomplete iOS target contracts") {
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
-                    GDPP_NATIVE_RUNTIME_SOURCE_SHA256 +
+                    GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\ninteger_semantics_header_sha256 " +
+                    GDPP_INTEGER_SEMANTICS_HEADER_SHA256 +
                     "\nplatform_minimum iOS_16.0\nios_deployment_target 16.0\n"
                     "ios_slices device-arm64\n"
                     "source_paths mapped\n");
@@ -792,7 +819,8 @@ TEST_CASE("native builder emits a macOS universal compile and link plan") {
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
-                    GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\ncompiler fixture\n");
+                    GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\ninteger_semantics_header_sha256 " +
+                    GDPP_INTEGER_SEMANTICS_HEADER_SHA256 + "\ncompiler fixture\n");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -822,7 +850,8 @@ TEST_CASE("macOS universal SDK can build a thin host development library") {
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
-                    GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\ncompiler fixture\n");
+                    GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\ninteger_semantics_header_sha256 " +
+                    GDPP_INTEGER_SEMANTICS_HEADER_SHA256 + "\ncompiler fixture\n");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
