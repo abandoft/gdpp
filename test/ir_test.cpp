@@ -359,6 +359,53 @@ TEST_CASE("IR optimizer preserves exact int64 values above double precision") {
     REQUIRE_EQ(value.value, std::string{"9007199254740995"});
 }
 
+TEST_CASE("IR optimizer folds wrapped integer arithmetic without host undefined behavior") {
+    gdpp::DiagnosticBag diagnostics;
+    auto module = lower_source(
+        "func boundaries() -> Array[int]:\n"
+        "    return [9223372036854775807 + 1, -9223372036854775808 - 1, "
+        "9223372036854775807 * 2, -(-9223372036854775808), "
+        "-9223372036854775808 / -1, -9223372036854775808 % -1]\n",
+        diagnostics);
+    REQUIRE(!diagnostics.has_errors());
+
+    const auto stats = gdpp::IrOptimizer{}.optimize(module);
+
+    REQUIRE_EQ(stats.constants_folded, std::size_t{12});
+    const auto& values = module.functions.front().body.front().expression->operands;
+    REQUIRE_EQ(values.at(0)->value, std::string{"-9223372036854775808"});
+    REQUIRE_EQ(values.at(1)->value, std::string{"9223372036854775807"});
+    REQUIRE_EQ(values.at(2)->value, std::string{"-2"});
+    REQUIRE_EQ(values.at(3)->value, std::string{"-9223372036854775808"});
+    REQUIRE_EQ(values.at(4)->value, std::string{"-9223372036854775808"});
+    REQUIRE_EQ(values.at(5)->value, std::string{"0"});
+}
+
+TEST_CASE("IR optimizer folds normalized shifts and signed bit operations") {
+    gdpp::DiagnosticBag diagnostics;
+    auto module = lower_source(
+        "func bits() -> Array[int]:\n"
+        "    return [1 << 63, 1 << 64, 1 << -1, -9223372036854775808 >> 1, "
+        "9223372036854775807 >> 64, ~0, -1 & 0x55aa, 0x5500 | 0xaa, "
+        "0x55ff ^ 0x55]\n",
+        diagnostics);
+    REQUIRE(!diagnostics.has_errors());
+
+    const auto stats = gdpp::IrOptimizer{}.optimize(module);
+
+    REQUIRE_EQ(stats.constants_folded, std::size_t{12});
+    const auto& values = module.functions.front().body.front().expression->operands;
+    REQUIRE_EQ(values.at(0)->value, std::string{"-9223372036854775808"});
+    REQUIRE_EQ(values.at(1)->value, std::string{"1"});
+    REQUIRE_EQ(values.at(2)->value, std::string{"-9223372036854775808"});
+    REQUIRE_EQ(values.at(3)->value, std::string{"-4611686018427387904"});
+    REQUIRE_EQ(values.at(4)->value, std::string{"9223372036854775807"});
+    REQUIRE_EQ(values.at(5)->value, std::string{"-1"});
+    REQUIRE_EQ(values.at(6)->value, std::string{"21930"});
+    REQUIRE_EQ(values.at(7)->value, std::string{"21930"});
+    REQUIRE_EQ(values.at(8)->value, std::string{"21930"});
+}
+
 TEST_CASE("IR optimizer preserves nonfinite and signed-zero floating contracts") {
     gdpp::DiagnosticBag diagnostics;
     auto module = lower_source("func invalid_difference() -> float:\n"
