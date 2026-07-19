@@ -115,7 +115,6 @@ func _run() -> void:
         quit(1)
         return
     var native_integer_report: Dictionary = native_integers.call("run")
-    var script_integer_report: Dictionary = script_integers.call("run")
     var expected_integer_report: Dictionary = {
         "add": -9223372036854775808,
         "subtract": 9223372036854775807,
@@ -140,16 +139,37 @@ func _run() -> void:
         "dynamic_shift_left_64": 1,
         "dynamic_shift_left_negative": -9223372036854775808,
     }
+    if native_integer_report != expected_integer_report:
+        push_error("Native integer semantics differ from the fixed contract: %s" % native_integer_report)
+        quit(1)
+        return
+    var expected_safe_integer_report := expected_integer_report.duplicate()
+    expected_safe_integer_report.erase("divide")
+    expected_safe_integer_report.erase("modulo")
+    var native_safe_integer_report: Dictionary = native_integers.call("run", false)
+    var script_safe_integer_report: Dictionary = script_integers.call("run", false)
     if (
-        native_integer_report != script_integer_report
-        or native_integer_report != expected_integer_report
+        native_safe_integer_report != script_safe_integer_report
+        or native_safe_integer_report != expected_safe_integer_report
     ):
         push_error(
-            "Native integer semantics differ from GDScript: native=%s script=%s"
-            % [native_integer_report, script_integer_report]
+            "Native integer semantics differ from the cross-version GDScript oracle: native=%s script=%s"
+            % [native_safe_integer_report, script_safe_integer_report]
         )
         quit(1)
         return
+    var godot_version: Dictionary = Engine.get_version_info()
+    # Godot 4.4.1 x86_64 traps inside its GDScript VM for INT64_MIN / -1 and modulo. The AOT
+    # implementation is still required to execute and validate those edges on every target.
+    if int(godot_version.get("minor", 0)) >= 5:
+        var script_integer_report: Dictionary = script_integers.call("run")
+        if script_integer_report != expected_integer_report:
+            push_error(
+                "GDScript integer semantics differ from the fixed contract: %s"
+                % script_integer_report
+            )
+            quit(1)
+            return
     native_integers = null
     script_integers = null
     var instance: Object = ClassDB.instantiate(player_class)

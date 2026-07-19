@@ -1,7 +1,7 @@
 extends RefCounted
 
 
-func run() -> Dictionary:
+func run(include_division_edges: bool = true) -> Dictionary:
     var maximum: int = 9223372036854775807
     var minimum: int = -9223372036854775808
     var one: int = 1
@@ -22,13 +22,11 @@ func run() -> Dictionary:
     var dynamic_sixty_four: Variant = sixty_four
     var dynamic_negative_one: Variant = negative_one
 
-    return {
+    var report: Dictionary = {
         "add": maximum + one,
         "subtract": minimum - one,
         "multiply": maximum * two,
         "negate": -minimum,
-        "divide": minimum / negative_one,
-        "modulo": minimum % negative_one,
         "shift_left_sign": one << sixty_three,
         "shift_left_64": one << sixty_four,
         "shift_left_negative_count": one << negative_one,
@@ -46,3 +44,7 @@ func run() -> Dictionary:
         "dynamic_shift_left_64": dynamic_one << dynamic_sixty_four,
         "dynamic_shift_left_negative": dynamic_one << dynamic_negative_one,
     }
+    if include_division_edges:
+        report["divide"] = minimum / negative_one
+        report["modulo"] = minimum % negative_one
+    return report
