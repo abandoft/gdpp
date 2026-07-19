@@ -64,7 +64,16 @@ func _run() -> void:
     var native_iteration_trace: Array = native_iteration.call("run")
     var script_iteration_trace: Array = script_iteration.call("run")
     var expected_iteration_trace: Array = [
-        1, 2, 3, 4, 5, 6, "A", "🙂", "B", "left", "right", "tail", 0, null, true
+        1, 2, 3, 4, 5, 6, "A", "🙂", "B", "left", "right", "tail",
+        0.0, 1.0, 2.0, 3.0,
+        1.5, 2.5, 3.5,
+        2, 3, 4,
+        5.0, 3.0, 1.0,
+        7, 4, 1,
+        8.0, 9.0,
+        &"alpha", &"beta",
+        &"custom_0", &"custom_1", &"custom_2",
+        0, null, true,
     ]
     if (
         native_iteration_trace != script_iteration_trace
