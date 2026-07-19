@@ -93,6 +93,38 @@ TEST_CASE("typed IR preserves semantic iteration plans") {
     REQUIRE(verifier.verify(module));
 }
 
+TEST_CASE("typed IR preserves Godot mathematical range iteration plans") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module = lower_source(
+        "func visit(count: float, bounds: Vector2, int_bounds: Vector2i, steps: Vector3, "
+        "int_steps: Vector3i) -> void:\n"
+        "    for value: float in count:\n"
+        "        pass\n"
+        "    for value: float in bounds:\n"
+        "        pass\n"
+        "    for value: int in int_bounds:\n"
+        "        pass\n"
+        "    for value: float in steps:\n"
+        "        pass\n"
+        "    for value: int in int_steps:\n"
+        "        pass\n",
+        diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    const auto& body = module.functions.front().body;
+    REQUIRE_EQ(body.at(0).iteration.strategy, gdpp::IterationStrategy::floating_count);
+    REQUIRE_EQ(body.at(1).iteration.strategy, gdpp::IterationStrategy::vector2_range);
+    REQUIRE_EQ(body.at(2).iteration.strategy, gdpp::IterationStrategy::vector2i_range);
+    REQUIRE_EQ(body.at(3).iteration.strategy, gdpp::IterationStrategy::vector3_range);
+    REQUIRE_EQ(body.at(4).iteration.strategy, gdpp::IterationStrategy::vector3i_range);
+    REQUIRE_EQ(body.at(0).iteration.element_type,
+               (gdpp::Type{gdpp::TypeKind::floating, "float"}));
+    REQUIRE_EQ(body.at(2).iteration.element_type,
+               (gdpp::Type{gdpp::TypeKind::integer, "int"}));
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+}
+
 TEST_CASE("IR verifier rejects mismatched iteration plans") {
     gdpp::DiagnosticBag diagnostics;
     auto module = lower_source("func visit(values: Array[int]) -> void:\n"

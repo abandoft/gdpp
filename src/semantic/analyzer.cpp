@@ -669,8 +669,18 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
 Type SemanticAnalyzer::container_element_type(const Type& container, SourceSpan span) {
     if (container.kind == TypeKind::integer)
         return {TypeKind::integer, "int"};
+    if (container.kind == TypeKind::floating)
+        return {TypeKind::floating, "float"};
     if (container.kind == TypeKind::string)
         return {TypeKind::string, "String"};
+    if (container.kind == TypeKind::builtin &&
+        (container.name == "Vector2" || container.name == "Vector3")) {
+        return {TypeKind::floating, "float"};
+    }
+    if (container.kind == TypeKind::builtin &&
+        (container.name == "Vector2i" || container.name == "Vector3i")) {
+        return {TypeKind::integer, "int"};
+    }
     if (container.is_packed_array())
         return packed_array_element_type(container);
     if (container.kind == TypeKind::array) {
@@ -2851,9 +2861,15 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
     }
     case ast::StatementKind::for_statement: {
         const auto iterable = analyze_expression(*statement.condition());
+        const bool mathematical_range =
+            iterable.kind == TypeKind::floating ||
+            (iterable.kind == TypeKind::builtin &&
+             (iterable.name == "Vector2" || iterable.name == "Vector2i" ||
+              iterable.name == "Vector3" || iterable.name == "Vector3i"));
         if (!iterable.is_dynamic() && iterable.kind != TypeKind::array &&
             iterable.kind != TypeKind::dictionary && iterable.kind != TypeKind::string &&
-            iterable.kind != TypeKind::integer && !iterable.is_packed_array()) {
+            iterable.kind != TypeKind::integer && !mathematical_range &&
+            !iterable.is_packed_array()) {
             diagnostics_.error("GDS4007", "for loop expression is not iterable", statement.span);
         }
         if (const auto existing = scopes_.back().find(statement.name());
