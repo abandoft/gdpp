@@ -67,3 +67,13 @@ TEST_CASE("integer division reports only zero divisors and contains the signed o
     REQUIRE_EQ(gdpp::integer::divide(-7, 3).value, std::int64_t{-2});
     REQUIRE_EQ(gdpp::integer::modulo(-7, 3).value, std::int64_t{-1});
 }
+
+TEST_CASE("integer range advancement terminates instead of wrapping at signed limits") {
+    constexpr auto minimum = std::numeric_limits<gdpp::integer::Value>::min();
+    constexpr auto maximum = std::numeric_limits<gdpp::integer::Value>::max();
+
+    REQUIRE_EQ(gdpp::integer::range_advance(maximum - 1, 2, maximum), maximum);
+    REQUIRE_EQ(gdpp::integer::range_advance(minimum + 1, -2, minimum), minimum);
+    REQUIRE_EQ(gdpp::integer::range_advance(7, 3, 20), std::int64_t{10});
+    REQUIRE_EQ(gdpp::integer::range_advance(-7, -3, -20), std::int64_t{-10});
+}

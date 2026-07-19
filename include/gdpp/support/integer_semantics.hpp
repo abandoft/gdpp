@@ -80,6 +80,17 @@ static_assert(std::numeric_limits<Value>::digits == 63,
     return from_bits(shifted | (~Bits{0} << (width - shift)));
 }
 
+// A mathematical range terminates at its exclusive stop. If the next fixed-width value would
+// wrap against the requested direction, clamp directly to that stop so a C++ for-loop cannot
+// become infinite at INT64_MIN/INT64_MAX. The caller validates that step is nonzero.
+[[nodiscard]] constexpr Value range_advance(const Value value, const Value step,
+                                            const Value stop) noexcept {
+    const auto next = add(value, step);
+    if ((step > 0 && next <= value) || (step < 0 && next >= value))
+        return stop;
+    return next;
+}
+
 enum class ArithmeticError : std::uint8_t {
     none,
     division_by_zero,
