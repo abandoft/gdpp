@@ -35,7 +35,7 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
     write_input(root / "project/build_id.txt", "0123456789abcdef\n");
     std::filesystem::create_directories(root / "sdk/src/runtime");
     std::filesystem::create_directories(root / "sdk/include/gdpp/runtime");
-    std::filesystem::create_directories(root / "sdk/include/gdpp/support");
+    std::filesystem::create_directories(root / "sdk/include/gdpp/numeric");
     std::filesystem::copy_file(std::filesystem::path{GDPP_TEST_SOURCE_DIR} /
                                    "src/runtime/variant_ops.cpp",
                                root / "sdk/src/runtime/variant_ops.cpp",
@@ -45,8 +45,8 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
                                root / "sdk/include/gdpp/runtime/variant_ops.hpp",
                                std::filesystem::copy_options::overwrite_existing);
     std::filesystem::copy_file(std::filesystem::path{GDPP_TEST_SOURCE_DIR} /
-                                   "include/gdpp/support/integer_semantics.hpp",
-                               root / "sdk/include/gdpp/support/integer_semantics.hpp",
+                                   "include/gdpp/numeric/integer_semantics.hpp",
+                               root / "sdk/include/gdpp/numeric/integer_semantics.hpp",
                                std::filesystem::copy_options::overwrite_existing);
     write_input(root / "sdk/godot-cpp/include/godot_cpp/godot.hpp");
     write_input(root / "sdk/godot-cpp/gen/include/godot_cpp/core/version.hpp");
@@ -222,7 +222,7 @@ TEST_CASE("native builder rejects a modified SDK runtime before creating compile
 TEST_CASE("native builder rejects modified integer semantics before creating commands") {
     const auto root =
         make_sdk_fixture("native-builder-corrupt-integers", "libgodot-cpp.editor.arm64.a");
-    write_input(root / "sdk/include/gdpp/support/integer_semantics.hpp",
+    write_input(root / "sdk/include/gdpp/numeric/integer_semantics.hpp",
                 "// modified after packaging\n");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";

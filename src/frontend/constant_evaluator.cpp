@@ -1,7 +1,7 @@
 #include "gdpp/frontend/constant_evaluator.hpp"
 
 #include "gdpp/frontend/literal.hpp"
-#include "gdpp/support/integer_semantics.hpp"
+#include "gdpp/numeric/integer_semantics.hpp"
 
 #include <limits>
 

@@ -5147,7 +5147,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
            << "#include <godot_cpp/variant/utility_functions.hpp>\n"
            << "#include <godot_cpp/variant/variant.hpp>\n\n"
            << "#include <gdpp/runtime/variant_ops.hpp>\n"
-           << "#include <gdpp/support/integer_semantics.hpp>\n\n"
+           << "#include <gdpp/numeric/integer_semantics.hpp>\n\n"
            << "#include <cstdint>\n"
            << "#include <atomic>\n"
            << "#include <functional>\n"

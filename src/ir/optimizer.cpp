@@ -1,6 +1,6 @@
 #include "gdpp/ir/optimizer.hpp"
 
-#include "gdpp/support/integer_semantics.hpp"
+#include "gdpp/numeric/integer_semantics.hpp"
 
 #include <algorithm>
 #include <charconv>

@@ -125,7 +125,7 @@ set(GDPP_NATIVE_RUNTIME_HEADER
 set(GDPP_NATIVE_RUNTIME_SOURCE
     "${CMAKE_SOURCE_DIR}/src/runtime/variant_ops.cpp")
 set(GDPP_INTEGER_SEMANTICS_HEADER
-    "${CMAKE_SOURCE_DIR}/include/gdpp/support/integer_semantics.hpp")
+    "${CMAKE_SOURCE_DIR}/include/gdpp/numeric/integer_semantics.hpp")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${GDPP_NATIVE_RUNTIME_HEADER}"
     "${GDPP_NATIVE_RUNTIME_SOURCE}"

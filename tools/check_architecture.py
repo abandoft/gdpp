@@ -18,22 +18,24 @@ PUBLIC_MODULES = {
     "core",
     "frontend",
     "ir",
+    "numeric",
     "project",
     "runtime",
     "semantic",
     "support",
 }
-SOURCE_MODULES = PUBLIC_MODULES | {"cli", "integration"}
+SOURCE_MODULES = (PUBLIC_MODULES - {"numeric"}) | {"cli", "integration"}
 
 # A module may depend only on itself and layers to its left in the compiler pipeline. Project and
 # host integration are orchestration layers, while the generated-code runtime remains isolated
 # from the compiler implementation.
 ALLOWED_DEPENDENCIES = {
     "core": {"core"},
+    "numeric": {"numeric"},
     "support": {"support"},
-    "frontend": {"core", "frontend"},
+    "frontend": {"core", "frontend", "numeric"},
     "semantic": {"core", "frontend", "semantic"},
-    "ir": {"core", "frontend", "semantic", "ir"},
+    "ir": {"core", "frontend", "semantic", "ir", "numeric"},
     "codegen": {"core", "semantic", "ir", "codegen"},
     "compiler": {"core", "frontend", "semantic", "ir", "codegen", "compiler"},
     "project": {
@@ -46,7 +48,7 @@ ALLOWED_DEPENDENCIES = {
         "project",
         "support",
     },
-    "runtime": {"runtime"},
+    "runtime": {"runtime", "numeric"},
     "integration": PUBLIC_MODULES,
     "cli": PUBLIC_MODULES,
     "test": PUBLIC_MODULES,
