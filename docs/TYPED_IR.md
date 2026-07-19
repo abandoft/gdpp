@@ -131,6 +131,13 @@ Castle Defense 中包含 37 个挂起点的真实脚本由 368,708 字节/1,416 
 HIR 到 MIR lowering 是语言语义的唯一控制流出口。GDPP 扩展必须先降低为共同 MIR 或受版本
 管理的 runtime intrinsic，不能让 C++ 后端按扩展名称直接拼接实现。
 
+`for` 在语义阶段生成不可由后端重新猜测的 `IterationPlan`。当前策略明确区分动态/对象协议、
+int/float 计数、`range()`、Vector2/Vector2i/Vector3/Vector3i 数学范围、String、Array、
+PackedArray 和 Dictionary。计划同时保存原始元素类型，显式循环变量类型只负责受检转换；HIR
+verifier 会逐类核对 iterable 类型与策略。同步数学范围直接降低为单次求值的原生标量循环，
+对象协议统一经审计过的 Variant runtime；异步路径在恢复状态机中使用同一 Godot 协议，因此
+行为一致但仍等待各静态策略的专用恢复帧优化。
+
 ## Pass 管理
 
 优化 pass 需要统一接口和确定顺序，每个 pass 声明前置不变量、保持的不变量、允许的副作用、
