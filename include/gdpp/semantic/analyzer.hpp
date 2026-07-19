@@ -213,6 +213,8 @@ class SemanticAnalyzer final {
     [[nodiscard]] Type type_from_name(const std::string& name, SourceSpan span = {});
     [[nodiscard]] Type container_element_type(const Type& container, SourceSpan span = {});
     [[nodiscard]] Type iteration_element_type(const Type& container, SourceSpan span = {});
+    [[nodiscard]] std::optional<Type>
+    object_iteration_element_type(const Type& object, SourceSpan span);
     [[nodiscard]] Type declared_or_inferred(const std::optional<std::string>& annotation,
                                             const ast::ExpressionPtr& initializer);
     void require_assignable(const Type& target, const Type& source, SourceSpan span,

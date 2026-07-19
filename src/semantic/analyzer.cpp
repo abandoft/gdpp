@@ -702,6 +702,82 @@ Type SemanticAnalyzer::iteration_element_type(const Type& container, const Sourc
     return container_element_type(container, span);
 }
 
+std::optional<Type>
+SemanticAnalyzer::object_iteration_element_type(const Type& object, const SourceSpan span) {
+    const auto validate_member = [&](const ScriptMemberSymbol* member,
+                                     const std::string_view name) -> bool {
+        if (!member || member->kind != ScriptMemberKind::function || member->is_static ||
+            member->parameters.size() != 1U || member->required_arguments > 1U) {
+            diagnostics_.error("GDS4141",
+                               "iterator object '" + object.display_name() + "' requires instance " +
+                                   std::string{name} + "(state) with exactly one parameter",
+                               span);
+            return false;
+        }
+        if (name != "_iter_get" && !member->type.is_dynamic() &&
+            member->type.kind != TypeKind::boolean) {
+            diagnostics_.error("GDS4141",
+                               "iterator method '" + std::string{name} +
+                                   "' must return bool or Variant",
+                               span);
+            return false;
+        }
+        if (name == "_iter_get" && member->type.kind == TypeKind::void_type) {
+            diagnostics_.error("GDS4141", "iterator method '_iter_get' must return a value", span);
+            return false;
+        }
+        return true;
+    };
+    const auto validate_protocol = [&](const auto& find_member) -> std::optional<Type> {
+        const auto* initialize = find_member("_iter_init");
+        const auto* advance = find_member("_iter_next");
+        const auto* get = find_member("_iter_get");
+        const bool valid_initialize = validate_member(initialize, "_iter_init");
+        const bool valid_advance = validate_member(advance, "_iter_next");
+        const bool valid_get = validate_member(get, "_iter_get");
+        if (!valid_initialize || !valid_advance || !valid_get)
+            return std::nullopt;
+        return get->type;
+    };
+
+    if (const auto* inner = find_inner_class(object.name)) {
+        return validate_protocol(
+            [&](const std::string& name) { return find_inner_member(*inner, name); });
+    }
+    if (const auto* script = script_symbols_ ? script_symbols_->find_class(object.name) : nullptr) {
+        record_script_dependency(script);
+        return validate_protocol(
+            [&](const std::string& name) { return script_symbols_->find_member(*script, name); });
+    }
+    if (const auto* external =
+            script_symbols_ ? script_symbols_->find_external(object.name) : nullptr) {
+        model_.referenced_extension_abis_.insert(external->provider_abi);
+        const auto* get = script_symbols_->find_external_member(*external, "_iter_get");
+        if (!get && !external->members_complete) {
+            diagnostics_.warning(
+                "GDS4142",
+                "runtime-only GDExtension iterator '" + object.display_name() +
+                    "' has no complete ClassDB method contract; iteration remains Variant-checked",
+                span);
+            return variant_type;
+        }
+        return validate_protocol([&](const std::string& name) {
+            return script_symbols_->find_external_member(*external, name);
+        });
+    }
+
+    if (object.name == "PackedDataContainer")
+        return Type{TypeKind::object, "PackedDataContainerRef"};
+    if (object.name == "PackedDataContainerRef")
+        return variant_type;
+
+    diagnostics_.error("GDS4140",
+                       "object type '" + object.display_name() +
+                           "' does not implement the _iter_init/_iter_next/_iter_get protocol",
+                       span);
+    return std::nullopt;
+}
+
 Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expression,
                                                  const Type& left, const Type& right) {
     const auto& operation = expression.value();
@@ -2886,6 +2962,10 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
                                           "typed for-loop iterable");
             iterable = model_.type_of(*statement.condition());
         }
+        const auto object_element_type =
+            iterable.kind == TypeKind::object
+                ? object_iteration_element_type(iterable, statement.condition()->span)
+                : std::optional<Type>{};
         const bool mathematical_range =
             iterable.kind == TypeKind::floating ||
             (iterable.kind == TypeKind::builtin &&
@@ -2894,7 +2974,7 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         if (!iterable.is_dynamic() && iterable.kind != TypeKind::array &&
             iterable.kind != TypeKind::dictionary && iterable.kind != TypeKind::string &&
             iterable.kind != TypeKind::integer && !mathematical_range &&
-            !iterable.is_packed_array()) {
+            !iterable.is_packed_array() && iterable.kind != TypeKind::object) {
             diagnostics_.error("GDS4007", "for loop expression is not iterable",
                                statement.condition()->span);
         }
@@ -2909,7 +2989,8 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         }
         ++loop_depth_;
         scopes_.emplace_back();
-        const auto inferred_element_type = iteration_element_type(iterable, statement.span);
+        const auto inferred_element_type =
+            object_element_type.value_or(iteration_element_type(iterable, statement.span));
         bool intrinsic_range = false;
         if (statement.condition()->kind() == ast::ExpressionKind::call &&
             statement.condition()->operand_count() >= 1) {

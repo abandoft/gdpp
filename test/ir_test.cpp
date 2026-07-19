@@ -125,6 +125,61 @@ TEST_CASE("typed IR preserves Godot mathematical range iteration plans") {
     REQUIRE(verifier.verify(module));
 }
 
+TEST_CASE("typed IR resolves statically known object iterator protocols") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module = lower_source(
+        "class Iterator:\n"
+        "    func _iter_init(state: Array) -> bool:\n"
+        "        return true\n"
+        "    func _iter_next(state: Array) -> bool:\n"
+        "        return false\n"
+        "    func _iter_get(state: Variant) -> StringName:\n"
+        "        return &\"value\"\n"
+        "func visit(iterator: Iterator) -> void:\n"
+        "    for value in iterator:\n"
+        "        pass\n",
+        diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    const auto& loop = module.functions.front().body.front();
+    REQUIRE_EQ(loop.iteration.strategy, gdpp::IterationStrategy::object_protocol);
+    REQUIRE_EQ(loop.iteration.element_type,
+               (gdpp::Type{gdpp::TypeKind::string_name, "StringName"}));
+    REQUIRE_EQ(loop.declared_type,
+               (gdpp::Type{gdpp::TypeKind::string_name, "StringName"}));
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+}
+
+TEST_CASE("semantic analysis rejects incomplete object iterator protocols") {
+    gdpp::DiagnosticBag missing_diagnostics;
+    (void)lower_source("func visit(node: Node) -> void:\n"
+                       "    for value in node:\n"
+                       "        pass\n",
+                       missing_diagnostics);
+    gdpp::DiagnosticBag signature_diagnostics;
+    (void)lower_source("class Iterator:\n"
+                       "    func _iter_init() -> bool:\n"
+                       "        return true\n"
+                       "    func _iter_next(state: Array) -> int:\n"
+                       "        return 0\n"
+                       "    func _iter_get(state: Variant) -> void:\n"
+                       "        pass\n"
+                       "func visit(iterator: Iterator) -> void:\n"
+                       "    for value in iterator:\n"
+                       "        pass\n",
+                       signature_diagnostics);
+
+    REQUIRE(missing_diagnostics.has_errors());
+    REQUIRE(std::any_of(missing_diagnostics.items().begin(), missing_diagnostics.items().end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4140"; }));
+    REQUIRE(signature_diagnostics.has_errors());
+    REQUIRE(std::count_if(signature_diagnostics.items().begin(),
+                          signature_diagnostics.items().end(), [](const auto& diagnostic) {
+                              return diagnostic.code == "GDS4141";
+                          }) >= std::ptrdiff_t{3});
+}
+
 TEST_CASE("IR verifier rejects mismatched iteration plans") {
     gdpp::DiagnosticBag diagnostics;
     auto module = lower_source("func visit(values: Array[int]) -> void:\n"
