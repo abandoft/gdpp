@@ -118,19 +118,23 @@ set(GDPP_GODOT_EXECUTABLE "" CACHE FILEPATH "Optional Godot executable used for 
 # The generated C++ and the compiler-only SDK form one native runtime contract.  Keep exact
 # content hashes in the compiler as well as every packaged SDK so an old or partially copied SDK
 # is rejected during preflight instead of failing later with thousands of C++ diagnostics.
-set(GDPP_NATIVE_SDK_SCHEMA 4)
-set(GDPP_NATIVE_RUNTIME_ABI 3)
+set(GDPP_NATIVE_SDK_SCHEMA 5)
+set(GDPP_NATIVE_RUNTIME_ABI 4)
 set(GDPP_NATIVE_RUNTIME_HEADER
     "${CMAKE_SOURCE_DIR}/include/gdpp/runtime/variant_ops.hpp")
 set(GDPP_NATIVE_RUNTIME_SOURCE
     "${CMAKE_SOURCE_DIR}/src/runtime/variant_ops.cpp")
+set(GDPP_INTEGER_SEMANTICS_HEADER
+    "${CMAKE_SOURCE_DIR}/include/gdpp/support/integer_semantics.hpp")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${GDPP_NATIVE_RUNTIME_HEADER}"
     "${GDPP_NATIVE_RUNTIME_SOURCE}"
+    "${GDPP_INTEGER_SEMANTICS_HEADER}"
 )
 foreach(GDPP_NATIVE_RUNTIME_FILE IN ITEMS
         "${GDPP_NATIVE_RUNTIME_HEADER}"
-        "${GDPP_NATIVE_RUNTIME_SOURCE}")
+        "${GDPP_NATIVE_RUNTIME_SOURCE}"
+        "${GDPP_INTEGER_SEMANTICS_HEADER}")
     file(READ "${GDPP_NATIVE_RUNTIME_FILE}" GDPP_NATIVE_RUNTIME_CONTENT)
     string(FIND "${GDPP_NATIVE_RUNTIME_CONTENT}" "\r" GDPP_NATIVE_RUNTIME_CR_OFFSET)
     if(NOT GDPP_NATIVE_RUNTIME_CR_OFFSET EQUAL -1)
@@ -141,6 +145,7 @@ endforeach()
 unset(GDPP_NATIVE_RUNTIME_CONTENT)
 file(SHA256 "${GDPP_NATIVE_RUNTIME_HEADER}" GDPP_NATIVE_RUNTIME_HEADER_SHA256)
 file(SHA256 "${GDPP_NATIVE_RUNTIME_SOURCE}" GDPP_NATIVE_RUNTIME_SOURCE_SHA256)
+file(SHA256 "${GDPP_INTEGER_SEMANTICS_HEADER}" GDPP_INTEGER_SEMANTICS_HEADER_SHA256)
 
 # Generated project C++ is a product of the whole compiler contract, not only the input .gd file.
 # Derive a deterministic fingerprint from every source and API table that can affect emission so
@@ -245,6 +250,7 @@ if(GDPP_ANDROID_SDK_VERSIONS)
                     "${CMAKE_SOURCE_DIR}/tools/build_android_sdk.py"
                     "${GDPP_NATIVE_RUNTIME_HEADER}"
                     "${GDPP_NATIVE_RUNTIME_SOURCE}"
+                    "${GDPP_INTEGER_SEMANTICS_HEADER}"
                 COMMENT
                     "Packaging Godot ${GDPP_ANDROID_VERSION} Android/${GDPP_ANDROID_ARCH} SDK"
                 VERBATIM
@@ -285,6 +291,7 @@ if(GDPP_WEB_SDK_VERSIONS)
                     "${CMAKE_SOURCE_DIR}/tools/build_web_sdk.py"
                     "${GDPP_NATIVE_RUNTIME_HEADER}"
                     "${GDPP_NATIVE_RUNTIME_SOURCE}"
+                    "${GDPP_INTEGER_SEMANTICS_HEADER}"
                 COMMENT
                     "Packaging Godot ${GDPP_WEB_VERSION} Web/wasm32/${GDPP_WEB_VARIANT} SDK"
                 VERBATIM
@@ -322,6 +329,7 @@ if(GDPP_IOS_SDK_VERSIONS)
                 "${CMAKE_SOURCE_DIR}/tools/build_ios_sdk.py"
                 "${GDPP_NATIVE_RUNTIME_HEADER}"
                 "${GDPP_NATIVE_RUNTIME_SOURCE}"
+                "${GDPP_INTEGER_SEMANTICS_HEADER}"
             COMMENT "Packaging Godot ${GDPP_IOS_VERSION} iOS/arm64 SDK"
             VERBATIM
         )

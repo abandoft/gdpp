@@ -228,6 +228,7 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
     std::string runtime_abi;
     std::string runtime_header_sha256;
     std::string runtime_source_sha256;
+    std::string integer_semantics_header_sha256;
     std::string web_threads;
     std::string source_paths;
     std::string ios_deployment_target;
@@ -249,6 +250,8 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
             runtime_header_sha256 = value;
         else if (key == "runtime_source_sha256")
             runtime_source_sha256 = value;
+        else if (key == "integer_semantics_header_sha256")
+            integer_semantics_header_sha256 = value;
         else if (key == "web_threads")
             web_threads = value;
         else if (key == "source_paths")
@@ -343,7 +346,8 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
                               "; reinstall the matching GDPP SDK");
     }
     if (runtime_header_sha256 != GDPP_NATIVE_RUNTIME_HEADER_SHA256 ||
-        runtime_source_sha256 != GDPP_NATIVE_RUNTIME_SOURCE_SHA256) {
+        runtime_source_sha256 != GDPP_NATIVE_RUNTIME_SOURCE_SHA256 ||
+        integer_semantics_header_sha256 != GDPP_INTEGER_SEMANTICS_HEADER_SHA256) {
         diagnostics.emplace_back(
             "native SDK runtime contract does not match this GDPP compiler; reinstall the "
             "matching plugin package");
@@ -365,6 +369,8 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
                         runtime_header_sha256, "runtime header");
     verify_runtime_file(options.sdk_root / "src/runtime/variant_ops.cpp", runtime_source_sha256,
                         "runtime source");
+    verify_runtime_file(options.sdk_root / "include/gdpp/support/integer_semantics.hpp",
+                        integer_semantics_header_sha256, "integer semantics header");
     return diagnostics.empty();
 }
 
@@ -1103,8 +1109,8 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
     }
     for (const auto& required :
          {registration, runtime, includes[1] / "gdpp/runtime/variant_ops.hpp",
-          includes[2] / "godot_cpp/godot.hpp", includes[3] / "godot_cpp/core/version.hpp",
-          includes[3] / "gdextension_interface.h"}) {
+          includes[1] / "gdpp/support/integer_semantics.hpp", includes[2] / "godot_cpp/godot.hpp",
+          includes[3] / "godot_cpp/core/version.hpp", includes[3] / "gdextension_interface.h"}) {
         if (!std::filesystem::is_regular_file(required))
             result.diagnostics.push_back("missing native SDK input: " + path_to_utf8(required));
     }
@@ -1202,6 +1208,7 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
         build_configuration,
         options.sdk_root / "sdk.manifest",
         options.sdk_root / "include/gdpp/runtime/variant_ops.hpp",
+        options.sdk_root / "include/gdpp/support/integer_semantics.hpp",
     };
     const auto bridge_lock = options.project_output_directory / "bridge.lock";
     if (std::filesystem::is_regular_file(bridge_lock))
