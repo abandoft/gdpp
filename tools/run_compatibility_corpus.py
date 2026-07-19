@@ -71,9 +71,16 @@ def create_reusable_host_sdk(source_root: Path, native_directory: Path, output: 
 
     generated_include = binding_build / "gen/include"
     source_include = source_root / "third/godot-cpp/include"
+    numeric_include = source_root / "include/gdpp/numeric"
     runtime_include = source_root / "include/gdpp/runtime"
     runtime_source = source_root / "src/runtime"
-    for required in (generated_include, source_include, runtime_include, runtime_source):
+    for required in (
+        generated_include,
+        source_include,
+        numeric_include,
+        runtime_include,
+        runtime_source,
+    ):
         if not required.is_dir():
             raise RuntimeError(f"reusable host SDK input is missing: {required}")
 
@@ -83,6 +90,7 @@ def create_reusable_host_sdk(source_root: Path, native_directory: Path, output: 
     (shared_sdk / "lib").mkdir(parents=True)
     shutil.copytree(source_include, shared_sdk / "godot-cpp/include")
     shutil.copytree(generated_include, shared_sdk / "godot-cpp/gen/include")
+    shutil.copytree(numeric_include, shared_sdk / "include/gdpp/numeric")
     shutil.copytree(runtime_include, shared_sdk / "include/gdpp/runtime")
     shutil.copytree(runtime_source, shared_sdk / "src/runtime")
     shutil.copy2(binding_libraries[0], shared_sdk / "lib" / binding_libraries[0].name)
