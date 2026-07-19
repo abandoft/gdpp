@@ -270,6 +270,14 @@ TEST_CASE("parser preserves onready fields and typed iterators") {
     REQUIRE_EQ(*script.functions.front().parameters.front().type,
                std::string{"Dictionary[String, int]"});
     REQUIRE_EQ(*script.functions.front().body.front().type(), std::string{"String"});
+    const auto* loop =
+        script.functions.front().body.front().get_if<gdpp::ast::ForStatement>();
+    REQUIRE(loop != nullptr);
+    REQUIRE_EQ(loop->iterator_span.begin.line, std::size_t{3});
+    REQUIRE_EQ(loop->iterator_span.begin.column, std::size_t{9});
+    REQUIRE(loop->type_span.has_value());
+    REQUIRE_EQ(loop->type_span->begin.column, std::size_t{14});
+    REQUIRE_EQ(loop->type_span->end.column, std::size_t{20});
 }
 
 TEST_CASE("parser distinguishes static fields from static functions") {

@@ -221,6 +221,8 @@ struct ForStatement {
     std::optional<std::string> type;
     ExpressionPtr iterable;
     Block body;
+    SourceSpan iterator_span{};
+    std::optional<SourceSpan> type_span;
 };
 struct PassStatement {};
 struct BreakStatement {};

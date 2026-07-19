@@ -2860,9 +2860,12 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         return FlowResult{!constant_true || body_flow.breaks, body_flow.returns, false, false};
     }
     case ast::StatementKind::for_statement: {
+        const auto* loop = statement.get_if<ast::ForStatement>();
+        const auto iterator_span = loop ? loop->iterator_span : statement.span;
+        const auto type_span = loop && loop->type_span ? *loop->type_span : statement.span;
         auto iterable = analyze_expression(*statement.condition());
         const auto specified_element_type = statement.type()
-                                                ? type_from_name(*statement.type(), statement.span)
+                                                ? type_from_name(*statement.type(), type_span)
                                                 : variant_type;
         if (statement.type() && !specified_element_type.is_dynamic() &&
             statement.condition()->kind() == ast::ExpressionKind::array_literal) {
@@ -2892,7 +2895,8 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
             iterable.kind != TypeKind::dictionary && iterable.kind != TypeKind::string &&
             iterable.kind != TypeKind::integer && !mathematical_range &&
             !iterable.is_packed_array()) {
-            diagnostics_.error("GDS4007", "for loop expression is not iterable", statement.span);
+            diagnostics_.error("GDS4007", "for loop expression is not iterable",
+                               statement.condition()->span);
         }
         if (const auto existing = scopes_.back().find(statement.name());
             existing != scopes_.back().end() && (existing->second.kind == SymbolKind::local ||
@@ -2901,7 +2905,7 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
             diagnostics_.error("GDS4125",
                                "iterator variable '" + statement.name() +
                                    "' conflicts with a variable in the same scope",
-                               statement.span);
+                               iterator_span);
         }
         ++loop_depth_;
         scopes_.emplace_back();
@@ -2917,10 +2921,10 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
             make_iteration_plan(iterable, inferred_element_type, intrinsic_range);
         const auto element_type = statement.type() ? specified_element_type : inferred_element_type;
         if (statement.type())
-            require_assignable(element_type, inferred_element_type, statement.span,
+            require_assignable(element_type, inferred_element_type, type_span,
                                "invalid iterator variable type");
         model_.local_types_[&statement] = element_type;
-        declare({SymbolKind::local, statement.name(), element_type, statement.span, false});
+        declare({SymbolKind::local, statement.name(), element_type, iterator_span, false});
         const auto body_flow = analyze_statements(statement.body());
         scopes_.pop_back();
         --loop_depth_;

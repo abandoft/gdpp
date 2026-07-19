@@ -909,8 +909,16 @@ ast::Statement Parser::parse_match_statement() {
 ast::Statement Parser::parse_for_statement() {
     const auto begin = previous().span;
     ast::ForStatement loop;
-    loop.iterator = consume(TokenKind::identifier, "expected an iterator variable").lexeme;
+    const auto& iterator = consume(TokenKind::identifier, "expected an iterator variable");
+    loop.iterator = iterator.lexeme;
+    loop.iterator_span = iterator.span;
+    const auto type_begin =
+        check(TokenKind::colon) && position_ + 1 < tokens_.size()
+            ? std::optional<SourceSpan>{tokens_[position_ + 1].span}
+            : std::nullopt;
     loop.type = parse_type_annotation();
+    if (loop.type && type_begin)
+        loop.type_span = joined(*type_begin, previous().span);
     consume(TokenKind::kw_in, "expected 'in' after iterator variable");
     loop.iterable = parse_expression();
     consume(TokenKind::colon, "expected ':' after iterable expression");
