@@ -4135,7 +4135,8 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
             return result + nested_prefix + "}\n" + prefix + "}\n";
         }
         if (statement.iteration.strategy == IterationStrategy::dynamic_protocol ||
-            statement.iteration.strategy == IterationStrategy::dictionary_protocol) {
+            statement.iteration.strategy == IterationStrategy::dictionary_protocol ||
+            statement.iteration.strategy == IterationStrategy::object_protocol) {
             const auto suffix = std::to_string(temporary_counter_++);
             const auto iterable_name = "_gdpp_dynamic_iterable_" + suffix;
             const auto iterator_name = "_gdpp_dynamic_iterator_" + suffix;

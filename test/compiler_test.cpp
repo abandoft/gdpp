@@ -1440,6 +1440,34 @@ TEST_CASE("typed iterator variables constrain collection literal elements") {
         [](const auto& diagnostic) { return diagnostic.code == "GDS4002"; }));
 }
 
+TEST_CASE("compiler lowers static object iterators through Godot's Variant protocol") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "object_iterator.gd",
+        "class Iterator:\n"
+        "    var count: int = 2\n"
+        "    func _iter_init(state: Array) -> bool:\n"
+        "        state[0] = 0\n"
+        "        return true\n"
+        "    func _iter_next(state: Array) -> bool:\n"
+        "        state[0] += 1\n"
+        "        return state[0] < count\n"
+        "    func _iter_get(state: Variant) -> StringName:\n"
+        "        return StringName(str(state))\n"
+        "func collect(iterator: Iterator) -> Array[StringName]:\n"
+        "    var result: Array[StringName] = []\n"
+        "    for value in iterator:\n"
+        "        result.append(value)\n"
+        "    return result\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("gdpp::runtime::iter_init") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::iter_next") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::iter_get") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::StringName value = static_cast<godot::StringName>(") !=
+            std::string::npos);
+}
+
 TEST_CASE("compiler iterates packed arrays with their Godot element types") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(
