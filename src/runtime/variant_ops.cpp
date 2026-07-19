@@ -366,10 +366,7 @@ godot::Array make_range(std::int64_t start, std::int64_t stop, std::int64_t step
     }
     for (auto value = start; step > 0 ? value < stop : value > stop;) {
         result.push_back(value);
-        const auto next = integer::add(value, step);
-        if ((step > 0 && next <= value) || (step < 0 && next >= value))
-            break;
-        value = next;
+        value = integer::range_advance(value, step, stop);
     }
     return result;
 }

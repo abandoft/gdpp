@@ -24,7 +24,8 @@ TEST_CASE("compiler generates bindable GDExtension C++") {
     REQUIRE(result.unit.header.find("GDCLASS(GDPPNative_Counter, godot::Node)") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("ClassDB::bind_method") != std::string::npos);
-    REQUIRE(result.unit.source.find("value = (value + amount)") != std::string::npos);
+    REQUIRE(result.unit.source.find("value = ([&]() -> int64_t") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::integer::add(") != std::string::npos);
     REQUIRE(result.unit.source.find("ADD_SIGNAL") != std::string::npos);
 }
 
@@ -1400,6 +1401,8 @@ TEST_CASE("compiler emits native Godot mathematical range loops") {
     REQUIRE(result.unit.source.find("const auto _gdpp_vector3_bounds_") != std::string::npos);
     REQUIRE(result.unit.source.find("_gdpp_vector3_step_") != std::string::npos);
     REQUIRE(result.unit.source.find("? _gdpp_vector3_value_") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::integer::range_advance(_gdpp_vector3_value_") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::iter_init") == std::string::npos);
 }
 
@@ -1604,6 +1607,8 @@ TEST_CASE("compiler lowers direct range loops without allocating a temporary Arr
     REQUIRE(result.unit.source.find("_gdpp_range_start_") != std::string::npos);
     REQUIRE(result.unit.source.find("_gdpp_range_stop_") != std::string::npos);
     REQUIRE(result.unit.source.find("_gdpp_range_step_") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::integer::range_advance(_gdpp_range_value_") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::make_range") == std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::iter_init") == std::string::npos);
 }
@@ -2147,6 +2152,37 @@ TEST_CASE("compiler emits ordered portable operations for typed integers") {
     REQUIRE(left != std::string::npos);
     REQUIRE(right != std::string::npos);
     REQUIRE(left < right);
+}
+
+TEST_CASE("compiler routes typed integer compound assignments through portable operations") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "integer_compound.gd",
+        "func mutate(value: int, right: int, values: Array[int], index: int) -> int:\n"
+        "    value += right\n"
+        "    value -= right\n"
+        "    value *= right\n"
+        "    value /= right\n"
+        "    value %= right\n"
+        "    value <<= right\n"
+        "    value >>= right\n"
+        "    value &= right\n"
+        "    value |= right\n"
+        "    value ^= right\n"
+        "    value **= right\n"
+        "    values[index] += right\n"
+        "    return value\n");
+
+    REQUIRE(result.success);
+    for (const auto* helper :
+         {"gdpp::integer::add(", "gdpp::integer::subtract(", "gdpp::integer::multiply(",
+          "gdpp::runtime::integer_divide(", "gdpp::runtime::integer_modulo(",
+          "gdpp::integer::shift_left(", "gdpp::integer::shift_right(", "gdpp::integer::bit_and(",
+          "gdpp::integer::bit_or(", "gdpp::integer::bit_xor("}) {
+        REQUIRE(result.unit.source.find(helper) != std::string::npos);
+    }
+    REQUIRE(result.unit.source.find("godot::Variant::OP_POWER") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_subscript_current_") != std::string::npos);
 }
 
 TEST_CASE("compiler preserves native scalar paths across dynamic boundaries") {

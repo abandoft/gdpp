@@ -1795,10 +1795,16 @@ std::string CodeGenerator::emit_truthy(const ir::Expression& expression) const {
 }
 
 std::string CodeGenerator::emit_integer_binary(const ir::Expression& expression) const {
+    return emit_integer_operation(expression.value, emit_expression(*expression.operands.at(0)),
+                                  emit_expression(*expression.operands.at(1)), expression.type);
+}
+
+std::string CodeGenerator::emit_integer_operation(const std::string_view operation,
+                                                  std::string left_value, std::string right_value,
+                                                  const Type& result_type) const {
     const auto suffix = std::to_string(temporary_counter_++);
     const auto left = "_gdpp_integer_left_" + suffix;
     const auto right = "_gdpp_integer_right_" + suffix;
-    const auto& operation = expression.value;
     std::string evaluated;
     if (operation == "+")
         evaluated = "gdpp::integer::add(" + left + ", " + right + ")";
@@ -1820,11 +1826,14 @@ std::string CodeGenerator::emit_integer_binary(const ir::Expression& expression)
         evaluated = "gdpp::integer::bit_or(" + left + ", " + right + ")";
     else if (operation == "^")
         evaluated = "gdpp::integer::bit_xor(" + left + ", " + right + ")";
+    else if (operation == "**")
+        evaluated = "static_cast<int64_t>(gdpp::runtime::binary(godot::Variant::OP_POWER, " + left +
+                    ", " + right + "))";
     else
-        evaluated = "(" + left + " " + operation + " " + right + ")";
-    return "([&]() -> " + cpp_type(expression.type) + " { const int64_t " + left + " = " +
-           emit_expression(*expression.operands.at(0)) + "; const int64_t " + right + " = " +
-           emit_expression(*expression.operands.at(1)) + "; return " + evaluated + "; }())";
+        evaluated = "(" + left + " " + std::string{operation} + " " + right + ")";
+    return "([&]() -> " + cpp_type(result_type) + " { const int64_t " + left + " = " +
+           std::move(left_value) + "; const int64_t " + right + " = " + std::move(right_value) +
+           "; return " + evaluated + "; }())";
 }
 
 std::string CodeGenerator::emit_expression(const ir::Expression& expression) const {
@@ -3713,6 +3722,12 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                     assigned =
                         "gdpp::runtime::binary(godot::Variant::" + variant_operator(operation) +
                         ", " + current_name + ", " + value_name + ")";
+                } else if ((target.type.kind == TypeKind::integer ||
+                            target.type.kind == TypeKind::enumeration) &&
+                           (statement.expression->type.kind == TypeKind::integer ||
+                            statement.expression->type.kind == TypeKind::enumeration)) {
+                    assigned =
+                        emit_integer_operation(operation, current_name, value_name, target.type);
                 } else {
                     assigned = "(" + current_name + " " + operation + " " + value_name + ")";
                 }
@@ -3735,8 +3750,19 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
         std::string value = emit_expression(*statement.expression);
         if (statement.operation != "=") {
             const auto operation = statement.operation.substr(0, statement.operation.size() - 1);
-            if (!target.type.is_dynamic() && target.type.is_numeric() &&
-                statement.expression->type.is_dynamic()) {
+            const auto integer_target =
+                target.type.kind == TypeKind::integer || target.type.kind == TypeKind::enumeration;
+            const auto integer_value = statement.expression->type.kind == TypeKind::integer ||
+                                       statement.expression->type.kind == TypeKind::enumeration;
+            if (integer_target && statement.expression->type.is_dynamic()) {
+                value = emit_conversion(target.type, statement.expression->type, std::move(value));
+                value = emit_integer_operation(operation, emit_expression(*statement.condition),
+                                               std::move(value), target.type);
+            } else if (integer_target && integer_value) {
+                value = emit_integer_operation(operation, emit_expression(*statement.condition),
+                                               std::move(value), target.type);
+            } else if (!target.type.is_dynamic() && target.type.is_numeric() &&
+                       statement.expression->type.is_dynamic()) {
                 value = emit_conversion(target.type, statement.expression->type, std::move(value));
                 value = "(" + emit_expression(*statement.condition) + " " + operation + " " +
                         value + ")";
@@ -4015,7 +4041,8 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                 "zero\");\n" +
                 nested_prefix + "for (int64_t " + value + " = " + start + "; " + step +
                 " != 0 && (" + step + " > 0 ? " + value + " < " + stop + " : " + value + " > " +
-                stop + "); " + value + " += " + step + ") {\n" + body_prefix +
+                stop + "); " + value + " = gdpp::integer::range_advance(" + value + ", " + step +
+                ", " + stop + ")) {\n" + body_prefix +
                 (statement.declared_type.is_dynamic() ? std::string{"godot::Variant"}
                                                       : cpp_type(statement.declared_type)) +
                 " " + sanitize_identifier(statement.name) + " = " +
@@ -4104,7 +4131,10 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                 step + " = " + bounds + ".z;\n" + nested_prefix + "for (" + scalar + " " + value +
                 " = " + bounds + ".x; " + step + " != " + zero + " && (" + step + " > " + zero +
                 " ? " + value + " < " + stop + " : " + value + " > " + stop + "); " + value +
-                " += " + step + ") {\n" + body_prefix +
+                (integral
+                     ? " = gdpp::integer::range_advance(" + value + ", " + step + ", " + stop + ")"
+                     : " += " + step) +
+                ") {\n" + body_prefix +
                 (statement.declared_type.is_dynamic() ? std::string{"godot::Variant"}
                                                       : cpp_type(statement.declared_type)) +
                 " " + sanitize_identifier(statement.name) + " = " +
