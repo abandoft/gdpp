@@ -159,7 +159,7 @@ void IrOptimizer::optimize_expression(ir::Expression& expression, OptimizationSt
                     return;
                 const auto result = expression.value == "-"   ? integer::negate(*parsed)
                                     : expression.value == "~" ? integer::bit_not(*parsed)
-                                                               : *parsed;
+                                                              : *parsed;
                 replace_literal(expression, ir::LiteralKind::integer, {TypeKind::integer, "int"},
                                 std::to_string(result));
             } else if (expression.value != "~") {

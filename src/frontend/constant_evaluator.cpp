@@ -53,8 +53,8 @@ evaluate_integer_constant(const ast::Expression& expression,
     if (operation == "*")
         return integer::multiply(*left, *right);
     if (operation == "/" || operation == "%") {
-        const auto result = operation == "/" ? integer::divide(*left, *right)
-                                               : integer::modulo(*left, *right);
+        const auto result =
+            operation == "/" ? integer::divide(*left, *right) : integer::modulo(*left, *right);
         return result ? std::optional<std::int64_t>{result.value} : std::nullopt;
     }
     if (operation == "<<")

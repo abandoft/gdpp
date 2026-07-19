@@ -361,12 +361,11 @@ TEST_CASE("IR optimizer preserves exact int64 values above double precision") {
 
 TEST_CASE("IR optimizer folds wrapped integer arithmetic without host undefined behavior") {
     gdpp::DiagnosticBag diagnostics;
-    auto module = lower_source(
-        "func boundaries() -> Array[int]:\n"
-        "    return [9223372036854775807 + 1, -9223372036854775808 - 1, "
-        "9223372036854775807 * 2, -(-9223372036854775808), "
-        "-9223372036854775808 / -1, -9223372036854775808 % -1]\n",
-        diagnostics);
+    auto module = lower_source("func boundaries() -> Array[int]:\n"
+                               "    return [9223372036854775807 + 1, -9223372036854775808 - 1, "
+                               "9223372036854775807 * 2, -(-9223372036854775808), "
+                               "-9223372036854775808 / -1, -9223372036854775808 % -1]\n",
+                               diagnostics);
     REQUIRE(!diagnostics.has_errors());
 
     const auto stats = gdpp::IrOptimizer{}.optimize(module);
@@ -383,12 +382,11 @@ TEST_CASE("IR optimizer folds wrapped integer arithmetic without host undefined 
 
 TEST_CASE("IR optimizer folds normalized shifts and signed bit operations") {
     gdpp::DiagnosticBag diagnostics;
-    auto module = lower_source(
-        "func bits() -> Array[int]:\n"
-        "    return [1 << 63, 1 << 64, 1 << -1, -9223372036854775808 >> 1, "
-        "9223372036854775807 >> 64, ~0, -1 & 0x55aa, 0x5500 | 0xaa, "
-        "0x55ff ^ 0x55]\n",
-        diagnostics);
+    auto module = lower_source("func bits() -> Array[int]:\n"
+                               "    return [1 << 63, 1 << 64, 1 << -1, -9223372036854775808 >> 1, "
+                               "9223372036854775807 >> 64, ~0, -1 & 0x55aa, 0x5500 | 0xaa, "
+                               "0x55ff ^ 0x55]\n",
+                               diagnostics);
     REQUIRE(!diagnostics.has_errors());
 
     const auto stats = gdpp::IrOptimizer{}.optimize(module);
