@@ -45,7 +45,9 @@ def current_commit(destination: Path) -> str | None:
 
 def sparse_paths(manifest: dict) -> list[str]:
     repository = manifest["repository"]
-    paths = [repository["license_file"]]
+    # Cone-mode sparse checkout always materializes repository-root files, including the
+    # separately validated license. Supplying an individual file here is rejected by newer Git.
+    paths: list[str] = []
     configured_paths = repository.get("sparse_paths")
     if configured_paths is not None:
         if not isinstance(configured_paths, list) or not configured_paths:
@@ -87,6 +89,10 @@ def main() -> int:
     ensure_build_destination(destination, args.build_root)
 
     if current_commit(destination) == repository["commit"]:
+        # A manifest may add new sparse paths while keeping the same authoritative commit.
+        # Reconcile the checkout before validation so persistent developer and CI caches do not
+        # require manual deletion merely because coverage expanded.
+        run(["git", "sparse-checkout", "set", "--"] + sparse_paths(manifest), destination)
         validate_checkout(destination, manifest)
         print(f"official compatibility corpus already present at {destination}")
         return 0
