@@ -117,36 +117,32 @@ TEST_CASE("typed IR preserves Godot mathematical range iteration plans") {
     REQUIRE_EQ(body.at(2).iteration.strategy, gdpp::IterationStrategy::vector2i_range);
     REQUIRE_EQ(body.at(3).iteration.strategy, gdpp::IterationStrategy::vector3_range);
     REQUIRE_EQ(body.at(4).iteration.strategy, gdpp::IterationStrategy::vector3i_range);
-    REQUIRE_EQ(body.at(0).iteration.element_type,
-               (gdpp::Type{gdpp::TypeKind::floating, "float"}));
-    REQUIRE_EQ(body.at(2).iteration.element_type,
-               (gdpp::Type{gdpp::TypeKind::integer, "int"}));
+    REQUIRE_EQ(body.at(0).iteration.element_type, (gdpp::Type{gdpp::TypeKind::floating, "float"}));
+    REQUIRE_EQ(body.at(2).iteration.element_type, (gdpp::Type{gdpp::TypeKind::integer, "int"}));
     gdpp::IrVerifier verifier{diagnostics};
     REQUIRE(verifier.verify(module));
 }
 
 TEST_CASE("typed IR resolves statically known object iterator protocols") {
     gdpp::DiagnosticBag diagnostics;
-    const auto module = lower_source(
-        "class Iterator:\n"
-        "    func _iter_init(state: Array) -> bool:\n"
-        "        return true\n"
-        "    func _iter_next(state: Array) -> bool:\n"
-        "        return false\n"
-        "    func _iter_get(state: Variant) -> StringName:\n"
-        "        return &\"value\"\n"
-        "func visit(iterator: Iterator) -> void:\n"
-        "    for value in iterator:\n"
-        "        pass\n",
-        diagnostics);
+    const auto module = lower_source("class Iterator:\n"
+                                     "    func _iter_init(state: Array) -> bool:\n"
+                                     "        return true\n"
+                                     "    func _iter_next(state: Array) -> bool:\n"
+                                     "        return false\n"
+                                     "    func _iter_get(state: Variant) -> StringName:\n"
+                                     "        return &\"value\"\n"
+                                     "func visit(iterator: Iterator) -> void:\n"
+                                     "    for value in iterator:\n"
+                                     "        pass\n",
+                                     diagnostics);
 
     REQUIRE(!diagnostics.has_errors());
     const auto& loop = module.functions.front().body.front();
     REQUIRE_EQ(loop.iteration.strategy, gdpp::IterationStrategy::object_protocol);
     REQUIRE_EQ(loop.iteration.element_type,
                (gdpp::Type{gdpp::TypeKind::string_name, "StringName"}));
-    REQUIRE_EQ(loop.declared_type,
-               (gdpp::Type{gdpp::TypeKind::string_name, "StringName"}));
+    REQUIRE_EQ(loop.declared_type, (gdpp::Type{gdpp::TypeKind::string_name, "StringName"}));
     gdpp::IrVerifier verifier{diagnostics};
     REQUIRE(verifier.verify(module));
 }
@@ -207,11 +203,11 @@ TEST_CASE("IR verifier rejects missing and misplaced iteration plans") {
     REQUIRE(!missing_verifier.verify(missing));
 
     gdpp::DiagnosticBag misplaced_diagnostics;
-    auto misplaced = lower_source("func value() -> void:\n    var answer := 42\n",
-                                  misplaced_diagnostics);
+    auto misplaced =
+        lower_source("func value() -> void:\n    var answer := 42\n", misplaced_diagnostics);
     REQUIRE(!misplaced_diagnostics.has_errors());
-    misplaced.functions.front().body.front().iteration =
-        {gdpp::IterationStrategy::integer_count, {gdpp::TypeKind::integer, "int"}};
+    misplaced.functions.front().body.front().iteration = {gdpp::IterationStrategy::integer_count,
+                                                          {gdpp::TypeKind::integer, "int"}};
     gdpp::IrVerifier misplaced_verifier{misplaced_diagnostics};
     REQUIRE(!misplaced_verifier.verify(misplaced));
 }

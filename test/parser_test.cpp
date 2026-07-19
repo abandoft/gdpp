@@ -235,13 +235,11 @@ TEST_CASE("parser accepts current Godot local constants separators and Lua dicti
 }
 
 TEST_CASE("parser rejects non-Godot multiple variable declarations without cascading") {
-    const gdpp::SourceFile source{
-        "multiple_variables.gd",
-        "var first = 1, second = 2\n"
-        "func test() -> int:\n"
-        "    var local = 3, other = 4\n"
-        "    var recovered := 5\n"
-        "    return recovered\n"};
+    const gdpp::SourceFile source{"multiple_variables.gd", "var first = 1, second = 2\n"
+                                                           "func test() -> int:\n"
+                                                           "    var local = 3, other = 4\n"
+                                                           "    var recovered := 5\n"
+                                                           "    return recovered\n"};
     gdpp::DiagnosticBag diagnostics;
     gdpp::Lexer lexer{source, diagnostics};
     const auto tokens = lexer.scan();
@@ -250,9 +248,7 @@ TEST_CASE("parser rejects non-Godot multiple variable declarations without casca
 
     REQUIRE(diagnostics.has_errors());
     REQUIRE_EQ(std::count_if(diagnostics.items().begin(), diagnostics.items().end(),
-                             [](const auto& diagnostic) {
-                                 return diagnostic.code == "GDS2032";
-                             }),
+                             [](const auto& diagnostic) { return diagnostic.code == "GDS2032"; }),
                std::ptrdiff_t{2});
     REQUIRE_EQ(script.variables.size(), std::size_t{1});
     REQUIRE_EQ(script.functions.size(), std::size_t{1});
@@ -298,8 +294,7 @@ TEST_CASE("parser preserves onready fields and typed iterators") {
     REQUIRE_EQ(*script.functions.front().parameters.front().type,
                std::string{"Dictionary[String, int]"});
     REQUIRE_EQ(*script.functions.front().body.front().type(), std::string{"String"});
-    const auto* loop =
-        script.functions.front().body.front().get_if<gdpp::ast::ForStatement>();
+    const auto* loop = script.functions.front().body.front().get_if<gdpp::ast::ForStatement>();
     REQUIRE(loop != nullptr);
     REQUIRE_EQ(loop->iterator_span.begin.line, std::size_t{3});
     REQUIRE_EQ(loop->iterator_span.begin.column, std::size_t{9});

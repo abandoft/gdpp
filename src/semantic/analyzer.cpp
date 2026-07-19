@@ -702,24 +702,24 @@ Type SemanticAnalyzer::iteration_element_type(const Type& container, const Sourc
     return container_element_type(container, span);
 }
 
-std::optional<Type>
-SemanticAnalyzer::object_iteration_element_type(const Type& object, const SourceSpan span) {
+std::optional<Type> SemanticAnalyzer::object_iteration_element_type(const Type& object,
+                                                                    const SourceSpan span) {
     const auto validate_member = [&](const ScriptMemberSymbol* member,
                                      const std::string_view name) -> bool {
         if (!member || member->kind != ScriptMemberKind::function || member->is_static ||
             member->parameters.size() != 1U || member->required_arguments > 1U) {
             diagnostics_.error("GDS4141",
-                               "iterator object '" + object.display_name() + "' requires instance " +
-                                   std::string{name} + "(state) with exactly one parameter",
+                               "iterator object '" + object.display_name() +
+                                   "' requires instance " + std::string{name} +
+                                   "(state) with exactly one parameter",
                                span);
             return false;
         }
         if (name != "_iter_get" && !member->type.is_dynamic() &&
             member->type.kind != TypeKind::boolean) {
-            diagnostics_.error("GDS4141",
-                               "iterator method '" + std::string{name} +
-                                   "' must return bool or Variant",
-                               span);
+            diagnostics_.error(
+                "GDS4141",
+                "iterator method '" + std::string{name} + "' must return bool or Variant", span);
             return false;
         }
         if (name == "_iter_get" && member->type.kind == TypeKind::void_type) {
@@ -2940,26 +2940,22 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         const auto iterator_span = loop ? loop->iterator_span : statement.span;
         const auto type_span = loop && loop->type_span ? *loop->type_span : statement.span;
         auto iterable = analyze_expression(*statement.condition());
-        const auto specified_element_type = statement.type()
-                                                ? type_from_name(*statement.type(), type_span)
-                                                : variant_type;
+        const auto specified_element_type =
+            statement.type() ? type_from_name(*statement.type(), type_span) : variant_type;
         if (statement.type() && !specified_element_type.is_dynamic() &&
             statement.condition()->kind() == ast::ExpressionKind::array_literal) {
             const Type constrained{TypeKind::array,
                                    "Array[" + specified_element_type.display_name() + "]"};
             require_expression_assignable(constrained, *statement.condition(), iterable,
-                                          statement.condition()->span,
-                                          "typed for-loop iterable");
+                                          statement.condition()->span, "typed for-loop iterable");
             iterable = model_.type_of(*statement.condition());
         } else if (statement.type() && !specified_element_type.is_dynamic() &&
-                   statement.condition()->kind() ==
-                       ast::ExpressionKind::dictionary_literal) {
-            const Type constrained{
-                TypeKind::dictionary,
-                "Dictionary[" + specified_element_type.display_name() + ", Variant]"};
+                   statement.condition()->kind() == ast::ExpressionKind::dictionary_literal) {
+            const Type constrained{TypeKind::dictionary, "Dictionary[" +
+                                                             specified_element_type.display_name() +
+                                                             ", Variant]"};
             require_expression_assignable(constrained, *statement.condition(), iterable,
-                                          statement.condition()->span,
-                                          "typed for-loop iterable");
+                                          statement.condition()->span, "typed for-loop iterable");
             iterable = model_.type_of(*statement.condition());
         }
         const auto object_element_type =

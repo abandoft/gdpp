@@ -1101,20 +1101,18 @@ bool IrVerifier::verify_statement(const ir::Statement& statement) {
                     statement.condition->operands.front()->intrinsic == IntrinsicKind::range;
                 break;
             case IterationStrategy::vector2_range:
-                strategy_matches = iterable.kind == TypeKind::builtin &&
-                                   iterable.name == "Vector2";
+                strategy_matches = iterable.kind == TypeKind::builtin && iterable.name == "Vector2";
                 break;
             case IterationStrategy::vector2i_range:
-                strategy_matches = iterable.kind == TypeKind::builtin &&
-                                   iterable.name == "Vector2i";
+                strategy_matches =
+                    iterable.kind == TypeKind::builtin && iterable.name == "Vector2i";
                 break;
             case IterationStrategy::vector3_range:
-                strategy_matches = iterable.kind == TypeKind::builtin &&
-                                   iterable.name == "Vector3";
+                strategy_matches = iterable.kind == TypeKind::builtin && iterable.name == "Vector3";
                 break;
             case IterationStrategy::vector3i_range:
-                strategy_matches = iterable.kind == TypeKind::builtin &&
-                                   iterable.name == "Vector3i";
+                strategy_matches =
+                    iterable.kind == TypeKind::builtin && iterable.name == "Vector3i";
                 break;
             case IterationStrategy::indexed_string:
                 strategy_matches = iterable.kind == TypeKind::string;

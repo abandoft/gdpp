@@ -1374,22 +1374,22 @@ TEST_CASE("compiler preserves explicit typed iterator variables") {
 
 TEST_CASE("compiler emits native Godot mathematical range loops") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "mathematical_ranges.gd",
-        "func collect(count: float, float_bounds: Vector2, int_bounds: Vector2i, "
-        "float_steps: Vector3, int_steps: Vector3i) -> Array:\n"
-        "    var values: Array = []\n"
-        "    for value: float in count:\n"
-        "        values.append(value)\n"
-        "    for value: float in float_bounds:\n"
-        "        values.append(value)\n"
-        "    for value: int in int_bounds:\n"
-        "        values.append(value)\n"
-        "    for value: float in float_steps:\n"
-        "        values.append(value)\n"
-        "    for value: int in int_steps:\n"
-        "        values.append(value)\n"
-        "    return values\n");
+    const auto result =
+        compiler.compile("mathematical_ranges.gd",
+                         "func collect(count: float, float_bounds: Vector2, int_bounds: Vector2i, "
+                         "float_steps: Vector3, int_steps: Vector3i) -> Array:\n"
+                         "    var values: Array = []\n"
+                         "    for value: float in count:\n"
+                         "        values.append(value)\n"
+                         "    for value: float in float_bounds:\n"
+                         "        values.append(value)\n"
+                         "    for value: int in int_bounds:\n"
+                         "        values.append(value)\n"
+                         "    for value: float in float_steps:\n"
+                         "        values.append(value)\n"
+                         "    for value: int in int_steps:\n"
+                         "        values.append(value)\n"
+                         "    return values\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("const double _gdpp_float_limit_") != std::string::npos);
@@ -1405,29 +1405,25 @@ TEST_CASE("compiler emits native Godot mathematical range loops") {
 
 TEST_CASE("typed iterator variables constrain collection literal elements") {
     const gdpp::Compiler compiler;
-    const auto valid = compiler.compile(
-        "typed_literal_loops.gd",
-        "func collect() -> Array:\n"
-        "    var result: Array = []\n"
-        "    for value: float in [1, 2, 3]:\n"
-        "        result.append(value)\n"
-        "    for key: StringName in { first = 1, second = 2 }:\n"
-        "        result.append(key)\n"
-        "    return result\n");
-    const auto invalid_array = compiler.compile(
-        "invalid_typed_array_loop.gd",
-        "func visit() -> void:\n"
-        "    for value: String in [1, 2, 3]:\n"
-        "        pass\n");
-    const auto invalid_dictionary = compiler.compile(
-        "invalid_typed_dictionary_loop.gd",
-        "func visit() -> void:\n"
-        "    for key: int in { \"name\": 1 }:\n"
-        "        pass\n");
+    const auto valid = compiler.compile("typed_literal_loops.gd",
+                                        "func collect() -> Array:\n"
+                                        "    var result: Array = []\n"
+                                        "    for value: float in [1, 2, 3]:\n"
+                                        "        result.append(value)\n"
+                                        "    for key: StringName in { first = 1, second = 2 }:\n"
+                                        "        result.append(key)\n"
+                                        "    return result\n");
+    const auto invalid_array =
+        compiler.compile("invalid_typed_array_loop.gd", "func visit() -> void:\n"
+                                                        "    for value: String in [1, 2, 3]:\n"
+                                                        "        pass\n");
+    const auto invalid_dictionary = compiler.compile("invalid_typed_dictionary_loop.gd",
+                                                     "func visit() -> void:\n"
+                                                     "    for key: int in { \"name\": 1 }:\n"
+                                                     "        pass\n");
 
     REQUIRE(valid.success);
-    REQUIRE(valid.unit.source.find("godot::TypedArray<double> _gdpp_array_") !=
-            std::string::npos);
+    REQUIRE(valid.unit.source.find("godot::TypedArray<double> _gdpp_array_") != std::string::npos);
     REQUIRE(valid.unit.source.find("godot::TypedDictionary<godot::StringName, godot::Variant> ") !=
             std::string::npos);
     REQUIRE(!invalid_array.success);
@@ -1435,30 +1431,29 @@ TEST_CASE("typed iterator variables constrain collection literal elements") {
                           [](const auto& diagnostic) { return diagnostic.code == "GDS4002"; }) >=
             3);
     REQUIRE(!invalid_dictionary.success);
-    REQUIRE(std::any_of(
-        invalid_dictionary.diagnostics.begin(), invalid_dictionary.diagnostics.end(),
-        [](const auto& diagnostic) { return diagnostic.code == "GDS4002"; }));
+    REQUIRE(std::any_of(invalid_dictionary.diagnostics.begin(),
+                        invalid_dictionary.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4002"; }));
 }
 
 TEST_CASE("compiler lowers static object iterators through Godot's Variant protocol") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "object_iterator.gd",
-        "class Iterator:\n"
-        "    var count: int = 2\n"
-        "    func _iter_init(state: Array) -> bool:\n"
-        "        state[0] = 0\n"
-        "        return true\n"
-        "    func _iter_next(state: Array) -> bool:\n"
-        "        state[0] += 1\n"
-        "        return state[0] < count\n"
-        "    func _iter_get(state: Variant) -> StringName:\n"
-        "        return StringName(str(state))\n"
-        "func collect(iterator: Iterator) -> Array[StringName]:\n"
-        "    var result: Array[StringName] = []\n"
-        "    for value in iterator:\n"
-        "        result.append(value)\n"
-        "    return result\n");
+    const auto result = compiler.compile("object_iterator.gd",
+                                         "class Iterator:\n"
+                                         "    var count: int = 2\n"
+                                         "    func _iter_init(state: Array) -> bool:\n"
+                                         "        state[0] = 0\n"
+                                         "        return true\n"
+                                         "    func _iter_next(state: Array) -> bool:\n"
+                                         "        state[0] += 1\n"
+                                         "        return state[0] < count\n"
+                                         "    func _iter_get(state: Variant) -> StringName:\n"
+                                         "        return StringName(str(state))\n"
+                                         "func collect(iterator: Iterator) -> Array[StringName]:\n"
+                                         "    var result: Array[StringName] = []\n"
+                                         "    for value in iterator:\n"
+                                         "        result.append(value)\n"
+                                         "    return result\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("gdpp::runtime::iter_init") != std::string::npos);
@@ -1470,18 +1465,16 @@ TEST_CASE("compiler lowers static object iterators through Godot's Variant proto
 
 TEST_CASE("semantic failures stop before HIR verifier diagnostics") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile("invalid_iterator.gd",
-                                         "func visit() -> void:\n"
-                                         "    for value in true:\n"
-                                         "        pass\n");
+    const auto result = compiler.compile("invalid_iterator.gd", "func visit() -> void:\n"
+                                                                "    for value in true:\n"
+                                                                "        pass\n");
 
     REQUIRE(!result.success);
     REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
                         [](const auto& diagnostic) { return diagnostic.code == "GDS4007"; }));
-    REQUIRE(std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
-                         [](const auto& diagnostic) {
-                             return diagnostic.code.rfind("GDS5", 0) == 0;
-                         }));
+    REQUIRE(
+        std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                     [](const auto& diagnostic) { return diagnostic.code.rfind("GDS5", 0) == 0; }));
     REQUIRE_EQ(result.metrics.hir_statement_count, std::size_t{0});
     REQUIRE_EQ(result.metrics.mir_block_count, std::size_t{0});
 }

@@ -791,10 +791,9 @@ ast::Statement Parser::parse_variable_statement(const bool is_constant) {
                            variable.initializer->span);
     }
     if (check(TokenKind::comma)) {
-        diagnostics_.error(
-            "GDS2032",
-            "GDScript declares one variable per statement; start a new declaration",
-            current().span);
+        diagnostics_.error("GDS2032",
+                           "GDScript declares one variable per statement; start a new declaration",
+                           current().span);
         synchronize();
     }
     return ast::Statement{std::move(variable), joined(begin, previous().span)};
@@ -923,10 +922,9 @@ ast::Statement Parser::parse_for_statement() {
     const auto& iterator = consume(TokenKind::identifier, "expected an iterator variable");
     loop.iterator = iterator.lexeme;
     loop.iterator_span = iterator.span;
-    const auto type_begin =
-        check(TokenKind::colon) && position_ + 1 < tokens_.size()
-            ? std::optional<SourceSpan>{tokens_[position_ + 1].span}
-            : std::nullopt;
+    const auto type_begin = check(TokenKind::colon) && position_ + 1 < tokens_.size()
+                                ? std::optional<SourceSpan>{tokens_[position_ + 1].span}
+                                : std::nullopt;
     loop.type = parse_type_annotation();
     if (loop.type && type_begin)
         loop.type_span = joined(*type_begin, previous().span);
