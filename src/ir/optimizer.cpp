@@ -1,5 +1,7 @@
 #include "gdpp/ir/optimizer.hpp"
 
+#include "gdpp/support/integer_semantics.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -27,22 +29,42 @@ std::string normalized_number(const ir::Expression& expression) {
 
 std::optional<std::int64_t> integer_value(const ir::Expression& expression) {
     auto value = normalized_number(expression);
-    int base = 10;
-    std::size_t prefix = 0;
-    if (value.size() > 2 && value[0] == '0' && (value[1] == 'x' || value[1] == 'X')) {
-        base = 16;
-        prefix = 2;
-    } else if (value.size() > 2 && value[0] == '0' && (value[1] == 'b' || value[1] == 'B')) {
-        base = 2;
-        prefix = 2;
+    bool negative = false;
+    std::size_t sign = 0;
+    if (!value.empty() && (value.front() == '+' || value.front() == '-')) {
+        negative = value.front() == '-';
+        sign = 1;
     }
-    std::int64_t parsed = 0;
+    int base = 10;
+    std::size_t prefix = sign;
+    if (value.size() > sign + 2U && value[sign] == '0' &&
+        (value[sign + 1U] == 'x' || value[sign + 1U] == 'X')) {
+        base = 16;
+        prefix += 2U;
+    } else if (value.size() > sign + 2U && value[sign] == '0' &&
+               (value[sign + 1U] == 'b' || value[sign + 1U] == 'B')) {
+        base = 2;
+        prefix += 2U;
+    }
+    std::uint64_t parsed = 0;
     const auto* begin = value.data() + static_cast<std::ptrdiff_t>(prefix);
     const auto* end = value.data() + static_cast<std::ptrdiff_t>(value.size());
     const auto result = std::from_chars(begin, end, parsed, base);
     if (result.ec != std::errc{} || result.ptr != end)
         return std::nullopt;
-    return parsed;
+    const auto maximum = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    if (negative) {
+        if (parsed > maximum + 1U)
+            return std::nullopt;
+        if (parsed == maximum + 1U)
+            return std::numeric_limits<std::int64_t>::min();
+        return -static_cast<std::int64_t>(parsed);
+    }
+    if (parsed <= maximum)
+        return static_cast<std::int64_t>(parsed);
+    if (base == 10 && parsed == maximum + 1U)
+        return std::numeric_limits<std::int64_t>::min();
+    return std::nullopt;
 }
 
 std::optional<double> floating_value(const ir::Expression& expression) {
@@ -61,36 +83,6 @@ std::optional<double> floating_value(const ir::Expression& expression) {
     if (input.fail())
         return std::nullopt;
     return parsed;
-}
-
-std::optional<std::int64_t> checked_add(const std::int64_t left, const std::int64_t right) {
-    if ((right > 0 && left > std::numeric_limits<std::int64_t>::max() - right) ||
-        (right < 0 && left < std::numeric_limits<std::int64_t>::min() - right)) {
-        return std::nullopt;
-    }
-    return left + right;
-}
-
-std::optional<std::int64_t> checked_subtract(const std::int64_t left, const std::int64_t right) {
-    if ((right < 0 && left > std::numeric_limits<std::int64_t>::max() + right) ||
-        (right > 0 && left < std::numeric_limits<std::int64_t>::min() + right)) {
-        return std::nullopt;
-    }
-    return left - right;
-}
-
-std::optional<std::int64_t> checked_multiply(const std::int64_t left, const std::int64_t right) {
-    if (left == 0 || right == 0)
-        return std::int64_t{0};
-    const auto maximum = std::numeric_limits<std::int64_t>::max();
-    const auto minimum = std::numeric_limits<std::int64_t>::min();
-    if ((left > 0 && right > 0 && left > maximum / right) ||
-        (left > 0 && right < 0 && right < minimum / left) ||
-        (left < 0 && right > 0 && left < minimum / right) ||
-        (left < 0 && right < 0 && left < maximum / right)) {
-        return std::nullopt;
-    }
-    return left * right;
 }
 
 std::string floating_text(double value) {
@@ -159,17 +151,18 @@ void IrOptimizer::optimize_expression(ir::Expression& expression, OptimizationSt
 
     if (expression.kind == ir::ExpressionKind::unary && expression.operands.size() == 1) {
         const auto& operand = *expression.operands.front();
-        if (is_numeric_literal(operand) && (expression.value == "+" || expression.value == "-")) {
+        if (is_numeric_literal(operand) &&
+            (expression.value == "+" || expression.value == "-" || expression.value == "~")) {
             if (operand.literal_kind == ir::LiteralKind::integer) {
                 const auto parsed = integer_value(operand);
-                if (!parsed || (expression.value == "-" &&
-                                *parsed == std::numeric_limits<std::int64_t>::min())) {
+                if (!parsed)
                     return;
-                }
-                const auto result = expression.value == "-" ? -*parsed : *parsed;
+                const auto result = expression.value == "-"   ? integer::negate(*parsed)
+                                    : expression.value == "~" ? integer::bit_not(*parsed)
+                                                               : *parsed;
                 replace_literal(expression, ir::LiteralKind::integer, {TypeKind::integer, "int"},
                                 std::to_string(result));
-            } else {
+            } else if (expression.value != "~") {
                 const auto parsed = floating_value(operand);
                 if (!parsed)
                     return;
@@ -226,23 +219,32 @@ void IrOptimizer::optimize_expression(ir::Expression& expression, OptimizationSt
         }
         std::optional<std::int64_t> result;
         if (operation == "+")
-            result = checked_add(*left_value, *right_value);
+            result = integer::add(*left_value, *right_value);
         else if (operation == "-")
-            result = checked_subtract(*left_value, *right_value);
+            result = integer::subtract(*left_value, *right_value);
         else if (operation == "*")
-            result = checked_multiply(*left_value, *right_value);
+            result = integer::multiply(*left_value, *right_value);
         else if (operation == "/") {
-            if (*left_value == std::numeric_limits<std::int64_t>::min() && *right_value == -1)
+            const auto divided = integer::divide(*left_value, *right_value);
+            if (!divided)
                 return;
-            result = *left_value / *right_value;
+            result = divided.value;
         } else if (operation == "%") {
-            if (*left_value == std::numeric_limits<std::int64_t>::min() && *right_value == -1)
+            const auto modulo = integer::modulo(*left_value, *right_value);
+            if (!modulo)
                 return;
-            result = *left_value % *right_value;
-        } else {
-            return;
-        }
-        if (!result)
+            result = modulo.value;
+        } else if (operation == "<<")
+            result = integer::shift_left(*left_value, *right_value);
+        else if (operation == ">>")
+            result = integer::shift_right(*left_value, *right_value);
+        else if (operation == "&")
+            result = integer::bit_and(*left_value, *right_value);
+        else if (operation == "|")
+            result = integer::bit_or(*left_value, *right_value);
+        else if (operation == "^")
+            result = integer::bit_xor(*left_value, *right_value);
+        else
             return;
         replace_literal(expression, ir::LiteralKind::integer, {TypeKind::integer, "int"},
                         std::to_string(*result));
