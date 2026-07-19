@@ -27,6 +27,7 @@ RUNTIME_FIELDS = {
     "runtime_abi": "2",
     "runtime_header_sha256": "a" * 64,
     "runtime_source_sha256": "b" * 64,
+    "integer_semantics_header_sha256": "c" * 64,
 }
 
 
@@ -36,7 +37,7 @@ def write(path: Path, content: str = "fixture") -> None:
 
 
 def manifest(path: Path, fields: dict[str, str]) -> None:
-    body = "GDPP_SDK 4\n" + "".join(f"{key} {value}\n" for key, value in fields.items())
+    body = "GDPP_SDK 5\n" + "".join(f"{key} {value}\n" for key, value in fields.items())
     write(path, body)
 
 
