@@ -1,6 +1,7 @@
 #include "gdpp/frontend/constant_evaluator.hpp"
 
 #include "gdpp/frontend/literal.hpp"
+#include "gdpp/support/integer_semantics.hpp"
 
 #include <limits>
 
@@ -32,14 +33,9 @@ evaluate_integer_constant(const ast::Expression& expression,
         if (unary->operation == "+")
             return operand;
         if (unary->operation == "~")
-            return ~*operand;
-        if (unary->operation == "-") {
-            // Godot reserves the decimal 2^63 magnitude so the source spelling of INT64_MIN is
-            // representable. Keep that sentinel stable instead of invoking signed overflow.
-            if (*operand == std::numeric_limits<std::int64_t>::min())
-                return *operand;
-            return -*operand;
-        }
+            return integer::bit_not(*operand);
+        if (unary->operation == "-")
+            return integer::negate(*operand);
         return std::nullopt;
     }
     const auto* binary = expression.get_if<ast::BinaryExpression>();
@@ -49,49 +45,28 @@ evaluate_integer_constant(const ast::Expression& expression,
     const auto right = evaluate_integer_constant(*binary->right, previous);
     if (!left || !right)
         return std::nullopt;
-    const auto minimum = std::numeric_limits<std::int64_t>::min();
-    const auto maximum = std::numeric_limits<std::int64_t>::max();
     const auto& operation = binary->operation;
-    if (operation == "+") {
-        if ((*right > 0 && *left > maximum - *right) || (*right < 0 && *left < minimum - *right))
-            return std::nullopt;
-        return *left + *right;
-    }
-    if (operation == "-") {
-        if ((*right < 0 && *left > maximum + *right) || (*right > 0 && *left < minimum + *right))
-            return std::nullopt;
-        return *left - *right;
-    }
-    if (operation == "*") {
-        if (*left == 0 || *right == 0)
-            return 0;
-        if ((*left == -1 && *right == minimum) || (*right == -1 && *left == minimum))
-            return std::nullopt;
-        if ((*left > 0 && *right > 0 && *left > maximum / *right) ||
-            (*left > 0 && *right < 0 && *right < minimum / *left) ||
-            (*left < 0 && *right > 0 && *left < minimum / *right) ||
-            (*left < 0 && *right < 0 && *left < maximum / *right))
-            return std::nullopt;
-        return *left * *right;
-    }
+    if (operation == "+")
+        return integer::add(*left, *right);
+    if (operation == "-")
+        return integer::subtract(*left, *right);
+    if (operation == "*")
+        return integer::multiply(*left, *right);
     if (operation == "/" || operation == "%") {
-        if (*right == 0 || (*left == minimum && *right == -1))
-            return std::nullopt;
-        return operation == "/" ? *left / *right : *left % *right;
+        const auto result = operation == "/" ? integer::divide(*left, *right)
+                                               : integer::modulo(*left, *right);
+        return result ? std::optional<std::int64_t>{result.value} : std::nullopt;
     }
-    if (operation == "<<" || operation == ">>") {
-        if (*right < 0 || *right >= 63 || *left < 0)
-            return std::nullopt;
-        if (operation == "<<" && *left > (maximum >> *right))
-            return std::nullopt;
-        return operation == "<<" ? *left << *right : *left >> *right;
-    }
+    if (operation == "<<")
+        return integer::shift_left(*left, *right);
+    if (operation == ">>")
+        return integer::shift_right(*left, *right);
     if (operation == "&")
-        return *left & *right;
+        return integer::bit_and(*left, *right);
     if (operation == "|")
-        return *left | *right;
+        return integer::bit_or(*left, *right);
     if (operation == "^")
-        return *left ^ *right;
+        return integer::bit_xor(*left, *right);
     return std::nullopt;
 }
 
