@@ -106,7 +106,7 @@ def main() -> int:
     toolchain = godot_cpp / "cmake/ios.toolchain.cmake"
     runtime_header = source_root / "include/gdpp/runtime/variant_ops.hpp"
     runtime_source = source_root / "src/runtime/variant_ops.cpp"
-    integer_semantics_header = source_root / "include/gdpp/support/integer_semantics.hpp"
+    integer_semantics_header = source_root / "include/gdpp/numeric/integer_semantics.hpp"
     for required in (
         godot_cpp / "CMakeLists.txt",
         toolchain,
@@ -123,7 +123,7 @@ def main() -> int:
         shutil.rmtree(stage)
     for directory in (
         stage / "include/gdpp/runtime",
-        stage / "include/gdpp/support",
+        stage / "include/gdpp/numeric",
         stage / "src/runtime",
         stage / "godot-cpp/gen",
         stage / "lib/device",
@@ -195,7 +195,7 @@ def main() -> int:
     shutil.copy2(runtime_source, stage / "src/runtime/variant_ops.cpp")
     shutil.copy2(
         integer_semantics_header,
-        stage / "include/gdpp/support/integer_semantics.hpp",
+        stage / "include/gdpp/numeric/integer_semantics.hpp",
     )
 
     manifest = (

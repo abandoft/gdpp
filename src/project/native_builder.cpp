@@ -369,7 +369,7 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
                         runtime_header_sha256, "runtime header");
     verify_runtime_file(options.sdk_root / "src/runtime/variant_ops.cpp", runtime_source_sha256,
                         "runtime source");
-    verify_runtime_file(options.sdk_root / "include/gdpp/support/integer_semantics.hpp",
+    verify_runtime_file(options.sdk_root / "include/gdpp/numeric/integer_semantics.hpp",
                         integer_semantics_header_sha256, "integer semantics header");
     return diagnostics.empty();
 }
@@ -1109,7 +1109,7 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
     }
     for (const auto& required :
          {registration, runtime, includes[1] / "gdpp/runtime/variant_ops.hpp",
-          includes[1] / "gdpp/support/integer_semantics.hpp", includes[2] / "godot_cpp/godot.hpp",
+          includes[1] / "gdpp/numeric/integer_semantics.hpp", includes[2] / "godot_cpp/godot.hpp",
           includes[3] / "godot_cpp/core/version.hpp", includes[3] / "gdextension_interface.h"}) {
         if (!std::filesystem::is_regular_file(required))
             result.diagnostics.push_back("missing native SDK input: " + path_to_utf8(required));
@@ -1208,7 +1208,7 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
         build_configuration,
         options.sdk_root / "sdk.manifest",
         options.sdk_root / "include/gdpp/runtime/variant_ops.hpp",
-        options.sdk_root / "include/gdpp/support/integer_semantics.hpp",
+        options.sdk_root / "include/gdpp/numeric/integer_semantics.hpp",
     };
     const auto bridge_lock = options.project_output_directory / "bridge.lock";
     if (std::filesystem::is_regular_file(bridge_lock))

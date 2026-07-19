@@ -110,7 +110,7 @@ def main() -> int:
     godot_cpp = source_root / "third/godot-cpp"
     runtime_header = source_root / "include/gdpp/runtime/variant_ops.hpp"
     runtime_source = source_root / "src/runtime/variant_ops.cpp"
-    integer_semantics_header = source_root / "include/gdpp/support/integer_semantics.hpp"
+    integer_semantics_header = source_root / "include/gdpp/numeric/integer_semantics.hpp"
     for required in (
         godot_cpp / "CMakeLists.txt",
         runtime_header,
@@ -126,7 +126,7 @@ def main() -> int:
     if stage.exists():
         shutil.rmtree(stage)
     (stage / "include/gdpp/runtime").mkdir(parents=True)
-    (stage / "include/gdpp/support").mkdir(parents=True)
+    (stage / "include/gdpp/numeric").mkdir(parents=True)
     (stage / "src/runtime").mkdir(parents=True)
     (stage / "godot-cpp/gen").mkdir(parents=True)
     (stage / "lib").mkdir(parents=True)
@@ -176,7 +176,7 @@ def main() -> int:
     shutil.copy2(runtime_source, stage / "src/runtime/variant_ops.cpp")
     shutil.copy2(
         integer_semantics_header,
-        stage / "include/gdpp/support/integer_semantics.hpp",
+        stage / "include/gdpp/numeric/integer_semantics.hpp",
     )
 
     manifest = (

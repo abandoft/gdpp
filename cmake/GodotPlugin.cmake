@@ -342,7 +342,7 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
     set(GDPP_SDK_PACKAGE_COMMANDS
         COMMAND "${CMAKE_COMMAND}" -E make_directory
                 "${GDPP_SDK_DIRECTORY}/include/gdpp/runtime"
-                "${GDPP_SDK_DIRECTORY}/include/gdpp/support"
+                "${GDPP_SDK_DIRECTORY}/include/gdpp/numeric"
                 "${GDPP_SDK_DIRECTORY}/src/runtime"
                 "${GDPP_SDK_DIRECTORY}/godot-cpp/gen"
                 "${GDPP_SDK_DIRECTORY}/lib"
@@ -354,7 +354,7 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
                 "${GDPP_SDK_DIRECTORY}/src/runtime/variant_ops.cpp"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${GDPP_INTEGER_SEMANTICS_HEADER}"
-                "${GDPP_SDK_DIRECTORY}/include/gdpp/support/integer_semantics.hpp"
+                "${GDPP_SDK_DIRECTORY}/include/gdpp/numeric/integer_semantics.hpp"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${CMAKE_SOURCE_DIR}/third/godot-cpp/include"
                 "${GDPP_SDK_DIRECTORY}/godot-cpp/include"

@@ -1,6 +1,6 @@
 #include "gdpp/runtime/variant_ops.hpp"
 
-#include "gdpp/support/integer_semantics.hpp"
+#include "gdpp/numeric/integer_semantics.hpp"
 
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/engine.hpp>

@@ -2137,7 +2137,7 @@ TEST_CASE("compiler emits ordered portable operations for typed integers") {
         "left < right, -left, ~right]\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.header.find("#include <gdpp/support/integer_semantics.hpp>") !=
+    REQUIRE(result.unit.header.find("#include <gdpp/numeric/integer_semantics.hpp>") !=
             std::string::npos);
     for (const auto* helper :
          {"gdpp::integer::add(", "gdpp::integer::subtract(", "gdpp::integer::multiply(",

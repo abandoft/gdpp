@@ -1,6 +1,6 @@
 #include "support/test.hpp"
 
-#include "gdpp/support/integer_semantics.hpp"
+#include "gdpp/numeric/integer_semantics.hpp"
 
 #include <cstdint>
 #include <limits>
