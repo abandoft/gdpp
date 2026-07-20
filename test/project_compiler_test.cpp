@@ -1859,6 +1859,42 @@ TEST_CASE("project source selection compiles scripts beside native addons and ne
             std::string::npos);
 }
 
+TEST_CASE("project compiler enforces cross-script abstract method obligations") {
+    const auto root = fixture_root("project-abstract-inheritance");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "contract.gd", "@abstract\n"
+                                     "extends RefCounted\n"
+                                     "class_name WorkContract\n"
+                                     "@abstract\n"
+                                     "func execute(value: int) -> String\n");
+    write_text(root / "deferred.gd", "@abstract\n"
+                                     "extends WorkContract\n"
+                                     "class_name DeferredWork\n");
+    write_text(root / "implementation.gd", "extends DeferredWork\n"
+                                           "class_name ConcreteWork\n"
+                                           "func execute(value: int) -> String:\n"
+                                           "    return str(value)\n");
+
+    const auto options = project_options(root);
+    const gdpp::ProjectCompiler compiler;
+    const auto valid = compiler.compile(options);
+
+    REQUIRE(valid.success);
+    REQUIRE_EQ(std::count_if(valid.scripts.begin(), valid.scripts.end(), [](const auto& script) {
+                   return script.is_abstract;
+               }),
+               std::ptrdiff_t{2});
+
+    write_text(root / "missing.gd", "extends DeferredWork\n"
+                                    "class_name MissingWork\n");
+    const auto invalid = compiler.compile(options);
+
+    REQUIRE(!invalid.success);
+    REQUIRE(std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto& item) { return item.diagnostic.code == "GDS4149"; }));
+}
+
 TEST_CASE("project frontend limit failures never commit generated state") {
     const auto root = fixture_root("project-frontend-limits");
     std::error_code error;
