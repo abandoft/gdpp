@@ -248,6 +248,7 @@ if(GDPP_ANDROID_SDK_VERSIONS)
                     --gdpp-version "${PROJECT_VERSION}"
                 DEPENDS
                     "${CMAKE_SOURCE_DIR}/tools/build_android_sdk.py"
+                    "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
                     "${GDPP_NATIVE_RUNTIME_HEADER}"
                     "${GDPP_NATIVE_RUNTIME_SOURCE}"
                     "${GDPP_INTEGER_SEMANTICS_HEADER}"
@@ -289,6 +290,7 @@ if(GDPP_WEB_SDK_VERSIONS)
                     --gdpp-version "${PROJECT_VERSION}"
                 DEPENDS
                     "${CMAKE_SOURCE_DIR}/tools/build_web_sdk.py"
+                    "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
                     "${GDPP_NATIVE_RUNTIME_HEADER}"
                     "${GDPP_NATIVE_RUNTIME_SOURCE}"
                     "${GDPP_INTEGER_SEMANTICS_HEADER}"
@@ -327,6 +329,7 @@ if(GDPP_IOS_SDK_VERSIONS)
                 --gdpp-version "${PROJECT_VERSION}"
             DEPENDS
                 "${CMAKE_SOURCE_DIR}/tools/build_ios_sdk.py"
+                "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
                 "${GDPP_NATIVE_RUNTIME_HEADER}"
                 "${GDPP_NATIVE_RUNTIME_SOURCE}"
                 "${GDPP_INTEGER_SEMANTICS_HEADER}"
