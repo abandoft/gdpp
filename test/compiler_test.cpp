@@ -2386,6 +2386,26 @@ TEST_CASE("semantic flow narrows type-tested values in if and while bodies") {
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
 }
 
+TEST_CASE("semantic flow narrows short-circuit logical operands") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "flow_short_circuit.gd", "extends Node\n"
+                                 "func positive(value: Variant) -> bool:\n"
+                                 "    return value is int and value > 0\n"
+                                 "func named(value: Variant) -> bool:\n"
+                                 "    return value is not Node or value.name == &\"ready\"\n"
+                                 "func positioned(value: Variant) -> bool:\n"
+                                 "    return value is Node and value is Node2D and value.position.x > 0\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("static_cast<int64_t>(value)") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node2D>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
+}
+
 TEST_CASE("typed scene nodes retain dynamic script dispatch for unknown members") {
     const gdpp::Compiler compiler;
     const auto result =

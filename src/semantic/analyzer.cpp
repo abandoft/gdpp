@@ -952,31 +952,50 @@ SemanticAnalyzer::conditional_refinements(const ast::Expression& expression) con
 }
 
 Type SemanticAnalyzer::analyze_binary_tree(const ast::Expression& expression) {
+    enum class Stage { enter, after_left, after_right };
     struct Frame {
         const ast::Expression* expression{nullptr};
-        bool children_analyzed{false};
+        Stage stage{Stage::enter};
+        std::optional<FlowTypeState> saved_flow;
     };
-    std::vector<Frame> work{{&expression, false}};
+    std::vector<Frame> work{{&expression, Stage::enter, std::nullopt}};
     while (!work.empty()) {
-        const auto frame = work.back();
+        auto frame = std::move(work.back());
         work.pop_back();
         if (frame.expression->kind() != ast::ExpressionKind::binary) {
             (void)analyze_expression(*frame.expression);
             continue;
         }
-        if (frame.children_analyzed) {
+        if (frame.stage == Stage::after_right) {
             const auto& left_expression = *frame.expression->operand(0);
             const auto& right_expression = *frame.expression->operand(1);
             const auto left = model_.type_of(left_expression);
             const auto right = model_.type_of(right_expression);
             model_.expression_types_[frame.expression] =
                 resolve_binary_expression(*frame.expression, left, right);
+            if (frame.saved_flow)
+                flow_types_ = std::move(*frame.saved_flow);
+            continue;
+        }
+        if (frame.stage == Stage::after_left) {
+            const auto logical = frame.expression->value() == "and" ||
+                                 frame.expression->value() == "or";
+            Frame completion{frame.expression, Stage::after_right, std::nullopt};
+            if (logical) {
+                completion.saved_flow = flow_types_;
+                const auto left_refinements =
+                    conditional_refinements(*frame.expression->operand(0));
+                flow_types_.apply(frame.expression->value() == "and"
+                                      ? left_refinements.when_true
+                                      : left_refinements.when_false);
+            }
+            work.push_back(std::move(completion));
+            work.push_back({frame.expression->operand(1).get(), Stage::enter, std::nullopt});
             continue;
         }
 
-        work.push_back({frame.expression, true});
-        work.push_back({frame.expression->operand(1).get(), false});
-        work.push_back({frame.expression->operand(0).get(), false});
+        work.push_back({frame.expression, Stage::after_left, std::nullopt});
+        work.push_back({frame.expression->operand(0).get(), Stage::enter, std::nullopt});
     }
     return model_.type_of(expression);
 }
