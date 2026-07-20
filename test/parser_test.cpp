@@ -599,6 +599,30 @@ TEST_CASE("parser accepts commercial script headers semicolons and inline lambda
                std::size_t{1});
 }
 
+TEST_CASE("parser enforces callable parameter ordering and unique names") {
+    const gdpp::SourceFile source{
+        "invalid_parameters.gd",
+        "signal changed(value: int = 1)\n"
+        "func invalid_order(optional = 1, mandatory, optional_two = 2):\n"
+        "    var operation = func(duplicate, duplicate): return duplicate\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(diagnostics.has_errors());
+    REQUIRE(std::any_of(diagnostics.items().begin(), diagnostics.items().end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS2033"; }));
+    REQUIRE(std::any_of(diagnostics.items().begin(), diagnostics.items().end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS2034"; }));
+    REQUIRE(std::any_of(diagnostics.items().begin(), diagnostics.items().end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS2035"; }));
+    REQUIRE_EQ(script.signals.front().parameters.size(), std::size_t{1});
+    REQUIRE_EQ(script.functions.front().parameters.size(), std::size_t{2});
+    const auto* lambda = script.functions.front().body.front().expression()->lambda();
+    REQUIRE(lambda != nullptr);
+    REQUIRE_EQ(lambda->parameters.size(), std::size_t{1});
+}
+
 TEST_CASE("parser accepts inline match and conditional suites") {
     const gdpp::SourceFile source{"inline_suites.gd", "func describe(value: int):\n"
                                                       "    match value:\n"
