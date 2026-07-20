@@ -2250,6 +2250,24 @@ TEST_CASE("compiler diagnoses every statically doomed typed container storage pa
                std::ptrdiff_t{5});
 }
 
+TEST_CASE("compiler enforces dynamic typed storage through exact Godot metadata") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "dynamic_typed_storage.gd",
+        "func restore_array(value: Variant) -> Array[int]:\n"
+        "    return value\n"
+        "func restore_dictionary(value: Variant) -> Dictionary[String, int]:\n"
+        "    return value\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::strict_typed_storage<godot::TypedArray<int64_t>>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::strict_typed_storage<godot::TypedDictionary<godot::String, "
+                "int64_t>>") != std::string::npos);
+}
+
 TEST_CASE("compiler infers native Godot virtual signatures and escapes C++ keywords") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("virtuals.gd", "extends Node\n"
