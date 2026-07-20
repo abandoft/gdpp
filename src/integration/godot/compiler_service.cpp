@@ -1019,6 +1019,14 @@ godot::Dictionary GDPPCompiler::compile_project(
                                                       : read_file(development_descriptor);
     const ProjectCompiler compiler;
     const auto result = compiler.compile(options);
+    std::string descriptor_additional_sections;
+    if (result.success && *profile == NativeBuildProfile::development) {
+        if (const auto descriptor = read_file(result.extension_descriptor)) {
+            const auto additional = descriptor->find("\n[icons]\n");
+            if (additional != std::string::npos)
+                descriptor_additional_sections = descriptor->substr(additional + 1);
+        }
+    }
     bool descriptor_restore_failed = false;
     if (result.success && preserved_development_descriptor &&
         !write_file_atomic(development_descriptor, *preserved_development_descriptor)) {
@@ -1082,7 +1090,8 @@ godot::Dictionary GDPPCompiler::compile_project(
                 godot::String::utf8(generic_path_to_utf8(plan.output_library).c_str());
             const auto resource_path = native_string(settings->localize_path(output_path));
             const auto descriptor = native_development_extension_descriptor(
-                *version, *platform, architecture, resource_path);
+                *version, *platform, architecture, resource_path, web_thread_mode,
+                descriptor_additional_sections);
             if (!write_file_atomic(result.extension_descriptor, descriptor)) {
                 output["success"] = false;
                 diagnostics.push_back(
