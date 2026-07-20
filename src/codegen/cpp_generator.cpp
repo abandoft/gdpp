@@ -4612,7 +4612,8 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
 void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                                                 std::ostringstream& source,
                                                 const std::string& native_name,
-                                                const std::string& source_name) const {
+                                                const std::string& source_name,
+                                                const bool tool_mode) const {
     const auto* previous_inner_script = current_inner_script_;
     const auto previous_function_parameters = local_function_parameters_;
     const auto previous_functions = local_functions_;
@@ -4712,10 +4713,10 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         for (const auto& field : declaration.fields) {
             if (!field.is_constant && !field.is_static && !field.onready && field.initializer) {
                 const bool editor_safe = editor_safe_initializer(*field.initializer);
-                if (!editor_safe)
+                if (!editor_safe && !tool_mode)
                     source << "    if (!gdpp_editor_hint) {\n";
-                source << (editor_safe ? "    " : "        ") << sanitize_identifier(field.name)
-                       << " = ";
+                source << (editor_safe || tool_mode ? "    " : "        ")
+                       << sanitize_identifier(field.name) << " = ";
                 if (contains_preload(*field.initializer)) {
                     source << "_gdpp_preloaded_" << sanitize_identifier(field.name) << "()";
                 } else {
@@ -4723,7 +4724,7 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                                               emit_expression(*field.initializer));
                 }
                 source << ";\n";
-                if (!editor_safe)
+                if (!editor_safe && !tool_mode)
                     source << "    }\n";
             }
         }
@@ -4733,11 +4734,12 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
             return !field.is_constant && !field.is_static && !field.onready && field.initializer;
         });
     const bool needs_editor_hint =
-        std::any_of(declaration.fields.begin(), declaration.fields.end(), cached_preload_field) ||
-        std::any_of(declaration.fields.begin(), declaration.fields.end(), [](const auto& field) {
-            return !field.is_constant && !field.is_static && !field.onready && field.initializer &&
-                   !editor_safe_initializer(*field.initializer);
-        });
+        !tool_mode &&
+        (std::any_of(declaration.fields.begin(), declaration.fields.end(), cached_preload_field) ||
+         std::any_of(declaration.fields.begin(), declaration.fields.end(), [](const auto& field) {
+             return !field.is_constant && !field.is_static && !field.onready && field.initializer &&
+                    !editor_safe_initializer(*field.initializer);
+         }));
     const auto required =
         initializer == declaration.functions.end()
             ? std::ptrdiff_t{0}
@@ -4750,7 +4752,8 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         if (needs_editor_hint)
             source << "    const bool gdpp_editor_hint = gdpp::runtime::is_editor_hint();\n";
         if (std::any_of(declaration.fields.begin(), declaration.fields.end(), cached_preload_field))
-            source << "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n";
+            source << (tool_mode ? "    _gdpp_preload_resources();\n"
+                                 : "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n");
         emit_instance_initializers();
         if (has_native_rpc)
             emit_rpc_configurations(source, declaration.functions, 1);
@@ -4767,13 +4770,16 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
             source << parameter_native_type(parameter) << ' ' << parameter_native_name(parameter);
         }
         source << ") {\n";
-        source << "    const bool gdpp_editor_hint = gdpp::runtime::is_editor_hint();\n";
+        if (!tool_mode)
+            source << "    const bool gdpp_editor_hint = gdpp::runtime::is_editor_hint();\n";
         if (std::any_of(declaration.fields.begin(), declaration.fields.end(), cached_preload_field))
-            source << "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n";
+            source << (tool_mode ? "    _gdpp_preload_resources();\n"
+                                 : "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n");
         emit_instance_initializers();
         if (has_native_rpc)
             emit_rpc_configurations(source, declaration.functions, 1);
-        source << "    if (gdpp_editor_hint) return;\n";
+        if (!tool_mode)
+            source << "    if (gdpp_editor_hint) return;\n";
         source << "    _init(";
         for (std::size_t index = 0; index < initializer->parameters.size(); ++index) {
             if (index != 0)
@@ -4795,7 +4801,8 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
     const bool has_cached_preloads =
         std::any_of(declaration.fields.begin(), declaration.fields.end(), cached_preload_field);
     if (has_cached_preloads) {
-        source << "    if (gdpp::runtime::is_editor_hint()) return;\n";
+        if (!tool_mode)
+            source << "    if (gdpp::runtime::is_editor_hint()) return;\n";
         source << "    static std::once_flag once;\n    std::call_once(once, []() {\n";
     }
     for (const auto& field : declaration.fields) {
@@ -4901,7 +4908,10 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
     }
     if (std::any_of(declaration.functions.begin(), declaration.functions.end(),
                     [](const auto& function) { return function.name == "_static_init"; })) {
-        source << "    _static_init();\n";
+        if (tool_mode)
+            source << "    _static_init();\n";
+        else
+            source << "    if (!gdpp::runtime::is_editor_hint()) _static_init();\n";
     }
     source << "}\n\n";
     for (const auto& field : declaration.fields) {
@@ -5601,7 +5611,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     source << '\n';
     for (const auto& [qualified, declaration] : ordered_inner_classes) {
         emit_inner_class_definition(*declaration, source, inner_native_names_.at(qualified),
-                                    qualified);
+                                    qualified, module.is_tool);
     }
     for (const auto& variable : module.fields) {
         if (!variable.is_constant)
@@ -5686,10 +5696,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
             if (!variable.is_constant && !variable.is_static && !variable.onready &&
                 variable.initializer) {
                 const bool editor_safe = editor_safe_initializer(*variable.initializer);
-                if (!editor_safe)
+                if (!editor_safe && !module.is_tool)
                     source << "    if (!gdpp_editor_hint) {\n";
-                source << (editor_safe ? "    " : "        ") << sanitize_identifier(variable.name)
-                       << " = ";
+                source << (editor_safe || module.is_tool ? "    " : "        ")
+                       << sanitize_identifier(variable.name) << " = ";
                 if (contains_preload(*variable.initializer)) {
                     source << "_gdpp_preloaded_" << sanitize_identifier(variable.name) << "()";
                 } else {
@@ -5697,7 +5707,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                                               emit_expression(*variable.initializer));
                 }
                 source << ";\n";
-                if (!editor_safe)
+                if (!editor_safe && !module.is_tool)
                     source << "    }\n";
             }
         }
@@ -5709,11 +5719,12 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                             [](const auto& parameter) { return !parameter.default_value; });
     const bool needs_editor_hint =
         is_autoload ||
-        std::any_of(module.fields.begin(), module.fields.end(), cached_preload_field) ||
-        std::any_of(module.fields.begin(), module.fields.end(), [](const auto& field) {
-            return !field.is_constant && !field.is_static && !field.onready && field.initializer &&
-                   !editor_safe_initializer(*field.initializer);
-        });
+        (!module.is_tool &&
+         (std::any_of(module.fields.begin(), module.fields.end(), cached_preload_field) ||
+          std::any_of(module.fields.begin(), module.fields.end(), [](const auto& field) {
+              return !field.is_constant && !field.is_static && !field.onready &&
+                     field.initializer && !editor_safe_initializer(*field.initializer);
+          })));
     const auto emit_autoload_registration = [&]() {
         if (is_autoload) {
             source << "    if (!gdpp_editor_hint) gdpp::runtime::register_autoload("
@@ -5728,7 +5739,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
             source << "    const bool gdpp_editor_hint = gdpp::runtime::is_editor_hint();\n";
         emit_autoload_registration();
         if (std::any_of(module.fields.begin(), module.fields.end(), cached_preload_field))
-            source << "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n";
+            source << (module.is_tool ? "    _gdpp_preload_resources();\n"
+                                      : "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n");
         emit_instance_initializers();
         if (has_native_rpc)
             emit_rpc_configurations(source, module.functions, 1);
@@ -5745,14 +5757,17 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
             source << parameter_native_type(parameter) << ' ' << parameter_native_name(parameter);
         }
         source << ") {\n";
-        source << "    const bool gdpp_editor_hint = gdpp::runtime::is_editor_hint();\n";
+        if (!module.is_tool || is_autoload)
+            source << "    const bool gdpp_editor_hint = gdpp::runtime::is_editor_hint();\n";
         emit_autoload_registration();
         if (std::any_of(module.fields.begin(), module.fields.end(), cached_preload_field))
-            source << "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n";
+            source << (module.is_tool ? "    _gdpp_preload_resources();\n"
+                                      : "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n");
         emit_instance_initializers();
         if (has_native_rpc)
             emit_rpc_configurations(source, module.functions, 1);
-        source << "    if (gdpp_editor_hint) return;\n";
+        if (!module.is_tool)
+            source << "    if (gdpp_editor_hint) return;\n";
         source << "    _init(";
         for (std::size_t index = 0; index < initializer->parameters.size(); ++index) {
             if (index != 0)
@@ -5774,7 +5789,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     const bool has_cached_preloads =
         std::any_of(module.fields.begin(), module.fields.end(), cached_preload_field);
     if (has_cached_preloads) {
-        source << "    if (gdpp::runtime::is_editor_hint()) return;\n";
+        if (!module.is_tool)
+            source << "    if (gdpp::runtime::is_editor_hint()) return;\n";
         source << "    static std::once_flag once;\n    std::call_once(once, []() {\n";
     }
     for (const auto& variable : module.fields) {
@@ -5897,7 +5913,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     }
     if (std::any_of(module.functions.begin(), module.functions.end(),
                     [](const auto& function) { return function.name == "_static_init"; })) {
-        source << "    _static_init();\n";
+        if (module.is_tool)
+            source << "    _static_init();\n";
+        else
+            source << "    if (!gdpp::runtime::is_editor_hint()) _static_init();\n";
     }
     source << "}\n\n";
     for (const auto& variable : module.fields) {

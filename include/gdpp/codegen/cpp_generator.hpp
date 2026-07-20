@@ -151,8 +151,8 @@ class CodeGenerator final {
                                       const std::string& native_name,
                                       const std::string& source_name) const;
     void emit_inner_class_definition(const ir::Class& declaration, std::ostringstream& source,
-                                     const std::string& native_name,
-                                     const std::string& source_name) const;
+                                     const std::string& native_name, const std::string& source_name,
+                                     bool tool_mode) const;
     [[nodiscard]] static std::string sanitize_identifier(const std::string& value);
     [[nodiscard]] static std::string sanitize_qualified_identifier(std::string_view value);
     [[nodiscard]] static std::string enum_identifier(const std::string& value);

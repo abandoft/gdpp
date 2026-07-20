@@ -916,6 +916,31 @@ TEST_CASE("compiler exposes pure field defaults while keeping service initialize
     REQUIRE(later_offset == std::string::npos || service < later_offset);
 }
 
+TEST_CASE("tool scripts execute initialization paths inside the editor") {
+    const auto result = gdpp::Compiler{}.compile(
+        "editor_state.gd",
+        "@tool\n"
+        "extends Node\n"
+        "var scene = preload(\"res://effects/spark.tscn\")\n"
+        "var service_value = Engine.get_singleton(\"CustomerService\").value\n"
+        "func _init() -> void:\n"
+        "    service_value = 1\n"
+        "class Worker:\n"
+        "    var nested_value = Engine.get_singleton(\"CustomerService\").value\n"
+        "    func _init() -> void:\n"
+        "        nested_value = 2\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.is_tool);
+    REQUIRE(result.unit.source.find("const bool gdpp_editor_hint = ") == std::string::npos);
+    REQUIRE(result.unit.source.find("if (!gdpp_editor_hint) {") == std::string::npos);
+    REQUIRE(result.unit.source.find("if (gdpp_editor_hint) return;") == std::string::npos);
+    REQUIRE(result.unit.source.find("if (gdpp::runtime::is_editor_hint()) return;") ==
+            std::string::npos);
+    REQUIRE(result.unit.source.find("    _gdpp_preload_resources();") != std::string::npos);
+    REQUIRE(result.unit.source.find("    _init();") != std::string::npos);
+}
+
 TEST_CASE("compiler preserves UTF-8 and unique-node paths in generated Godot strings") {
     const gdpp::Compiler compiler;
     const auto result =
@@ -3040,6 +3065,11 @@ TEST_CASE("static constructors are validated and run exactly from native class b
     const auto valid = compiler.compile("static_init.gd", "static var initialized: bool = false\n"
                                                           "static func _static_init() -> void:\n"
                                                           "    initialized = true\n");
+    const auto tool =
+        compiler.compile("tool_static_init.gd", "@tool\n"
+                                                "static var initialized := false\n"
+                                                "static func _static_init() -> void:\n"
+                                                "    initialized = true\n");
     const auto non_static = compiler.compile("non_static_init.gd", "func _static_init() -> void:\n"
                                                                    "    pass\n");
     const auto returning =
@@ -3051,8 +3081,14 @@ TEST_CASE("static constructors are validated and run exactly from native class b
                                                                     "        pass\n");
 
     REQUIRE(valid.success);
-    REQUIRE(valid.unit.source.find("    _static_init();\n}") != std::string::npos);
+    REQUIRE(
+        valid.unit.source.find("    if (!gdpp::runtime::is_editor_hint()) _static_init();\n}") !=
+        std::string::npos);
     REQUIRE(valid.unit.source.find("D_METHOD(\"_static_init\"") == std::string::npos);
+    REQUIRE(tool.success);
+    REQUIRE(tool.unit.source.find("    _static_init();\n}") != std::string::npos);
+    REQUIRE(tool.unit.source.find("if (!gdpp::runtime::is_editor_hint()) _static_init();") ==
+            std::string::npos);
     REQUIRE(!non_static.success);
     REQUIRE(!returning.success);
     REQUIRE(!loop_conflict.success);
