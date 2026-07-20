@@ -45,10 +45,15 @@ def method_record(owner: str, method: dict, builtin: bool) -> tuple:
         if builtin
         else method.get("return_value", {}).get("type", "void")
     )
+    return_meta = (
+        "real_t" if builtin and return_type == "float"
+        else method.get("return_value", {}).get("meta", "")
+    )
     return (
         owner,
         method["name"],
         return_type,
+        return_meta,
         required,
         len(arguments),
         bool(method.get("is_static", False)),
@@ -256,12 +261,25 @@ def main() -> None:
     lines.append("inline constexpr GodotMethodRecord methods[] = {")
     generated_arguments: list[tuple[str, str, str, bool]] = []
     for record in methods:
-        owner, name, result, required, maximum, static, vararg, is_const, is_virtual, args = record
+        (
+            owner,
+            name,
+            result,
+            result_meta,
+            required,
+            maximum,
+            static,
+            vararg,
+            is_const,
+            is_virtual,
+            args,
+        ) = record
         first_argument = len(generated_arguments)
         generated_arguments.extend(args)
         lines.append(
             "    {"
             f"{cpp_string(owner)}, {cpp_string(name)}, {cpp_string(result)}, "
+            f"{cpp_string(result_meta)}, "
             f"{required}, {maximum}, {first_argument}, {str(static).lower()}, {str(vararg).lower()}, "
             f"{str(is_const).lower()}, {str(is_virtual).lower()}"
             "},"

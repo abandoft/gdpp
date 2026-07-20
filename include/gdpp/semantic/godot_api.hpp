@@ -32,6 +32,7 @@ struct GodotMethodRecord {
     const char* owner;
     const char* name;
     const char* return_type;
+    const char* return_meta;
     std::uint16_t required_arguments;
     std::uint16_t maximum_arguments;
     std::uint32_t first_argument;
