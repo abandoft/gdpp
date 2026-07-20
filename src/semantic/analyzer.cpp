@@ -904,6 +904,23 @@ Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expressi
                                expression.operand(1)->span);
             return unknown_type;
         }
+        bool valid_conversion = false;
+        if (left.is_dynamic() || right.is_dynamic()) {
+            valid_conversion = true;
+        } else if (right.kind == TypeKind::object) {
+            valid_conversion = left.kind == TypeKind::nil ||
+                               (left.kind == TypeKind::object &&
+                                (object_type_inherits(left, right) ||
+                                 object_type_inherits(right, left)));
+        } else {
+            valid_conversion = is_explicitly_convertible(right, left);
+        }
+        if (!valid_conversion) {
+            diagnostics_.error("GDS4075",
+                               "invalid cast: cannot convert " + left.display_name() + " to " +
+                                   right.display_name(),
+                               expression.span);
+        }
         return right;
     }
     if (operation == "and" || operation == "or") {
