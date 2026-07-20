@@ -3,6 +3,7 @@
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/callable.hpp>
+#include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/signal.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/string_name.hpp>
@@ -44,6 +45,14 @@ void compound_assign_integer(godot::Variant& target, godot::Variant::Operator op
 [[nodiscard]] godot::Array make_range(std::int64_t start, std::int64_t stop);
 [[nodiscard]] godot::Array make_range(std::int64_t start, std::int64_t stop, std::int64_t step);
 [[nodiscard]] std::int64_t length(const godot::Variant& value);
+[[nodiscard]] godot::Variant convert_value(const godot::Variant& value, std::int64_t type);
+[[nodiscard]] bool type_exists(const godot::Variant& name);
+[[nodiscard]] godot::String character(std::int64_t code);
+[[nodiscard]] std::int64_t ordinal(const godot::Variant& character);
+[[nodiscard]] godot::Color color8(std::int64_t red, std::int64_t green, std::int64_t blue,
+                                  std::int64_t alpha = 255);
+[[nodiscard]] bool is_instance_of(const godot::Variant& value,
+                                  const godot::Variant& type_descriptor);
 [[nodiscard]] godot::Variant load_resource(const godot::String& path);
 [[nodiscard]] bool is_editor_hint() noexcept;
 void register_autoload(const godot::StringName& name, godot::Object* instance);

@@ -8,10 +8,12 @@
 #include <godot_cpp/classes/resource.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
+#include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/classes/window.hpp>
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/callable_custom.hpp>
+#include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/signal.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -375,6 +377,90 @@ std::int64_t length(const godot::Variant& value) {
     godot::Variant target = value;
     const auto result = call_dynamic_impl(target, godot::StringName("size"), nullptr, 0);
     return static_cast<std::int64_t>(result);
+}
+
+godot::Variant convert_value(const godot::Variant& value, const std::int64_t type) {
+    if (type < 0 || type >= static_cast<std::int64_t>(godot::Variant::VARIANT_MAX)) {
+        godot::UtilityFunctions::push_error(
+            "GDPP: invalid type argument to convert(), use a TYPE_* constant");
+        return {};
+    }
+    return godot::UtilityFunctions::type_convert(value, type);
+}
+
+bool type_exists(const godot::Variant& name) {
+    if (name.get_type() != godot::Variant::STRING &&
+        name.get_type() != godot::Variant::STRING_NAME) {
+        godot::UtilityFunctions::push_error(
+            "GDPP: type_exists() expects a String or StringName argument");
+        return false;
+    }
+    const auto* class_db = godot::ClassDBSingleton::get_singleton();
+    return class_db && class_db->class_exists(static_cast<godot::StringName>(name));
+}
+
+godot::String character(const std::int64_t code) {
+    const bool surrogate = code >= 0xD800 && code <= 0xDFFF;
+    if (code <= 0 || code > 0x10FFFF || surrogate) {
+        godot::UtilityFunctions::push_error(
+            godot::String("GDPP: invalid Unicode scalar passed to char(): ") +
+            godot::String::num_int64(code));
+        return {};
+    }
+    return godot::String::chr(code);
+}
+
+std::int64_t ordinal(const godot::Variant& character_value) {
+    if (character_value.get_type() != godot::Variant::STRING &&
+        character_value.get_type() != godot::Variant::STRING_NAME) {
+        godot::UtilityFunctions::push_error("GDPP: ord() expects a String argument");
+        return 0;
+    }
+    const auto value = static_cast<godot::String>(character_value);
+    if (value.length() != 1) {
+        godot::UtilityFunctions::push_error(
+            "GDPP: ord() expects a string containing exactly one Unicode character");
+        return 0;
+    }
+    return value.unicode_at(0);
+}
+
+godot::Color color8(const std::int64_t red, const std::int64_t green, const std::int64_t blue,
+                    const std::int64_t alpha) {
+    return godot::Color::from_rgba8(red, green, blue, alpha);
+}
+
+bool is_instance_of(const godot::Variant& value, const godot::Variant& type_descriptor) {
+    if (type_descriptor.get_type() == godot::Variant::INT) {
+        const auto type = static_cast<std::int64_t>(type_descriptor);
+        if (type < 0 || type >= static_cast<std::int64_t>(godot::Variant::VARIANT_MAX)) {
+            godot::UtilityFunctions::push_error(
+                "GDPP: invalid TYPE_* constant passed to is_instance_of()");
+            return false;
+        }
+        return static_cast<std::int64_t>(value.get_type()) == type;
+    }
+
+    if (type_descriptor.get_type() == godot::Variant::STRING_NAME ||
+        type_descriptor.get_type() == godot::Variant::STRING) {
+        if (value.get_type() != godot::Variant::OBJECT)
+            return false;
+        auto* object = value.get_validated_object();
+        return object && object->is_class(static_cast<godot::StringName>(type_descriptor));
+    }
+
+    if (type_descriptor.get_type() == godot::Variant::OBJECT) {
+        auto* descriptor_object = type_descriptor.get_validated_object();
+        auto* script = godot::Object::cast_to<godot::Script>(descriptor_object);
+        auto* object = value.get_type() == godot::Variant::OBJECT ? value.get_validated_object()
+                                                                  : nullptr;
+        if (script)
+            return object && script->instance_has(object);
+    }
+
+    godot::UtilityFunctions::push_error(
+        "GDPP: is_instance_of() expects a TYPE_* constant, class, or script type");
+    return false;
 }
 
 godot::Variant load_resource(const godot::String& path) {
