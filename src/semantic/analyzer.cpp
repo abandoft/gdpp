@@ -40,6 +40,25 @@ class WarningIgnoreScope final {
     std::unordered_set<std::string> previous_;
 };
 
+bool warning_is_ignored(const std::unordered_set<std::string>& active,
+                        const std::string_view name) {
+    return active.find(std::string{name}) != active.end();
+}
+
+bool annotations_ignore_warning(const std::vector<ast::Annotation>& annotations,
+                                const std::string_view name) {
+    return std::any_of(annotations.begin(), annotations.end(), [&](const auto& annotation) {
+        if (annotation.name != "warning_ignore")
+            return false;
+        return std::any_of(annotation.arguments.begin(), annotation.arguments.end(),
+                           [&](const auto& argument) {
+                               return argument->kind() == ast::ExpressionKind::literal &&
+                                      argument->literal_kind() == ast::LiteralKind::string &&
+                                      argument->value() == name;
+                           });
+    });
+}
+
 bool is_number_literal(const ast::Expression& expression) {
     if (expression.kind() == ast::ExpressionKind::literal) {
         return expression.literal_kind() == ast::LiteralKind::integer ||
@@ -844,7 +863,8 @@ std::optional<Type> SemanticAnalyzer::object_iteration_element_type(const Type& 
             script_symbols_ ? script_symbols_->find_external(object.name) : nullptr) {
         model_.referenced_extension_abis_.insert(external->provider_abi);
         const auto* get = script_symbols_->find_external_member(*external, "_iter_get");
-        if (!get && !external->members_complete) {
+        if (!get && !external->members_complete &&
+            !warning_is_ignored(active_warning_ignores_, "unsafe_method_access")) {
             diagnostics_.warning(
                 "GDS4142",
                 "runtime-only GDExtension iterator '" + object.display_name() +
@@ -1458,8 +1478,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                "an AOT function containing await must currently return void",
                                expression.span);
         }
-        if (!can_suspend && active_warning_ignores_.count("redundant_await") == 0U &&
-            active_warning_ignores_.count("GDS4093") == 0U)
+        if (!can_suspend && !warning_is_ignored(active_warning_ignores_, "redundant_await"))
             diagnostics_.warning("GDS4093", "await operand does not suspend", expression.span);
         result = can_suspend ? variant_type : awaited;
         break;
@@ -2029,7 +2048,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                        "instance method '" + callee.value() +
                                            "' cannot be called on an internal class type",
                                        expression.span);
-                } else if (!called_on_type && !called_on_super && member->is_static) {
+                } else if (!called_on_type && !called_on_super && member->is_static &&
+                           !warning_is_ignored(active_warning_ignores_,
+                                               "static_called_on_instance")) {
                     diagnostics_.warning("GDS4130",
                                          "static internal class method '" + callee.value() +
                                              "' is called on an instance",
@@ -2161,7 +2182,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                        "instance member '" + callee.value() +
                                            "' cannot be called on a script type",
                                        expression.span);
-                } else if (!called_on_type && !called_on_super && member->is_static) {
+                } else if (!called_on_type && !called_on_super && member->is_static &&
+                           !warning_is_ignored(active_warning_ignores_,
+                                               "static_called_on_instance")) {
                     diagnostics_.warning("GDS4130",
                                          "static method '" + callee.value() +
                                              "' is called on a script instance",
@@ -2294,7 +2317,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                        "' cannot be called on a Godot type",
                                    expression.span);
             }
-            if (method && !called_on_type && !called_on_super && method->is_static) {
+            if (method && !called_on_type && !called_on_super && method->is_static &&
+                !warning_is_ignored(active_warning_ignores_, "static_called_on_instance")) {
                 diagnostics_.warning("GDS4130",
                                      "static method '" + callee.value() +
                                          "' is called on a Godot value instance",
@@ -3350,7 +3374,8 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
                 flow.falls_through = true;
                 continue;
             }
-            if (unconditional_seen)
+            if (unconditional_seen &&
+                !warning_is_ignored(active_warning_ignores_, "unreachable_pattern"))
                 diagnostics_.warning("GDS4044", "match branch is unreachable after a catch-all",
                                      branch.span);
             flow_types_ = entry_state;
@@ -3533,13 +3558,9 @@ SemanticAnalyzer::analyze_statements(const std::vector<ast::Statement>& statemen
     FlowResult flow{true, false, false, false};
     for (const auto& statement : statements) {
         const bool reachable = flow.falls_through;
-        const bool ignores_unreachable = std::any_of(
-            statement.annotations.begin(), statement.annotations.end(),
-            [](const ast::Annotation& annotation) {
-                return annotation.name == "warning_ignore" && annotation.arguments.size() == 1 &&
-                       annotation.arguments.front()->kind() == ast::ExpressionKind::literal &&
-                       annotation.arguments.front()->value() == "unreachable_code";
-            });
+        const bool ignores_unreachable =
+            annotations_ignore_warning(statement.annotations, "unreachable_code") ||
+            warning_is_ignored(active_warning_ignores_, "unreachable_code");
         if (!reachable && !ignores_unreachable)
             diagnostics_.warning("GDS4069", "unreachable statement", statement.span);
         const auto entry_state = flow_types_;
@@ -3652,6 +3673,7 @@ void SemanticAnalyzer::analyze_rpc_annotations(const ast::FunctionDeclaration& f
 }
 
 void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function) {
+    const WarningIgnoreScope warning_scope{active_warning_ignores_, function.annotations};
     const auto previous_in_function = in_function_;
     const auto previous_function_name = current_function_name_;
     const auto previous_callable_suspends = current_callable_suspends_;
@@ -3952,6 +3974,7 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
 }
 
 void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
+    const WarningIgnoreScope warning_scope{active_warning_ignores_, declaration.annotations};
     const auto abstract_annotations = static_cast<std::size_t>(std::count_if(
         declaration.annotations.begin(), declaration.annotations.end(),
         [](const ast::Annotation& annotation) { return annotation.name == "abstract"; }));
@@ -3993,6 +4016,7 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     accessor_fields_.clear();
     static_fields_.clear();
     current_accessor_fields_.clear();
+    active_warning_ignores_.clear();
     bound_accessor_fields_.clear();
     functions_.clear();
     allow_dynamic_await_return_ = false;
@@ -4076,6 +4100,7 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
         declare({SymbolKind::function, function.name, type, function.span, true});
     }
     const auto analyze_internal_variable = [&](const ast::VariableDeclaration& variable) {
+        const WarningIgnoreScope warning_scope{active_warning_ignores_, variable.annotations};
         const auto saved_variable_instance_context = instance_context_available_;
         instance_context_available_ = !variable.is_static;
         const auto initializer =
@@ -4261,6 +4286,7 @@ void SemanticAnalyzer::validate_inner_abstract_contract(const ast::ClassDeclarat
 
 void SemanticAnalyzer::analyze_property_accessors(const ast::VariableDeclaration& variable,
                                                   const Type& type) {
+    const WarningIgnoreScope warning_scope{active_warning_ignores_, variable.annotations};
     if (!variable.getter && !variable.setter)
         return;
     if (variable.is_constant) {
@@ -5012,6 +5038,7 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
         analyze_class(declaration);
 
     const auto analyze_script_variable = [&](const ast::VariableDeclaration& variable) {
+        const WarningIgnoreScope warning_scope{active_warning_ignores_, variable.annotations};
         const auto saved_instance_context = instance_context_available_;
         instance_context_available_ = !variable.is_static;
         const auto initializer =
