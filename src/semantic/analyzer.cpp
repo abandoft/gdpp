@@ -445,9 +445,7 @@ void SemanticAnalyzer::require_expression_assignable(const Type& target,
     require_assignable(target, source, span, context);
     const bool semantically_assignable = is_implicitly_convertible(target, source);
     const auto container = describe_container_type(target);
-    if (!container)
-        return;
-    if (container->kind == ContainerTypeKind::array &&
+    if (container && container->kind == ContainerTypeKind::array &&
         expression.kind() == ast::ExpressionKind::array_literal) {
         const auto element_type = type_from_name(container->arguments.front(), expression.span);
         for (std::size_t index = 0; index < expression.operand_count(); ++index) {
@@ -459,7 +457,7 @@ void SemanticAnalyzer::require_expression_assignable(const Type& target,
         model_.expression_types_[&expression] = target;
         return;
     }
-    if (container->kind == ContainerTypeKind::dictionary &&
+    if (container && container->kind == ContainerTypeKind::dictionary &&
         expression.kind() == ast::ExpressionKind::dictionary_literal) {
         const auto key_type = type_from_name(container->arguments.at(0), expression.span);
         const auto value_type = type_from_name(container->arguments.at(1), expression.span);
@@ -477,9 +475,9 @@ void SemanticAnalyzer::require_expression_assignable(const Type& target,
         return;
     }
     const auto runtime_source = runtime_storage_type_of(expression);
-    if (semantically_assignable && !is_typed_storage_compatible(target, runtime_source)) {
-        diagnostics_.error("GDS4155",
-                           context + ": Godot typed storage " + target.display_name() +
+    if (semantically_assignable && !is_runtime_storage_compatible(target, runtime_source)) {
+        diagnostics_.error(is_explicitly_typed_container(target) ? "GDS4155" : "GDS4157",
+                           context + ": Godot runtime storage " + target.display_name() +
                                " rejects runtime value " + runtime_source.display_name(),
                            span);
     }
