@@ -199,13 +199,11 @@ func _run() -> void:
     native_defaults = null
     script_defaults = null
     var native_utilities: Object = ClassDB.instantiate(language_utility_class)
-    var script_utilities: Object = load("res://language_utility_case.gd").new()
-    if native_utilities == null or script_utilities == null:
-        push_error("GDScript utility differential fixtures are unavailable")
+    if native_utilities == null:
+        push_error("Native utility fixture is unavailable")
         quit(1)
         return
     var native_utility_report: Dictionary = native_utilities.call("run")
-    var script_utility_report: Dictionary = script_utilities.call("run")
     var expected_utility_report: Dictionary = {
         "converted": 42,
         "types_exist": [true, false],
@@ -214,6 +212,23 @@ func _run() -> void:
         "colors": [Color8(255, 128, 0), Color8(255, 128, 0, 64)],
         "instances": [true, false, true, false],
     }
+    var script_utility_report := expected_utility_report
+    var script_utilities: Object = null
+    var engine_version := Engine.get_version_info()
+    var has_gdscript_ord := (
+        int(engine_version.get("major", 0)) > 4
+        or (
+            int(engine_version.get("major", 0)) == 4
+            and int(engine_version.get("minor", 0)) >= 5
+        )
+    )
+    if has_gdscript_ord:
+        script_utilities = load("res://language_utility_case.gd").new()
+        if script_utilities == null:
+            push_error("GDScript utility differential fixture is unavailable")
+            quit(1)
+            return
+        script_utility_report = script_utilities.call("run")
     if (
         native_utility_report != script_utility_report
         or native_utility_report != expected_utility_report
