@@ -258,6 +258,10 @@ Type SemanticModel::storage_type_of(const ast::Expression& expression) const {
     return type_of(expression);
 }
 
+bool SemanticModel::is_non_null(const ast::Expression& expression) const noexcept {
+    return non_null_expressions_.find(&expression) != non_null_expressions_.end();
+}
+
 Type SemanticModel::type_of(const ast::VariableDeclaration& declaration) const {
     const auto found = variable_types_.find(&declaration);
     return found == variable_types_.end() ? unknown_type : found->second;
@@ -1072,6 +1076,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             result = current_inner_class_ ? Type{TypeKind::object, current_inner_class_->name}
                      : current_script_    ? Type{TypeKind::object, current_script_->script_name}
                                           : Type{TypeKind::object, base_type_};
+            model_.non_null_expressions_.insert(&expression);
             break;
         }
         if (expression.value() == "super") {
@@ -1099,6 +1104,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 symbol->identity != 0) {
                 if (const auto* refined = flow_types_.find(symbol->identity))
                     result = *refined;
+                if (flow_types_.is_non_null(symbol->identity))
+                    model_.non_null_expressions_.insert(&expression);
             }
             model_.referenced_symbols_.emplace(&expression, *symbol);
             if (symbol->kind == SymbolKind::function) {

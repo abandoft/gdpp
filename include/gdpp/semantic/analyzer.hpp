@@ -121,6 +121,7 @@ class SemanticModel final {
   public:
     [[nodiscard]] Type type_of(const ast::Expression& expression) const;
     [[nodiscard]] Type storage_type_of(const ast::Expression& expression) const;
+    [[nodiscard]] bool is_non_null(const ast::Expression& expression) const noexcept;
     [[nodiscard]] Type type_of(const ast::VariableDeclaration& declaration) const;
     [[nodiscard]] Type property_type_of(const ast::VariableDeclaration& declaration) const;
     [[nodiscard]] Type type_of(const ast::Statement& statement) const;
@@ -150,6 +151,7 @@ class SemanticModel final {
   private:
     friend class SemanticAnalyzer;
     std::unordered_map<const ast::Expression*, Type> expression_types_;
+    std::unordered_set<const ast::Expression*> non_null_expressions_;
     std::unordered_map<const ast::VariableDeclaration*, Type> variable_types_;
     std::unordered_map<const ast::VariableDeclaration*, Type> property_types_;
     std::unordered_map<const ast::Statement*, Type> local_types_;
