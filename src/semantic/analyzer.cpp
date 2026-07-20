@@ -3185,9 +3185,12 @@ SemanticAnalyzer::analyze_statements(const std::vector<ast::Statement>& statemen
             });
         if (!reachable && !ignores_unreachable)
             diagnostics_.warning("GDS4069", "unreachable statement", statement.span);
+        const auto entry_state = flow_types_;
         const auto statement_flow = analyze_statement(statement);
-        if (!reachable)
+        if (!reachable) {
+            flow_types_ = entry_state;
             continue;
+        }
         flow.falls_through = statement_flow.falls_through;
         flow.returns = flow.returns || statement_flow.returns;
         flow.breaks = flow.breaks || statement_flow.breaks;

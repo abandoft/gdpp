@@ -2435,6 +2435,27 @@ TEST_CASE("semantic flow does not leak transient branch facts into deferred lamb
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named(value") != std::string::npos);
 }
 
+TEST_CASE("semantic flow carries the sole fallthrough refinement past guards") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "flow_postdominator.gd", "extends Node\n"
+                               "func after_negative_guard(value: Variant) -> String:\n"
+                               "    if value is not Node:\n"
+                               "        return \"\"\n"
+                               "    return value.name\n"
+                               "func after_else_guard(value: Variant) -> String:\n"
+                               "    if value is Node:\n"
+                               "        pass\n"
+                               "    else:\n"
+                               "        return \"\"\n"
+                               "    return value.name\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
+}
+
 TEST_CASE("typed scene nodes retain dynamic script dispatch for unknown members") {
     const gdpp::Compiler compiler;
     const auto result =
