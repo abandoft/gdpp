@@ -1405,9 +1405,9 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
     if (source.kind == TypeKind::nil && target.kind == TypeKind::object)
         return "{}";
     if (describe_container_type(target)) {
-        if (source.is_dynamic() && is_explicitly_typed_container(target)) {
-            return "gdpp::runtime::strict_typed_storage<" + cpp_type(target) +
-                   ">(godot::Variant(" + value + "))";
+        if (is_explicitly_typed_container(target) && target != source) {
+            return "gdpp::runtime::strict_typed_storage<" + cpp_type(target) + ">(godot::Variant(" +
+                   value + "))";
         }
         return cpp_type(target) + "(godot::Variant(" + value + "))";
     }
@@ -1479,8 +1479,8 @@ std::string CodeGenerator::emit_explicit_conversion(const Type& target, const Ty
     const auto target_variant = variant_type(target);
     if (target_variant == "godot::Variant::NIL")
         return emit_conversion(target, source, std::move(value));
-    return "gdpp::runtime::explicit_variant_cast<" + cpp_type(target) + ">" +
-           "(godot::Variant(" + value + "), " + target_variant + ")";
+    return "gdpp::runtime::explicit_variant_cast<" + cpp_type(target) + ">" + "(godot::Variant(" +
+           value + "), " + target_variant + ")";
 }
 
 std::string CodeGenerator::emit_parameter_default(const ir::Parameter& parameter) const {
