@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,7 @@ struct CompiledProjectScript {
     std::string source_file_name;
     std::vector<std::string> inner_class_names;
     std::vector<std::string> abstract_inner_class_names;
+    std::optional<std::string> icon_path;
     bool is_abstract{false};
     bool is_tool{false};
     bool cache_hit{false};

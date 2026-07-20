@@ -727,6 +727,73 @@ bool managed_translation_unit_name(std::string_view name) {
            (name.size() > 7U && name.substr(name.size() - 7U) == ".gd.cpp");
 }
 
+struct IconPathResolution {
+    std::optional<std::string> resource_path;
+    std::string error;
+};
+
+std::optional<std::string> script_icon_literal(const ast::Script& script) {
+    const auto icon =
+        std::find_if(script.annotations.begin(), script.annotations.end(),
+                     [](const ast::Annotation& annotation) { return annotation.name == "icon"; });
+    if (icon == script.annotations.end() || icon->arguments.size() != 1 ||
+        icon->arguments.front()->literal_kind() != ast::LiteralKind::string) {
+        return std::nullopt;
+    }
+    return icon->arguments.front()->value();
+}
+
+bool path_escapes_project(const std::filesystem::path& path) {
+    if (path.empty() || path.is_absolute() || path.has_root_name() || path.has_root_directory())
+        return true;
+    return std::any_of(path.begin(), path.end(),
+                       [](const auto& component) { return component == ".."; });
+}
+
+IconPathResolution resolve_script_icon_path(const std::string_view source_path,
+                                            const std::string_view icon_path) {
+    if (icon_path.empty())
+        return {{}, "@icon path cannot be empty"};
+    if (std::any_of(icon_path.begin(), icon_path.end(), [](const char character) {
+            const auto byte = static_cast<unsigned char>(character);
+            return byte < 0x20U || character == '\\';
+        })) {
+        return {{}, "@icon path must use a single-line Godot resource path with '/' separators"};
+    }
+    if (icon_path.rfind("uid://", 0) == 0)
+        return {std::string{icon_path}, {}};
+
+    std::filesystem::path relative_icon;
+    if (icon_path.rfind("res://", 0) == 0) {
+        relative_icon = path_from_utf8(icon_path.substr(6));
+    } else {
+        if (icon_path.find("://") != std::string_view::npos || icon_path.front() == '/') {
+            return {{}, "@icon path must be relative, res://, or uid://"};
+        }
+        auto owner = std::string{source_path};
+        if (const auto embedded = owner.find("::"); embedded != std::string::npos)
+            owner.erase(embedded);
+        relative_icon = path_from_utf8(owner).parent_path() / path_from_utf8(icon_path);
+    }
+    relative_icon = relative_icon.lexically_normal();
+    if (path_escapes_project(relative_icon))
+        return {{}, "@icon path escapes the project resource root"};
+    return {"res://" + generic_path_to_utf8(relative_icon), {}};
+}
+
+std::string gdextension_string(std::string_view value) {
+    std::string escaped;
+    escaped.reserve(value.size() + 2);
+    escaped.push_back('"');
+    for (const char character : value) {
+        if (character == '"')
+            escaped.push_back('\\');
+        escaped.push_back(character);
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+
 LoadedManifest read_manifest(const std::filesystem::path& path) {
     LoadedManifest loaded;
     std::ifstream input{path};
@@ -1358,6 +1425,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         std::vector<ScriptMemberSymbol> members;
         std::vector<ScriptEnumSymbol> enums;
         std::vector<ScriptInnerClassSymbol> inner_classes;
+        std::optional<std::string> icon_path;
         bool is_abstract{false};
     };
     std::vector<SourceInput> inputs;
@@ -1478,6 +1546,15 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         input.is_abstract = std::any_of(
             script.annotations.begin(), script.annotations.end(),
             [](const ast::Annotation& annotation) { return annotation.name == "abstract"; });
+        if (const auto icon = script_icon_literal(script)) {
+            auto resolved = resolve_script_icon_path(input.relative, *icon);
+            if (!resolved.resource_path) {
+                result.diagnostics.push_back(
+                    {input.path, project_error("PRJ0027", std::move(resolved.error))});
+            } else {
+                input.icon_path = std::move(resolved.resource_path);
+            }
+        }
         input.native_class_stem =
             native_class_stem(input.relative, input.script_class_name, input.globally_named);
         if (const auto autoload = project_autoloads.find(input.relative);
@@ -2356,6 +2433,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         script.content_hash = input.implementation_hash;
         script.public_abi_hash = input.public_abi_hash;
         script.dependencies = input.dependencies;
+        script.icon_path = input.icon_path;
         script.is_abstract = input.is_abstract;
         script.is_tool = input.script.tool;
         const auto expected_class_name =
