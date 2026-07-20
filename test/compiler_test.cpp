@@ -1912,6 +1912,27 @@ TEST_CASE("compiler emits pure virtual C++ for abstract method contracts") {
             std::string::npos);
 }
 
+TEST_CASE("compiler preserves engine virtual ABI around abstract contracts") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "abstract_process.gd", "@abstract\n"
+                               "extends Node\n"
+                               "class_name AbstractProcess\n"
+                               "@abstract\n"
+                               "func _process(delta: float) -> void\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("virtual void _process(double _gdpp_engine_argument_0) "
+                                    "override;") != std::string::npos);
+    REQUIRE(result.unit.header.find(
+                "virtual void _gdpp_virtual_impl__process(double delta) = 0;") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("GDPPNative_AbstractProcess::_process(") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("GDPPNative_AbstractProcess::_gdpp_virtual_impl__process(") ==
+            std::string::npos);
+}
+
 TEST_CASE("compiler resolves versioned builtin value constants") {
     const gdpp::Compiler compiler;
     gdpp::CompileOptions options;
