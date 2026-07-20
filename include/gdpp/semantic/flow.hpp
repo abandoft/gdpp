@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <unordered_map>
+#include <vector>
 
 namespace gdpp {
 
@@ -31,6 +32,8 @@ class FlowTypeState final {
 
     [[nodiscard]] static FlowTypeState
     join_fallthrough(std::initializer_list<const FlowTypeState*> predecessors);
+    [[nodiscard]] static FlowTypeState
+    join_fallthrough(const std::vector<const FlowTypeState*>& predecessors);
 
   private:
     TypeRefinements refinements_;

@@ -14,7 +14,12 @@ TEST_CASE("flow states apply, invalidate and join type refinements") {
     right.refine(1, node);
     right.refine(2, node);
 
-    const auto joined = gdpp::FlowTypeState::join_fallthrough({&left, &right});
+    gdpp::FlowTypeState third;
+    third.refine(1, node);
+    third.refine(3, node_2d);
+
+    const std::vector<const gdpp::FlowTypeState*> predecessors{&left, &right, &third};
+    const auto joined = gdpp::FlowTypeState::join_fallthrough(predecessors);
     REQUIRE(joined.find(1) != nullptr);
     REQUIRE_EQ(*joined.find(1), node);
     REQUIRE(joined.find(2) == nullptr);

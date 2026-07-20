@@ -29,6 +29,11 @@ void FlowTypeState::clear() noexcept {
 
 FlowTypeState
 FlowTypeState::join_fallthrough(const std::initializer_list<const FlowTypeState*> predecessors) {
+    return join_fallthrough(std::vector<const FlowTypeState*>{predecessors});
+}
+
+FlowTypeState
+FlowTypeState::join_fallthrough(const std::vector<const FlowTypeState*>& predecessors) {
     FlowTypeState result;
     const FlowTypeState* first = nullptr;
     for (const auto* predecessor : predecessors) {
