@@ -3027,9 +3027,14 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         const auto matched_type = analyze_expression(*statement.condition());
         if (statement.match_branches().empty())
             return FlowResult{true, false, false, false};
+        const auto entry_state = flow_types_;
+        const auto* matched_symbol = model_.symbol_of(*statement.condition());
+        std::vector<FlowTypeState> fallthrough_states;
+        fallthrough_states.reserve(statement.match_branches().size() + 1U);
         bool unconditional_seen = false;
         FlowResult flow;
         for (const auto& branch : statement.match_branches()) {
+            const bool branch_reachable = !unconditional_seen;
             if (branch.patterns.empty()) {
                 diagnostics_.error("GDS4043", "match branch requires at least one pattern",
                                    branch.span);
@@ -3039,6 +3044,27 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
             if (unconditional_seen)
                 diagnostics_.warning("GDS4044", "match branch is unreachable after a catch-all",
                                      branch.span);
+            flow_types_ = entry_state;
+            std::optional<Type> structural_type;
+            bool uniform_structural_type = !branch.patterns.empty();
+            for (const auto& pattern : branch.patterns) {
+                const auto candidate = pattern.kind() == ast::MatchPatternKind::array
+                                           ? std::optional<Type>{{TypeKind::array, "Array"}}
+                    : pattern.kind() == ast::MatchPatternKind::dictionary
+                        ? std::optional<Type>{{TypeKind::dictionary, "Dictionary"}}
+                        : std::nullopt;
+                if (!candidate || (structural_type && *structural_type != *candidate)) {
+                    uniform_structural_type = false;
+                    break;
+                }
+                structural_type = candidate;
+            }
+            if (uniform_structural_type && structural_type && matched_symbol &&
+                (matched_symbol->kind == SymbolKind::local ||
+                 matched_symbol->kind == SymbolKind::parameter)) {
+                if (const auto refined = narrowed_flow_type(matched_type, *structural_type))
+                    flow_types_.refine(matched_symbol->identity, *refined);
+            }
             scopes_.emplace_back();
             bool catch_all = false;
             for (const auto& pattern : branch.patterns) {
@@ -3056,18 +3082,30 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
                 const auto guard_type = analyze_expression(*branch.guard);
                 require_assignable({TypeKind::boolean, "bool"}, guard_type, branch.guard->span,
                                    "invalid match guard");
+                flow_types_.apply(conditional_refinements(*branch.guard).when_true);
             }
             const auto branch_flow = analyze_statements(branch.body);
             scopes_.pop_back();
-            flow.falls_through = flow.falls_through || branch_flow.falls_through;
-            flow.returns = flow.returns || branch_flow.returns;
-            flow.breaks = flow.breaks || branch_flow.breaks;
-            flow.continues = flow.continues || branch_flow.continues;
+            if (branch_reachable) {
+                flow.falls_through = flow.falls_through || branch_flow.falls_through;
+                flow.returns = flow.returns || branch_flow.returns;
+                flow.breaks = flow.breaks || branch_flow.breaks;
+                flow.continues = flow.continues || branch_flow.continues;
+                if (branch_flow.falls_through)
+                    fallthrough_states.push_back(flow_types_);
+            }
             if (catch_all && !branch.guard)
                 unconditional_seen = true;
         }
-        if (!unconditional_seen)
+        if (!unconditional_seen) {
             flow.falls_through = true;
+            fallthrough_states.push_back(entry_state);
+        }
+        std::vector<const FlowTypeState*> predecessors;
+        predecessors.reserve(fallthrough_states.size());
+        for (const auto& state : fallthrough_states)
+            predecessors.push_back(&state);
+        flow_types_ = FlowTypeState::join_fallthrough(predecessors);
         return flow;
     }
     case ast::StatementKind::while_statement: {

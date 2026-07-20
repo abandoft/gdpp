@@ -2471,6 +2471,30 @@ TEST_CASE("semantic flow narrows each lazy conditional-expression arm") {
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
 }
 
+TEST_CASE("semantic flow narrows structural match subjects and guarded bindings") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "flow_match.gd", "extends Node\n"
+                        "func container_size(value: Variant) -> int:\n"
+                        "    match value:\n"
+                        "        []: return value.size()\n"
+                        "        {}: return value.size()\n"
+                        "        _: return -1\n"
+                        "func guarded_name(value: Variant) -> String:\n"
+                        "    match value:\n"
+                        "        var item when item is Node: return item.name\n"
+                        "        _: return \"\"\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("static_cast<godot::Array>(value)") != std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<godot::Dictionary>(value)") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::call_dynamic") == std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
+}
+
 TEST_CASE("typed scene nodes retain dynamic script dispatch for unknown members") {
     const gdpp::Compiler compiler;
     const auto result =
