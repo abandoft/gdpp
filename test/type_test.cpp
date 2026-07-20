@@ -183,7 +183,7 @@ TEST_CASE("explicit conversion matrix adds only Godot permissive casts") {
     }
 }
 
-TEST_CASE("typed containers are invariant while typed and untyped boundaries remain dynamic") {
+TEST_CASE("typed containers are invariant for assignment but builtin-compatible for casts") {
     const gdpp::Type integers{gdpp::TypeKind::array, "Array[int]"};
     const gdpp::Type floats{gdpp::TypeKind::array, "Array[float]"};
     const gdpp::Type untyped_array{gdpp::TypeKind::array, "Array"};
@@ -192,10 +192,11 @@ TEST_CASE("typed containers are invariant while typed and untyped boundaries rem
     const gdpp::Type untyped_dictionary{gdpp::TypeKind::dictionary, "Dictionary"};
 
     REQUIRE(!gdpp::is_implicitly_convertible(integers, floats));
-    REQUIRE(!gdpp::is_explicitly_convertible(integers, floats));
+    REQUIRE(gdpp::is_explicitly_convertible(integers, floats));
     REQUIRE(gdpp::is_implicitly_convertible(integers, untyped_array));
     REQUIRE(gdpp::is_implicitly_convertible(untyped_array, integers));
     REQUIRE(!gdpp::is_implicitly_convertible(scores, weights));
+    REQUIRE(gdpp::is_explicitly_convertible(scores, weights));
     REQUIRE(gdpp::is_implicitly_convertible(scores, untyped_dictionary));
     REQUIRE(gdpp::is_implicitly_convertible(untyped_dictionary, scores));
 }

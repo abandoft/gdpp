@@ -186,12 +186,16 @@ ConversionKind classify_conversion(const Type& target, const Type& source) noexc
 
     const auto target_variant = variant_type_of(target);
     const auto source_variant = variant_type_of(source);
-    if (!target_variant || !source_variant ||
-        !compatible_container_shape(target, source)) {
+    if (!target_variant || !source_variant) {
         return ConversionKind::incompatible;
     }
-    if (strict_variant_conversion(*target_variant, *source_variant))
-        return ConversionKind::implicit;
+    if (strict_variant_conversion(*target_variant, *source_variant)) {
+        // GDScript's `as` validates only the builtin Variant kind. Typed containers therefore
+        // remain explicitly castable across element signatures even though strict assignment is
+        // invariant and the VM may reject the resulting value when it enters typed storage.
+        return compatible_container_shape(target, source) ? ConversionKind::implicit
+                                                          : ConversionKind::explicit_only;
+    }
     if (explicit_variant_conversion(*target_variant, *source_variant))
         return ConversionKind::explicit_only;
     return ConversionKind::incompatible;
