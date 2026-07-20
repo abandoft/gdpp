@@ -633,6 +633,31 @@ SemanticAnalyzer::find_inner_member(const ScriptInnerClassSymbol& owner,
     return nullptr;
 }
 
+bool SemanticAnalyzer::script_function_is_static(const std::string& name) const noexcept {
+    if (const auto found = functions_.find(name); found != functions_.end())
+        return found->second->is_static;
+    if (current_inner_class_) {
+        const auto* member = find_inner_member(*current_inner_class_, name);
+        return member && member->kind == ScriptMemberKind::function && member->is_static;
+    }
+    if (script_symbols_ && current_script_) {
+        const auto* member = script_symbols_->find_member(*current_script_, name);
+        return member && member->kind == ScriptMemberKind::function && member->is_static;
+    }
+    return false;
+}
+
+void SemanticAnalyzer::diagnose_static_instance_access(const std::string_view kind,
+                                                       const std::string_view name,
+                                                       const SourceSpan span) {
+    if (instance_context_available_)
+        return;
+    diagnostics_.error("GDS4146",
+                       "cannot use instance " + std::string{kind} + " '" + std::string{name} +
+                           "' from a static context",
+                       span);
+}
+
 void SemanticAnalyzer::record_script_dependency(const ScriptClassSymbol* dependency) {
     if (dependency && (!current_script_ || dependency->path != current_script_->path))
         model_.referenced_script_paths_.insert(dependency->path);
@@ -1117,10 +1142,12 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         }
         break;
     case ast::ExpressionKind::node_reference:
+        diagnose_static_instance_access("node lookup", expression.value(), expression.span);
         result = variant_type;
         break;
     case ast::ExpressionKind::identifier: {
         if (expression.value() == "self") {
+            diagnose_static_instance_access("receiver", expression.value(), expression.span);
             result = current_inner_class_ ? Type{TypeKind::object, current_inner_class_->name}
                      : current_script_    ? Type{TypeKind::object, current_script_->script_name}
                                           : Type{TypeKind::object, base_type_};
@@ -1145,6 +1172,10 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             break;
         }
         if (const auto* symbol = resolve(expression.value())) {
+            if (symbol->kind == SymbolKind::field &&
+                static_fields_.find(expression.value()) == static_fields_.end()) {
+                diagnose_static_instance_access("field", expression.value(), expression.span);
+            }
             result = symbol->kind == SymbolKind::function ? Type{TypeKind::builtin, "Callable"}
                                                           : symbol->type;
             if (!suppress_flow_refinements_ &&
@@ -1157,21 +1188,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             }
             model_.referenced_symbols_.emplace(&expression, *symbol);
             if (symbol->kind == SymbolKind::function) {
-                bool is_static = false;
-                if (const auto found = functions_.find(expression.value());
-                    found != functions_.end()) {
-                    is_static = found->second->is_static;
-                } else if (current_inner_class_) {
-                    const auto* inner_member =
-                        find_inner_member(*current_inner_class_, expression.value());
-                    is_static = inner_member && inner_member->kind == ScriptMemberKind::function &&
-                                inner_member->is_static;
-                } else if (script_symbols_ && current_script_) {
-                    const auto* member =
-                        script_symbols_->find_member(*current_script_, expression.value());
-                    is_static =
-                        member && member->kind == ScriptMemberKind::function && member->is_static;
-                }
+                const bool is_static = script_function_is_static(expression.value());
                 model_.api_resolutions_.emplace(
                     &expression, ApiResolution{is_static ? ApiResolutionKind::script_static_callable
                                                          : ApiResolutionKind::script_callable,
@@ -1189,20 +1206,29 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                                 ApiResolution{ApiResolutionKind::enum_member, "",
                                                               "", "", result, 0, 0, false, true});
             }
-            if (symbol->kind == SymbolKind::field &&
+            const bool static_field =
+                symbol->kind == SymbolKind::field &&
+                static_fields_.find(expression.value()) != static_fields_.end();
+            const bool accessor_field =
+                symbol->kind == SymbolKind::field &&
                 accessor_fields_.find(expression.value()) != accessor_fields_.end() &&
-                current_accessor_fields_.find(expression.value()) ==
-                    current_accessor_fields_.end()) {
+                current_accessor_fields_.find(expression.value()) == current_accessor_fields_.end();
+            if (static_field && accessor_field) {
+                model_.api_resolutions_.emplace(&expression,
+                                                ApiResolution{ApiResolutionKind::script_property,
+                                                              "", "_gdpp_get_" + expression.value(),
+                                                              "_gdpp_set_" + expression.value(),
+                                                              result, 0, 0, false, true});
+            } else if (static_field) {
+                model_.api_resolutions_.emplace(
+                    &expression, ApiResolution{ApiResolutionKind::script_static_field, "", "", "",
+                                               result, 0, 0, false, true});
+            } else if (accessor_field) {
                 model_.api_resolutions_.emplace(&expression,
                                                 ApiResolution{ApiResolutionKind::script_property,
                                                               "", "_gdpp_get_" + expression.value(),
                                                               "_gdpp_set_" + expression.value(),
                                                               result, 0, 0, false, false});
-            } else if (symbol->kind == SymbolKind::field &&
-                       static_fields_.find(expression.value()) != static_fields_.end()) {
-                model_.api_resolutions_.emplace(
-                    &expression, ApiResolution{ApiResolutionKind::script_static_field, "", "", "",
-                                               result, 0, 0, false, true});
             }
             if (symbol->kind == SymbolKind::signal) {
                 result = {TypeKind::builtin, "Signal"};
@@ -1351,6 +1377,19 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             model_.referenced_symbols_.find(&expression) == model_.referenced_symbols_.end()) {
             diagnostics_.error("GDS4122", "unknown identifier '" + expression.value() + "'",
                                expression.span);
+        }
+        if (const auto* resolution = model_.api_resolution_of(expression);
+            resolution && !instance_context_available_) {
+            if (resolution->kind == ApiResolutionKind::property ||
+                resolution->kind == ApiResolutionKind::script_property) {
+                if (static_fields_.find(expression.value()) == static_fields_.end())
+                    diagnose_static_instance_access("property", expression.value(),
+                                                    expression.span);
+            } else if (resolution->kind == ApiResolutionKind::script_signal) {
+                diagnose_static_instance_access("signal", expression.value(), expression.span);
+            } else if (resolution->kind == ApiResolutionKind::script_callable) {
+                diagnose_static_instance_access("method", expression.value(), expression.span);
+            }
         }
         break;
     }
@@ -1773,10 +1812,16 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 const auto* method =
                     member ? nullptr : api_.find_method(base_type_, current_function_name_);
                 if (member && member->kind == ScriptMemberKind::function) {
+                    if (!instance_context_available_ && !member->is_static)
+                        diagnose_static_instance_access("method", current_function_name_,
+                                                        expression.span);
                     validate_script_call(*member, argument_types, expression, expression.span);
                     result = member->type;
                     mark_coroutine_call(member->is_coroutine);
                 } else if (method) {
+                    if (!instance_context_available_ && !method->is_static)
+                        diagnose_static_instance_access("method", current_function_name_,
+                                                        expression.span);
                     (void)resolve_method(method);
                 } else {
                     diagnostics_.error("GDS4122",
@@ -1808,6 +1853,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 result = symbol->type;
                 model_.referenced_symbols_.emplace(&callee, *symbol);
                 if (symbol->kind == SymbolKind::function) {
+                    if (!script_function_is_static(callee.value()))
+                        diagnose_static_instance_access("method", callee.value(), expression.span);
                     const auto local = functions_.find(callee.value());
                     const auto* member =
                         script_symbols_ && current_script_
@@ -1822,8 +1869,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                             script_symbols_->find_member(*current_script_, callee.value())) {
                         validate_script_call(*member, argument_types, expression, expression.span);
                         result = member->type;
-                        if (script_symbols_->requires_dynamic_dispatch(*current_script_,
-                                                                       callee.value())) {
+                        if (!member->is_static && script_symbols_->requires_dynamic_dispatch(
+                                                      *current_script_, callee.value())) {
                             mark_coroutine_call(script_symbols_->may_dispatch_coroutine(
                                 *current_script_, callee.value()));
                             model_.api_resolutions_.emplace(
@@ -1839,7 +1886,11 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         expression.span);
                     result = unknown_type;
                 }
-            } else if (!resolve_method(api_.find_method(base_type_, callee.value()))) {
+            } else if (const auto* method = api_.find_method(base_type_, callee.value())) {
+                if (!method->is_static)
+                    diagnose_static_instance_access("method", callee.value(), expression.span);
+                (void)resolve_method(method);
+            } else {
                 if (!resolve_constructor(callee.value())) {
                     result = analyze_expression(callee);
                     if (result.kind == TypeKind::unknown) {
@@ -1965,12 +2016,14 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                        "instance method '" + callee.value() +
                                            "' cannot be called on an internal class type",
                                        expression.span);
-                } else if (!called_on_type && member->is_static) {
+                } else if (!called_on_type && !called_on_super && member->is_static) {
                     diagnostics_.warning("GDS4130",
                                          "static internal class method '" + callee.value() +
                                              "' is called on an instance",
                                          expression.span);
                 }
+                if (called_on_super && !member->is_static)
+                    diagnose_static_instance_access("method", callee.value(), expression.span);
                 validate_script_call(*member, argument_types, expression, expression.span);
                 result = member->type;
                 mark_coroutine_call(member->is_coroutine);
@@ -2043,6 +2096,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         const auto* method =
                             api_.find_method(script_owner->godot_base_type, callee.value());
                         if (resolve_method(method)) {
+                            if (called_on_super && method && !method->is_static)
+                                diagnose_static_instance_access("method", callee.value(),
+                                                                expression.span);
                             if (called_on_super) {
                                 model_.api_resolutions_[&callee] = ApiResolution{
                                     ApiResolutionKind::script_super,
@@ -2086,12 +2142,14 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                        "instance member '" + callee.value() +
                                            "' cannot be called on a script type",
                                        expression.span);
-                } else if (!called_on_type && member->is_static) {
+                } else if (!called_on_type && !called_on_super && member->is_static) {
                     diagnostics_.warning("GDS4130",
                                          "static method '" + callee.value() +
                                              "' is called on a script instance",
                                          expression.span);
                 }
+                if (called_on_super && !member->is_static)
+                    diagnose_static_instance_access("method", callee.value(), expression.span);
                 validate_script_call(*member, argument_types, expression, expression.span);
                 result = member->type;
                 const bool dynamic_dispatch =
@@ -2211,12 +2269,14 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                        "' cannot be called on a Godot type",
                                    expression.span);
             }
-            if (method && !called_on_type && method->is_static) {
+            if (method && !called_on_type && !called_on_super && method->is_static) {
                 diagnostics_.warning("GDS4130",
                                      "static method '" + callee.value() +
                                          "' is called on a Godot value instance",
                                      expression.span);
             }
+            if (method && called_on_super && !method->is_static)
+                diagnose_static_instance_access("method", callee.value(), expression.span);
             if (method && !called_on_type)
                 validate_container_method_call(object_type, callee.value(), argument_types,
                                                expression);
@@ -2420,8 +2480,16 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                                "", result, 0, 0, false, false});
                 break;
             }
-            if (found->kind != ScriptMemberKind::field || accessed_on_type) {
+            if (found->kind != ScriptMemberKind::field) {
                 diagnostics_.error("GDS4058", "invalid internal class member access",
+                                   expression.span);
+                result = unknown_type;
+                break;
+            }
+            if (accessed_on_type && !found->is_static) {
+                diagnostics_.error("GDS4058",
+                                   "instance field '" + expression.value() +
+                                       "' cannot be accessed on an internal class type",
                                    expression.span);
                 result = unknown_type;
                 break;
@@ -3557,6 +3625,7 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
     const auto previous_in_function = in_function_;
     const auto previous_function_name = current_function_name_;
     const auto previous_callable_suspends = current_callable_suspends_;
+    const auto previous_instance_context = instance_context_available_;
     auto previous_flow_types = std::move(flow_types_);
     flow_types_.clear();
     in_function_ = true;
@@ -3616,6 +3685,7 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
     // GDScript return values without changing their source-level type.
     allow_dynamic_await_return_ = true;
     current_function_static_ = function.is_static;
+    instance_context_available_ = !function.is_static;
     analyze_rpc_annotations(function);
     current_accessor_fields_.clear();
     if (const auto found = bound_accessor_fields_.find(function.name);
@@ -3754,6 +3824,7 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
     current_accessor_fields_.clear();
     allow_dynamic_await_return_ = false;
     current_function_static_ = false;
+    instance_context_available_ = previous_instance_context;
     current_callable_suspends_ = previous_callable_suspends;
     in_function_ = previous_in_function;
     current_function_name_ = previous_function_name;
@@ -3775,7 +3846,7 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
                            ? type_from_name(*expression.return_type, expression.span)
                            : variant_type;
     model_.lambda_return_types_[&expression] = expected_return_;
-    if (in_function_ && !current_function_static_)
+    if (in_function_ && instance_context_available_)
         model_.owner_bound_lambdas_.insert(&expression);
     current_function_static_ = false;
     in_function_ = true;
@@ -3847,6 +3918,7 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     auto saved_functions = std::move(functions_);
     const auto saved_dynamic_await = allow_dynamic_await_return_;
     const auto saved_static = current_function_static_;
+    const auto saved_instance_context = instance_context_available_;
     const auto saved_in_function = in_function_;
     const auto saved_return = expected_return_;
     const auto saved_base = base_type_;
@@ -3866,6 +3938,7 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     functions_.clear();
     allow_dynamic_await_return_ = false;
     current_function_static_ = false;
+    instance_context_available_ = true;
     in_function_ = false;
     expected_return_ = void_type;
     loop_depth_ = 0;
@@ -3943,8 +4016,11 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
         declare({SymbolKind::function, function.name, type, function.span, true});
     }
     const auto analyze_internal_variable = [&](const ast::VariableDeclaration& variable) {
+        const auto saved_instance_context = instance_context_available_;
+        instance_context_available_ = !variable.is_static;
         const auto initializer =
             variable.initializer ? analyze_expression(*variable.initializer) : variant_type;
+        instance_context_available_ = saved_instance_context;
         Type type = variable.type ? type_from_name(*variable.type, variable.span) : variant_type;
         if (variable.infer_type || (variable.is_constant && !variable.type)) {
             type = initializer;
@@ -4018,6 +4094,7 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     functions_ = std::move(saved_functions);
     allow_dynamic_await_return_ = saved_dynamic_await;
     current_function_static_ = saved_static;
+    instance_context_available_ = saved_instance_context;
     in_function_ = saved_in_function;
     expected_return_ = saved_return;
     base_type_ = saved_base;
@@ -4039,12 +4116,14 @@ void SemanticAnalyzer::analyze_property_accessors(const ast::VariableDeclaration
     const auto saved_return = expected_return_;
     const auto saved_dynamic_await = allow_dynamic_await_return_;
     const auto saved_static = current_function_static_;
+    const auto saved_instance_context = instance_context_available_;
     const auto saved_in_function = in_function_;
     const auto prepare_accessor_body = [&](const std::vector<ast::Statement>&,
                                            const Type& return_type) {
         expected_return_ = return_type;
         allow_dynamic_await_return_ = false;
         current_function_static_ = variable.is_static;
+        instance_context_available_ = !variable.is_static;
         in_function_ = true;
     };
     if (variable.getter) {
@@ -4133,6 +4212,7 @@ void SemanticAnalyzer::analyze_property_accessors(const ast::VariableDeclaration
     expected_return_ = saved_return;
     allow_dynamic_await_return_ = saved_dynamic_await;
     current_function_static_ = saved_static;
+    instance_context_available_ = saved_instance_context;
     in_function_ = saved_in_function;
     current_accessor_fields_.clear();
 }
@@ -4482,6 +4562,7 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
     local_inner_classes_.clear();
     allow_dynamic_await_return_ = false;
     current_function_static_ = false;
+    instance_context_available_ = true;
     current_inner_class_ = nullptr;
     current_inner_base_ = nullptr;
     script_tool_ = script.tool;
@@ -4753,8 +4834,11 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
         analyze_class(declaration);
 
     const auto analyze_script_variable = [&](const ast::VariableDeclaration& variable) {
+        const auto saved_instance_context = instance_context_available_;
+        instance_context_available_ = !variable.is_static;
         const auto initializer =
             variable.initializer ? analyze_expression(*variable.initializer) : variant_type;
+        instance_context_available_ = saved_instance_context;
         Type type = variable.type.has_value() ? type_from_name(*variable.type, variable.span)
                                               : variant_type;
         if (variable.infer_type || (variable.is_constant && !variable.type.has_value())) {

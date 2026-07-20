@@ -255,6 +255,9 @@ class SemanticAnalyzer final {
                             const std::string& name) const noexcept;
     [[nodiscard]] const ScriptMemberSymbol*
     find_inner_member(const ScriptInnerClassSymbol& owner, const std::string& name) const noexcept;
+    [[nodiscard]] bool script_function_is_static(const std::string& name) const noexcept;
+    void diagnose_static_instance_access(std::string_view kind, std::string_view name,
+                                         SourceSpan span);
     void record_script_dependency(const ScriptClassSymbol* dependency);
 
     DiagnosticBag& diagnostics_;
@@ -279,6 +282,7 @@ class SemanticAnalyzer final {
     bool allow_dynamic_await_return_{false};
     bool await_expression_allowed_{true};
     bool current_function_static_{false};
+    bool instance_context_available_{true};
     bool current_callable_suspends_{false};
     bool in_function_{false};
     bool script_tool_{false};
