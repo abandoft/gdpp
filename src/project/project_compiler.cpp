@@ -650,8 +650,11 @@ ScriptInnerClassSymbol inner_class_symbol(const ast::ClassDeclaration& declarati
         member.is_coroutine = statements_contain_await(function.body);
         member.has_explicit_type = function.name == "_init" || function.return_type.has_value();
         for (const auto& parameter : function.parameters) {
-            member.parameters.push_back(signature_type(parameter.type, nullptr, api));
-            member.explicit_parameter_types.push_back(parameter.type.has_value());
+            member.parameters.push_back(signature_type(
+                parameter.type, parameter.infer_type ? parameter.default_value.get() : nullptr,
+                api));
+            member.explicit_parameter_types.push_back(parameter.type.has_value() ||
+                                                      parameter.infer_type);
             member.default_parameters.push_back(parameter.default_value != nullptr);
             if (!parameter.default_value)
                 ++member.required_arguments;
@@ -1431,8 +1434,11 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             member.is_coroutine = statements_contain_await(function.body);
             member.has_explicit_type = function.name == "_init" || function.return_type.has_value();
             for (const auto& parameter : function.parameters) {
-                member.parameters.push_back(signature_type(parameter.type, nullptr, target_api));
-                member.explicit_parameter_types.push_back(parameter.type.has_value());
+                member.parameters.push_back(signature_type(
+                    parameter.type,
+                    parameter.infer_type ? parameter.default_value.get() : nullptr, target_api));
+                member.explicit_parameter_types.push_back(parameter.type.has_value() ||
+                                                          parameter.infer_type);
                 member.default_parameters.push_back(parameter.default_value != nullptr);
                 if (!parameter.default_value)
                     ++member.required_arguments;

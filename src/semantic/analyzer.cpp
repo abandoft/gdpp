@@ -4373,7 +4373,8 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
                     member.parameters.push_back(
                         parameter.type ? type_from_name(*parameter.type, parameter.span)
                                        : variant_type);
-                    member.explicit_parameter_types.push_back(parameter.type.has_value());
+                    member.explicit_parameter_types.push_back(parameter.type.has_value() ||
+                                                              parameter.infer_type);
                     member.default_parameters.push_back(parameter.default_value != nullptr);
                     if (!parameter.default_value)
                         ++member.required_arguments;
