@@ -1700,6 +1700,85 @@ TEST_CASE("compiler defines static script fields outside the generated header") 
     REQUIRE(result.unit.header.find("static int64_t _gdpp_get_count()") != std::string::npos);
 }
 
+TEST_CASE("compiler preserves owner-free static fields methods lambdas and super calls") {
+    const gdpp::Compiler compiler;
+    const auto result =
+        compiler.compile("static_context.gd", "extends Node\n"
+                                              "class Parent:\n"
+                                              "    static func score() -> int:\n"
+                                              "        return 2\n"
+                                              "class Child extends Parent:\n"
+                                              "    static var total: int = 1:\n"
+                                              "        get:\n"
+                                              "            return total\n"
+                                              "        set(value):\n"
+                                              "            total = value\n"
+                                              "    static func score() -> int:\n"
+                                              "        total += super.score()\n"
+                                              "        var adjust := func(value: int) -> int:\n"
+                                              "            return value + 1\n"
+                                              "        return adjust.call(total)\n"
+                                              "func run() -> int:\n"
+                                              "    Child.total = Child.score()\n"
+                                              "    return Child.total\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("static int64_t score()") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_static_total_storage()") != std::string::npos);
+    REQUIRE(result.unit.source.find("GDPPNative_StaticContext__Parent::score()") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("make_local_callable(nullptr") != std::string::npos);
+    REQUIRE(result.unit.source.find("GDPPNative_StaticContext__Child::_gdpp_set_total(") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("GDPPNative_StaticContext__Child::_gdpp_get_total()") !=
+            std::string::npos);
+}
+
+TEST_CASE("compiler rejects every implicit instance dependency from static contexts") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "invalid_static_context.gd", "extends Node\n"
+                                     "var field: int = 1\n"
+                                     "signal pulse\n"
+                                     "func instance_method() -> void:\n"
+                                     "    pass\n"
+                                     "static var invalid_initializer: int = field\n"
+                                     "static var invalid_accessor: String:\n"
+                                     "    get:\n"
+                                     "        return name\n"
+                                     "static func invalid_default(value: int = field) -> void:\n"
+                                     "    print(value)\n"
+                                     "static func invalid_body() -> void:\n"
+                                     "    print(self)\n"
+                                     "    print(field)\n"
+                                     "    pulse.emit()\n"
+                                     "    instance_method()\n"
+                                     "    print(name)\n"
+                                     "    queue_free()\n"
+                                     "    print($Child)\n"
+                                     "    var callback := func() -> void:\n"
+                                     "        print(self)\n"
+                                     "    callback.call()\n");
+
+    REQUIRE(!result.success);
+    REQUIRE(result.unit.header.empty());
+    REQUIRE(result.unit.source.empty());
+    REQUIRE_EQ(std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                             [](const auto& diagnostic) {
+                                 return diagnostic.code == "GDS4146" &&
+                                        diagnostic.span.end.offset > diagnostic.span.begin.offset;
+                             }),
+               std::ptrdiff_t{11});
+    for (const auto* dependency :
+         {"field", "pulse", "instance_method", "name", "queue_free", "self"}) {
+        REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                            [dependency](const auto& diagnostic) {
+                                return diagnostic.code == "GDS4146" &&
+                                       diagnostic.message.find(dependency) != std::string::npos;
+                            }));
+    }
+}
+
 TEST_CASE("compiler resolves versioned builtin value constants") {
     const gdpp::Compiler compiler;
     gdpp::CompileOptions options;
