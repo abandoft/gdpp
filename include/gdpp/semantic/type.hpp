@@ -26,6 +26,26 @@ enum class TypeKind {
     void_type,
 };
 
+// Null is a value in GDScript, while void is the absence of a value. Built-in value types and
+// containers are never nullable: their default-constructed/empty values must not be confused with
+// null merely because they are false in a boolean context.
+enum class Nullability {
+    non_nullable,
+    nullable,
+    null_only,
+    not_a_value,
+};
+
+// Every GDScript value can participate in a boolean context. The classification is deliberately
+// independent from nullability because empty strings and containers are false without being null.
+enum class TruthinessKind {
+    invalid,
+    dynamic_value,
+    always_false,
+    zero_value,
+    object_validity,
+};
+
 struct Type {
     TypeKind kind{TypeKind::unknown};
     std::string name;
@@ -33,6 +53,10 @@ struct Type {
     [[nodiscard]] bool is_numeric() const noexcept;
     [[nodiscard]] bool is_dynamic() const noexcept;
     [[nodiscard]] bool is_packed_array() const noexcept;
+    [[nodiscard]] Nullability nullability() const noexcept;
+    [[nodiscard]] TruthinessKind truthiness() const noexcept;
+    [[nodiscard]] bool accepts_null() const noexcept;
+    [[nodiscard]] bool is_value() const noexcept;
     [[nodiscard]] std::string display_name() const;
 
     friend bool operator==(const Type& left, const Type& right) noexcept {

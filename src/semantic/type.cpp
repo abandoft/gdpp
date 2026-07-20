@@ -26,6 +26,63 @@ bool Type::is_packed_array() const noexcept {
     return packed_arrays.find(name) != packed_arrays.end();
 }
 
+Nullability Type::nullability() const noexcept {
+    switch (kind) {
+    case TypeKind::unknown:
+    case TypeKind::variant:
+    case TypeKind::object:
+        return Nullability::nullable;
+    case TypeKind::nil:
+        return Nullability::null_only;
+    case TypeKind::void_type:
+        return Nullability::not_a_value;
+    case TypeKind::boolean:
+    case TypeKind::integer:
+    case TypeKind::floating:
+    case TypeKind::string:
+    case TypeKind::string_name:
+    case TypeKind::array:
+    case TypeKind::dictionary:
+    case TypeKind::enumeration:
+    case TypeKind::script_resource:
+    case TypeKind::builtin:
+        return Nullability::non_nullable;
+    }
+    return Nullability::not_a_value;
+}
+
+TruthinessKind Type::truthiness() const noexcept {
+    switch (kind) {
+    case TypeKind::unknown:
+    case TypeKind::variant:
+        return TruthinessKind::dynamic_value;
+    case TypeKind::nil:
+        return TruthinessKind::always_false;
+    case TypeKind::object:
+    case TypeKind::script_resource:
+        return TruthinessKind::object_validity;
+    case TypeKind::void_type:
+        return TruthinessKind::invalid;
+    case TypeKind::boolean:
+    case TypeKind::integer:
+    case TypeKind::floating:
+    case TypeKind::string:
+    case TypeKind::string_name:
+    case TypeKind::array:
+    case TypeKind::dictionary:
+    case TypeKind::enumeration:
+    case TypeKind::builtin:
+        return TruthinessKind::zero_value;
+    }
+    return TruthinessKind::invalid;
+}
+
+bool Type::accepts_null() const noexcept {
+    return nullability() == Nullability::nullable || nullability() == Nullability::null_only;
+}
+
+bool Type::is_value() const noexcept { return nullability() != Nullability::not_a_value; }
+
 std::string Type::display_name() const {
     if (!name.empty())
         return name;
