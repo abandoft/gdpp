@@ -4015,8 +4015,9 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
         if (target.resolution == ir::ResolutionKind::script_property) {
             if (target.kind == ir::ExpressionKind::member) {
                 const auto& owner = *target.operands.at(0);
-                if (owner.resolution == ir::ResolutionKind::script_type) {
-                    return prefix + owner.resolved_owner + "::" + target.setter + "(" + value +
+                if (owner.resolution == ir::ResolutionKind::script_type ||
+                    owner.resolution == ir::ResolutionKind::inner_type) {
+                    return prefix + emit_expression(owner) + "::" + target.setter + "(" + value +
                            ");\n";
                 }
                 const auto object = emit_expression(owner);
