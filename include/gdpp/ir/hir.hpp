@@ -243,6 +243,7 @@ struct Class {
 struct Module {
     std::optional<std::string> base_type;
     std::optional<std::string> class_name;
+    std::optional<std::string> icon_path;
     bool is_abstract{false};
     bool is_tool{false};
     std::vector<Enum> enums;

@@ -7,6 +7,7 @@
 
 #include <iosfwd>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -24,6 +25,7 @@ struct GeneratedUnit {
     std::string source;
     std::vector<std::string> inner_class_names;
     std::vector<std::string> abstract_inner_class_names;
+    std::optional<std::string> icon_path;
     bool is_abstract{false};
     bool is_tool{false};
 };

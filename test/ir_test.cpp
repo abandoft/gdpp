@@ -174,6 +174,18 @@ TEST_CASE("typed IR preserves script tool execution mode") {
     REQUIRE(module.is_tool);
 }
 
+TEST_CASE("typed IR preserves script icon metadata") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module = lower_source("@icon(\"icons/custom.svg\")\n"
+                                     "class_name IconClass\n"
+                                     "extends Node\n",
+                                     diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE(module.icon_path.has_value());
+    REQUIRE_EQ(*module.icon_path, std::string{"icons/custom.svg"});
+}
+
 TEST_CASE("typed IR preserves flow-proven non-null object reads") {
     gdpp::DiagnosticBag diagnostics;
     const auto module = lower_source("extends Node\n"

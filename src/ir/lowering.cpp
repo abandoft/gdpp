@@ -703,6 +703,13 @@ ir::Module IrLowerer::lower(const ast::Script& script) const {
     ir::Module module;
     module.base_type = script.base_type;
     module.class_name = script.class_name;
+    const auto icon =
+        std::find_if(script.annotations.begin(), script.annotations.end(),
+                     [](const ast::Annotation& annotation) { return annotation.name == "icon"; });
+    if (icon != script.annotations.end() && icon->arguments.size() == 1 &&
+        icon->arguments.front()->literal_kind() == ast::LiteralKind::string) {
+        module.icon_path = icon->arguments.front()->value();
+    }
     module.is_abstract = std::any_of(
         script.annotations.begin(), script.annotations.end(),
         [](const ast::Annotation& annotation) { return annotation.name == "abstract"; });

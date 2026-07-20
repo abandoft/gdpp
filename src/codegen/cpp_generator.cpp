@@ -5150,6 +5150,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     const std::filesystem::path path{source_path};
     const auto base_name = path.stem().string();
     GeneratedUnit unit;
+    unit.icon_path = module.icon_path;
     unit.is_abstract = module.is_abstract;
     unit.is_tool = module.is_tool;
     match_counter_ = 0;
