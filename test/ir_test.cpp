@@ -65,6 +65,25 @@ TEST_CASE("typed IR owns resolved declaration and expression types") {
     REQUIRE(verifier.verify(module));
 }
 
+TEST_CASE("typed IR preserves flow-proven non-null object reads") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module = lower_source(
+        "extends Node\n"
+        "func guarded_name(value: Node) -> String:\n"
+        "    if value != null:\n"
+        "        return value.name\n"
+        "    return \"\"\n",
+        diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    const auto& conditional = module.functions.front().body.front();
+    REQUIRE_EQ(conditional.kind, gdpp::ir::StatementKind::if_statement);
+    REQUIRE_EQ(conditional.body.front().kind, gdpp::ir::StatementKind::return_statement);
+    const auto& member = *conditional.body.front().expression;
+    REQUIRE_EQ(member.kind, gdpp::ir::ExpressionKind::member);
+    REQUIRE(member.operands.front()->non_null);
+}
+
 TEST_CASE("typed IR preserves semantic iteration plans") {
     gdpp::DiagnosticBag diagnostics;
     const auto module =
