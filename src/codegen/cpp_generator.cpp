@@ -1864,11 +1864,24 @@ std::string CodeGenerator::emit_dictionary_member_assignment(const ir::Statement
 
 std::string CodeGenerator::emit_truthy(const ir::Expression& expression) const {
     auto value = emit_expression(expression);
-    if (expression.type.kind == TypeKind::boolean)
-        return "static_cast<bool>(" + value + ")";
+    switch (expression.type.truthiness()) {
+    case TruthinessKind::invalid:
+        diagnostics_.error("GDS3007", "void expression reached a generated boolean context",
+                           expression.span);
+        return "false";
+    case TruthinessKind::always_false:
+        return "(static_cast<void>(" + value + "), false)";
+    case TruthinessKind::zero_value:
+    case TruthinessKind::dynamic_value:
+        if (expression.type.kind == TypeKind::boolean)
+            return "static_cast<bool>(" + value + ")";
+        return "(godot::Variant(" + value + ")).booleanize()";
+    case TruthinessKind::object_validity:
+        break;
+    }
     if (expression.type.kind == TypeKind::object) {
         if (script_symbols_ && script_symbols_->find_external(expression.type.name))
-            return "static_cast<bool>(godot::Variant(" + value + "))";
+            return "(godot::Variant(" + value + ")).booleanize()";
         bool ref_counted = api_.inherits(expression.type.name, "RefCounted") ||
                            !inner_cpp_type(expression.type.name).empty();
         if (!ref_counted && script_symbols_) {
@@ -1879,7 +1892,7 @@ std::string CodeGenerator::emit_truthy(const ir::Expression& expression) const {
         }
         return ref_counted ? "(" + value + ").is_valid()" : "(" + value + " != nullptr)";
     }
-    return "static_cast<bool>(godot::Variant(" + value + "))";
+    return "(godot::Variant(" + value + ")).booleanize()";
 }
 
 std::string CodeGenerator::emit_integer_binary(const ir::Expression& expression) const {
@@ -2100,6 +2113,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             expression.operands.at(0)->value == "9223372036854775808")
             return emit_expression(*expression.operands.at(0));
         const auto& operand_type = expression.operands.at(0)->type;
+        if (expression.value == "not")
+            return "(!(" + emit_truthy(*expression.operands.at(0)) + "))";
         const auto integer_like =
             operand_type.kind == TypeKind::integer || operand_type.kind == TypeKind::enumeration;
         if (integer_like && expression.value == "-") {
@@ -2110,10 +2125,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         }
         const bool has_direct_cpp_operator =
             (expression.value == "+" || expression.value == "-") && operand_type.is_numeric();
-        const bool has_direct_cpp_not =
-            expression.value == "not" &&
-            (operand_type.kind == TypeKind::boolean || operand_type.kind == TypeKind::object);
-        if (operand_type.is_dynamic() || (!has_direct_cpp_operator && !has_direct_cpp_not)) {
+        if (operand_type.is_dynamic() || !has_direct_cpp_operator) {
             const auto operation_name = expression.value == "+" ? "OP_POSITIVE"
                                         : expression.value == "-"
                                             ? "OP_NEGATE"
@@ -2125,22 +2137,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                        : emit_conversion(expression.type, {TypeKind::variant, "Variant"},
                                          std::move(evaluated));
         }
-        if (expression.value == "not" && operand_type.kind == TypeKind::object) {
-            if (script_symbols_ && script_symbols_->find_external(operand_type.name)) {
-                return "(!static_cast<bool>(godot::Variant(" +
-                       emit_expression(*expression.operands.at(0)) + ")))";
-            }
-            auto ref_counted = api_.inherits(operand_type.name, "RefCounted") ||
-                               !inner_cpp_type(operand_type.name).empty();
-            if (!ref_counted && script_symbols_) {
-                if (const auto* symbol = script_symbols_->find_global(operand_type.name))
-                    ref_counted = api_.inherits(symbol->godot_base_type, "RefCounted");
-            }
-            const auto operand = emit_expression(*expression.operands.at(0));
-            return ref_counted ? "(!(" + operand + ").is_valid())" : "(!" + operand + ")";
-        }
-        const auto operation = expression.value == "not" ? "!" : expression.value;
-        return "(" + operation + emit_expression(*expression.operands.at(0)) + ")";
+        return "(" + expression.value + emit_expression(*expression.operands.at(0)) + ")";
     }
     case ir::ExpressionKind::await_expression:
         diagnostics_.error("GDS3006", "unlowered await expression reached code generation",

@@ -125,7 +125,7 @@ TEST_CASE("compiler rejects invalid assert forms and types") {
     REQUIRE(!invalid_message.success);
     REQUIRE(!expression.success);
     REQUIRE(truthy_condition.unit.source.find(
-                "static_cast<bool>(godot::Variant(static_cast<int64_t>(1)))") != std::string::npos);
+                "(godot::Variant(static_cast<int64_t>(1))).booleanize()") != std::string::npos);
 }
 
 TEST_CASE("compiler applies warning directives and structured await to property setters") {
@@ -584,7 +584,7 @@ TEST_CASE("compiler completes coroutine state inside structured await continuati
 
     REQUIRE(result.success);
     const auto cancelled_branch =
-        result.unit.source.find("if (static_cast<bool>(godot::Variant(cancelled))) {");
+        result.unit.source.find("if ((godot::Variant(cancelled)).booleanize()) {");
     REQUIRE(cancelled_branch != std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::complete_coroutine(", cancelled_branch) !=
             std::string::npos);
@@ -1326,7 +1326,7 @@ TEST_CASE("compiler applies truthiness to typed containers with short circuiting
                                                "    return items && items.size()\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("static_cast<bool>(godot::Variant(items)) &&") !=
+    REQUIRE(result.unit.source.find("(godot::Variant(items)).booleanize() &&") !=
             std::string::npos);
 }
 
@@ -1471,7 +1471,7 @@ TEST_CASE("compiler applies GDScript truthiness to RefCounted objects") {
                                                               "    return not shape\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("(!(shape).is_valid())") != std::string::npos);
+    REQUIRE(result.unit.source.find("(!((shape).is_valid()))") != std::string::npos);
 }
 
 TEST_CASE("compiler synthesizes ready for onready fields") {
