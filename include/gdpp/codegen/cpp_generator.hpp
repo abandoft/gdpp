@@ -149,7 +149,7 @@ class CodeGenerator final {
     [[nodiscard]] bool managed_constant_reference(const ir::Expression& expression) const;
     void emit_inner_class_declaration(const ir::Class& declaration, std::ostringstream& header,
                                       const std::string& native_name,
-                                      const std::string& source_name) const;
+                                      const std::string& source_name, bool tool_mode) const;
     void emit_inner_class_definition(const ir::Class& declaration, std::ostringstream& source,
                                      const std::string& native_name, const std::string& source_name,
                                      bool tool_mode) const;

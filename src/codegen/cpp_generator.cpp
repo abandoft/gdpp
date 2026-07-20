@@ -4432,7 +4432,8 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
 void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
                                                  std::ostringstream& header,
                                                  const std::string& native_name,
-                                                 const std::string& source_name) const {
+                                                 const std::string& source_name,
+                                                 const bool tool_mode) const {
     const auto* previous_inner_script = current_inner_script_;
     const auto previous_function_parameters = local_function_parameters_;
     const auto previous_functions = local_functions_;
@@ -4483,7 +4484,9 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
                                 (godot_base == "Node" || api_.inherits(godot_base, "Node"));
     header << "class " << native_name << " : public " << base_cpp << " {\n"
            << "    GDCLASS(" << native_name << ", " << base_cpp << ")\n\n"
-           << "public:\n";
+           << "public:\n"
+           << "    inline static constexpr bool _gdpp_tool_mode = "
+           << (tool_mode ? "true" : "false") << ";\n";
     for (const auto& enumeration : declaration.enums) {
         if (enumeration.name.empty()) {
             for (const auto& entry : enumeration.entries)
@@ -5451,8 +5454,12 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
            << "    template <typename... Args>\n"
            << "    static auto instantiate(Args &&...args) {\n"
            << "        if constexpr (std::is_base_of_v<godot::RefCounted, T>) {\n"
+           << "            if (!T::_gdpp_tool_mode && gdpp::runtime::is_editor_hint()) "
+              "return godot::Ref<T>();\n"
            << "            return godot::Ref<T>(memnew(T(std::forward<Args>(args)...)));\n"
            << "        } else {\n"
+           << "            if (!T::_gdpp_tool_mode && gdpp::runtime::is_editor_hint()) "
+              "return static_cast<T*>(nullptr);\n"
            << "            return memnew(T(std::forward<Args>(args)...));\n"
            << "        }\n"
            << "    }\n"
@@ -5460,6 +5467,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
            << "template <typename T> struct InternalClassResource {\n"
            << "    template <typename... Args>\n"
            << "    static godot::Ref<T> instantiate(Args &&...args) {\n"
+           << "        if (!T::_gdpp_tool_mode && gdpp::runtime::is_editor_hint()) "
+              "return {};\n"
            << "        return godot::Ref<T>(memnew(T(std::forward<Args>(args)...)));\n"
            << "    }\n"
            << "};\n"
@@ -5472,11 +5481,13 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
            << "} // namespace " << detail_namespace_ << "\n\n";
     for (const auto& [qualified, declaration] : ordered_inner_classes) {
         emit_inner_class_declaration(*declaration, header, inner_native_names_.at(qualified),
-                                     qualified);
+                                     qualified, module.is_tool);
     }
     header << "class " << unit.class_name << " : public " << base_cpp << " {\n"
            << "    GDCLASS(" << unit.class_name << ", " << base_cpp << ")\n\n"
-           << "public:\n";
+           << "public:\n"
+           << "    inline static constexpr bool _gdpp_tool_mode = "
+           << (module.is_tool ? "true" : "false") << ";\n";
     for (const auto& enumeration : module.enums) {
         if (enumeration.name.empty()) {
             for (const auto& entry : enumeration.entries) {
