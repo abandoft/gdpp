@@ -1466,9 +1466,21 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
 
 std::string CodeGenerator::emit_explicit_conversion(const Type& target, const Type& source,
                                                     std::string value) const {
-    if (classify_conversion(target, source) != ConversionKind::explicit_only)
+    if (target == source)
+        return value;
+    if (is_explicitly_typed_container(target) && source.is_dynamic())
         return emit_conversion(target, source, std::move(value));
-    return "static_cast<" + cpp_type(target) + ">(godot::Variant(" + value + "))";
+    if (is_explicitly_typed_container(target) && target != source) {
+        const auto base = target.kind == TypeKind::array ? "godot::Array" : "godot::Dictionary";
+        return std::string{base} + "(godot::Variant(" + value + "))";
+    }
+    if (target.kind == TypeKind::enumeration)
+        return emit_conversion(target, source, std::move(value));
+    const auto target_variant = variant_type(target);
+    if (target_variant == "godot::Variant::NIL")
+        return emit_conversion(target, source, std::move(value));
+    return "gdpp::runtime::explicit_variant_cast<" + cpp_type(target) + ">" +
+           "(godot::Variant(" + value + "), " + target_variant + ")";
 }
 
 std::string CodeGenerator::emit_parameter_default(const ir::Parameter& parameter) const {
