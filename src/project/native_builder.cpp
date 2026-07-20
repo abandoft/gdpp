@@ -926,7 +926,8 @@ std::string native_development_extension_descriptor(GodotVersion target_version,
                                                     NativePlatform platform,
                                                     std::string_view architecture,
                                                     std::string_view resource_library_path,
-                                                    NativeWebThreadMode web_thread_mode) {
+                                                    NativeWebThreadMode web_thread_mode,
+                                                    std::string_view additional_sections) {
     std::ostringstream output;
     output << "[configuration]\n\n"
            << "entry_symbol = \"gdpp_project_library_init\"\n"
@@ -948,6 +949,8 @@ std::string native_development_extension_descriptor(GodotVersion target_version,
         output << platform_name(platform) << ".editor." << architecture << " = \""
                << resource_library_path << "\"\n";
     }
+    if (!additional_sections.empty())
+        output << '\n' << additional_sections;
     return output.str();
 }
 

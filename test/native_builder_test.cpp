@@ -293,13 +293,17 @@ TEST_CASE("native build profiles use product roles instead of Godot ABI target n
 TEST_CASE("development descriptor selects only the library that was actually built") {
     const auto descriptor = gdpp::native_development_extension_descriptor(
         gdpp::GodotVersion::v4_5, gdpp::NativePlatform::macos, "arm64",
-        "res://addons/gdpp/binary/libgdpp_project.development.macos.arm64.0123.dylib");
+        "res://addons/gdpp/binary/libgdpp_project.development.macos.arm64.0123.dylib",
+        gdpp::NativeWebThreadMode::not_applicable,
+        "[icons]\nGDPPNative_Player = \"res://icons/player.svg\"\n");
 
     REQUIRE(descriptor.find("compatibility_minimum = \"4.5\"") != std::string::npos);
     REQUIRE(descriptor.find("macos.editor.arm64 = \"res://addons/gdpp/binary/") !=
             std::string::npos);
     REQUIRE(descriptor.find("macos.editor.universal") == std::string::npos);
     REQUIRE(descriptor.find("macos.editor.x86_64") == std::string::npos);
+    REQUIRE(descriptor.find("[icons]\nGDPPNative_Player = \"res://icons/player.svg\"") !=
+            std::string::npos);
 }
 
 TEST_CASE("universal macOS descriptor maps both runtime architectures to one fat library") {

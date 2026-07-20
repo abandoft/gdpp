@@ -24,7 +24,8 @@ native_library_name(NativeBuildProfile profile, NativePlatform platform,
 [[nodiscard]] std::string native_development_extension_descriptor(
     GodotVersion target_version, NativePlatform platform, std::string_view architecture,
     std::string_view resource_library_path,
-    NativeWebThreadMode web_thread_mode = NativeWebThreadMode::not_applicable);
+    NativeWebThreadMode web_thread_mode = NativeWebThreadMode::not_applicable,
+    std::string_view additional_sections = {});
 
 struct NativeBuildOptions {
     std::filesystem::path project_output_directory;
