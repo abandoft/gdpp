@@ -2407,6 +2407,27 @@ TEST_CASE("generated object method calls reject null and freed receivers") {
             std::string::npos);
 }
 
+TEST_CASE("generated object property reads reject null and freed receivers") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "safe_property.gd", "extends Node\n"
+                            "func typed_name(value: Node) -> String:\n"
+                            "    return value.name\n"
+                            "func narrowed_name(value: Variant) -> String:\n"
+                            "    if value is Node:\n"
+                            "        return value.name\n"
+                            "    return \"\"\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("_gdpp_property_receiver_") != std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "Cannot access member 'name' on a null or freed object at safe_property.gd:3") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "Cannot access member 'name' on a null or freed object at safe_property.gd:6") !=
+            std::string::npos);
+}
+
 TEST_CASE("semantic flow narrows short-circuit logical operands") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(

@@ -566,7 +566,9 @@ TEST_CASE("project compiler resolves class and path inheritance in parent-first 
     REQUIRE(child_header.find(base_class + "* typed_identity(" + base_class + "* value)") !=
             std::string::npos);
     REQUIRE(child_source.find(base_class + "::static_answer()") != std::string::npos);
-    REQUIRE(child_source.find("value->_gdpp_get_base_value()") != std::string::npos);
+    REQUIRE(child_source.find("->_gdpp_get_base_value()") != std::string::npos);
+    REQUIRE(child_source.find("Cannot access member 'base_value' on a null or freed object") !=
+            std::string::npos);
     REQUIRE(child_source.find("value->_gdpp_set_base_value(static_cast<int64_t>(40))") !=
             std::string::npos);
     REQUIRE(child_source.find("godot::Object::cast_to<" + base_class +

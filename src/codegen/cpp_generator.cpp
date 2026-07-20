@@ -2801,6 +2801,28 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             return "gdpp::runtime::get_named(" + object + ", " +
                    godot_string_name(expression.value) + ")";
         }
+        const auto& receiver = *expression.operands.at(0);
+        const bool checked_object_access =
+            receiver.type.kind == TypeKind::object && object != "this" &&
+            receiver.resolution != ir::ResolutionKind::godot_type &&
+            receiver.resolution != ir::ResolutionKind::script_type &&
+            receiver.resolution != ir::ResolutionKind::inner_type;
+        const auto receiver_name =
+            checked_object_access
+                ? "_gdpp_property_receiver_" + std::to_string(temporary_counter_++)
+                : object;
+        const auto finish_object_access = [&](std::string access) {
+            if (!checked_object_access)
+                return access;
+            const auto location =
+                current_source_path_ + ":" + std::to_string(expression.span.begin.line);
+            const auto message = godot_string("Cannot access member '" + expression.value +
+                                              "' on a null or freed object at " + location);
+            return "([&]() -> " + cpp_type(expression.type) + " { auto &&" + receiver_name +
+                   " = " + object +
+                   "; if (!gdpp::runtime::is_instance_valid(godot::Variant(" + receiver_name +
+                   "))) { ERR_FAIL_V_EDMSG({}, " + message + "); } return " + access + "; }())";
+        };
         const auto connector =
             expression.resolution == ir::ResolutionKind::enum_member ||
                     expression.resolution == ir::ResolutionKind::builtin_constant
@@ -2808,8 +2830,9 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             : expression.operands.at(0)->resolution == ir::ResolutionKind::godot_type      ? "::"
             : expression.operands.at(0)->resolution == ir::ResolutionKind::script_type     ? "::"
             : expression.operands.at(0)->resolution == ir::ResolutionKind::inner_type      ? "::"
-            : object == "this" || expression.operands.at(0)->type.kind == TypeKind::object ? "->"
-                                                                                           : ".";
+            : receiver_name == "this" || expression.operands.at(0)->type.kind == TypeKind::object
+                ? "->"
+                : ".";
         if (expression.resolution == ir::ResolutionKind::godot_property &&
             !expression.direct_access && !expression.getter.empty()) {
             std::string index;
@@ -2822,25 +2845,27 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                                                   {TypeKind::integer, "int"}, std::move(index));
                 }
             }
-            return emit_api_return(expression.type,
-                                   object + connector + expression.getter + "(" + index + ")");
+            return finish_object_access(emit_api_return(
+                expression.type,
+                receiver_name + connector + expression.getter + "(" + index + ")"));
         }
         if (expression.resolution == ir::ResolutionKind::script_property &&
             !expression.getter.empty()) {
-            return object + connector + expression.getter + "()";
+            return finish_object_access(receiver_name + connector + expression.getter + "()");
         }
         if (expression.resolution == ir::ResolutionKind::godot_property &&
             expression.direct_access && expression.operands.at(0)->type.kind == TypeKind::builtin) {
             return emit_direct_builtin_member(expression.resolved_owner, object, expression.value);
         }
-        return object + connector +
-               (expression.resolution == ir::ResolutionKind::enum_member
-                    ? enum_identifier(expression.value)
-                    : sanitize_identifier(expression.value)) +
-               (expression.resolution == ir::ResolutionKind::script_constant &&
-                        managed_static_constant(expression.type)
-                    ? "()"
-                    : "");
+        return finish_object_access(
+            receiver_name + connector +
+            (expression.resolution == ir::ResolutionKind::enum_member
+                 ? enum_identifier(expression.value)
+                 : sanitize_identifier(expression.value)) +
+            (expression.resolution == ir::ResolutionKind::script_constant &&
+                     managed_static_constant(expression.type)
+                 ? "()"
+                 : ""));
     }
     case ir::ExpressionKind::subscript:
         if (expression.operands.at(0)->type.is_dynamic() ||
