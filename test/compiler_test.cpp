@@ -3216,6 +3216,44 @@ TEST_CASE("instance Godot methods cannot be called through type references") {
     REQUIRE(result.unit.source.empty());
 }
 
+TEST_CASE("compiler lowers constant GDScript utility functions through the native runtime") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "language_utilities.gd",
+        "extends Node\n"
+        "func inspect(value: Variant, target: Node) -> Array:\n"
+        "    return [convert(\"42\", TYPE_INT), type_exists(&\"Node\"), char(0x1f642), "
+        "ord(\"🙂\"), Color8(255, 128, 0), Color8(255, 128, 0, 64), "
+        "is_instance_of(value, TYPE_INT), is_instance_of(target, Node)]\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("gdpp::runtime::convert_value") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::type_exists") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::character") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::ordinal") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::color8") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::is_instance_of") != std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "godot::Variant(godot::StringName(\"Node\"))") != std::string::npos);
+}
+
+TEST_CASE("compiler rejects invalid GDScript utility argument contracts before codegen") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "invalid_language_utilities.gd",
+        "func invalid() -> void:\n"
+        "    char(\"A\")\n"
+        "    ord(1)\n"
+        "    Color8(1, 2)\n"
+        "    type_exists(7)\n"
+        "    is_instance_of(1, [])\n");
+
+    REQUIRE(!result.success);
+    REQUIRE(result.unit.source.empty());
+    REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4144"; }));
+}
+
 TEST_CASE("compiler reports deterministic stage and IR size metrics") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("metrics.gd", "extends Node\n"
