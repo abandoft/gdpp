@@ -229,9 +229,19 @@ TEST_CASE("project compiler rejects unsafe tool to runtime inheritance transitio
     REQUIRE(std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
                         [](const auto& item) { return item.diagnostic.code == "PRJ0025"; }));
 
+    write_text(root / "editor_base.gd", "extends Node\n"
+                                        "class_name EditorBase\n");
     write_text(root / "runtime_child.gd", "@tool\n"
                                           "extends EditorBase\n"
                                           "class_name RuntimeChild\n");
+    const auto reverse_invalid = gdpp::ProjectCompiler{}.compile(options);
+    REQUIRE(!reverse_invalid.success);
+    REQUIRE(std::any_of(reverse_invalid.diagnostics.begin(), reverse_invalid.diagnostics.end(),
+                        [](const auto& item) { return item.diagnostic.code == "PRJ0026"; }));
+
+    write_text(root / "editor_base.gd", "@tool\n"
+                                        "extends Node\n"
+                                        "class_name EditorBase\n");
     const auto valid = gdpp::ProjectCompiler{}.compile(options);
     REQUIRE(valid.success);
     REQUIRE(std::all_of(valid.scripts.begin(), valid.scripts.end(),
