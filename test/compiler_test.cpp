@@ -941,6 +941,24 @@ TEST_CASE("tool scripts execute initialization paths inside the editor") {
     REQUIRE(result.unit.source.find("    _init();") != std::string::npos);
 }
 
+TEST_CASE("editor extension base classes require tool execution mode") {
+    const gdpp::Compiler compiler;
+    const auto invalid_plugin = compiler.compile(
+        "editor_plugin.gd", "extends EditorPlugin\nfunc _enter_tree():\n    pass\n");
+    const auto invalid_script =
+        compiler.compile("editor_script.gd", "extends EditorScript\nfunc _run():\n    pass\n");
+    const auto valid_plugin = compiler.compile(
+        "tool_editor_plugin.gd", "@tool\nextends EditorPlugin\nfunc _enter_tree():\n    pass\n");
+
+    REQUIRE(!invalid_plugin.success);
+    REQUIRE(!invalid_script.success);
+    REQUIRE(valid_plugin.success);
+    REQUIRE(std::any_of(invalid_plugin.diagnostics.begin(), invalid_plugin.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4152"; }));
+    REQUIRE(std::any_of(invalid_script.diagnostics.begin(), invalid_script.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4152"; }));
+}
+
 TEST_CASE("compiler preserves UTF-8 and unique-node paths in generated Godot strings") {
     const gdpp::Compiler compiler;
     const auto result =

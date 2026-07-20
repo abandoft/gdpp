@@ -4768,6 +4768,13 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
                                "' requires project-level inheritance resolution",
                            script.span);
     }
+    const bool requires_tool_base = base_type_ == "EditorPlugin" || base_type_ == "EditorScript" ||
+                                    api_.inherits(base_type_, "EditorPlugin") ||
+                                    api_.inherits(base_type_, "EditorScript");
+    if (requires_tool_base && !script_tool_) {
+        diagnostics_.error(
+            "GDS4152", "scripts derived from '" + base_type_ + "' must declare @tool", script.span);
+    }
     const auto register_inner_classes = [&](const auto& self, const auto& declarations,
                                             const std::string& parent) -> void {
         for (const auto& declaration : declarations) {
