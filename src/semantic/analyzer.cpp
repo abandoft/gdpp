@@ -473,8 +473,9 @@ void SemanticAnalyzer::require_expression_assignable(const Type& target,
         return;
     }
     const auto runtime_source = runtime_storage_type_of(expression);
-    if (semantically_assignable && !is_runtime_storage_compatible(target, runtime_source)) {
-        diagnostics_.error(is_explicitly_typed_container(target) ? "GDS4155" : "GDS4157",
+    if (semantically_assignable && !is_runtime_storage_compatible(target, runtime_source) &&
+        !is_explicitly_typed_container(target)) {
+        diagnostics_.error("GDS4157",
                            context + ": Godot runtime storage " + target.display_name() +
                                " rejects runtime value " + runtime_source.display_name(),
                            span);
@@ -1233,6 +1234,42 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             model_.api_resolutions_.emplace(
                 &expression, ApiResolution{ApiResolutionKind::type_reference, expression.value(),
                                            "", "", result, 0, 0, false, true});
+            break;
+        }
+        if (expression.value().find('.') != std::string::npos) {
+            result = type_from_name(expression.value(), expression.span);
+            if (const auto project_enum = find_project_enum(script_symbols_, expression.value());
+                project_enum.enumeration) {
+                model_.api_resolutions_.emplace(
+                    &expression, ApiResolution{ApiResolutionKind::script_enum_type,
+                                               project_enum.owner->native_class_name +
+                                                   "::" + project_enum.enumeration->name,
+                                               "", "", result, 0, 0, false, true});
+            } else if (const auto external_enum =
+                           find_external_enum(script_symbols_, expression.value());
+                       external_enum.enumeration) {
+                model_.api_resolutions_.emplace(
+                    &expression, ApiResolution{ApiResolutionKind::global_enum_type, "0", "", "",
+                                               result, 0, 0, false, true});
+            } else if (const auto separator = expression.value().rfind('.');
+                       separator != std::string::npos &&
+                       api_.has_class_enum(expression.value().substr(0, separator),
+                                           expression.value().substr(separator + 1))) {
+                model_.api_resolutions_.emplace(
+                    &expression, ApiResolution{ApiResolutionKind::global_enum_type,
+                                               "godot::" + expression.value().substr(0, separator) +
+                                                   "::" + expression.value().substr(separator + 1),
+                                               "", "", result, 0, 0, false, true});
+            } else if (const auto* inner = find_inner_class(expression.value())) {
+                model_.api_resolutions_.emplace(
+                    &expression, ApiResolution{ApiResolutionKind::inner_type_reference, inner->name,
+                                               "", "", result, 0, 0, false, true});
+            } else {
+                model_.api_resolutions_.emplace(&expression,
+                                                ApiResolution{ApiResolutionKind::type_reference,
+                                                              expression.value(), "", "", result, 0,
+                                                              0, false, true});
+            }
             break;
         }
         if (expression.value() == "self") {
