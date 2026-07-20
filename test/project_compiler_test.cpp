@@ -77,6 +77,8 @@ TEST_CASE("project compiler incrementally generates a unified native extension")
     REQUIRE(std::filesystem::is_regular_file(options.output_directory / "CMakeLists.txt"));
     REQUIRE(std::filesystem::is_regular_file(options.output_directory /
                                              "prune_stale_development.cmake"));
+    REQUIRE(std::filesystem::is_regular_file(options.output_directory /
+                                             "patch_godot_cpp_class_db.cmake"));
     REQUIRE(std::filesystem::is_regular_file(options.output_directory / "register_types.cpp"));
     REQUIRE(std::filesystem::is_regular_file(first.extension_descriptor));
     REQUIRE_EQ(first.native_library_directory, root / "addons/gdpp/binary");
@@ -96,6 +98,11 @@ TEST_CASE("project compiler incrementally generates a unified native extension")
                 .find("add_custom_command(TARGET gdpp_project POST_BUILD") != std::string::npos);
     REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
                 .find("INTERFACE_INCLUDE_DIRECTORIES") != std::string::npos);
+    REQUIRE(
+        read_text(options.output_directory / "CMakeLists.txt").find("gdpp-godot-cpp-override") !=
+        std::string::npos);
+    REQUIRE(read_text(options.output_directory / "patch_godot_cpp_class_db.cmake")
+                .find("register_runtime_abstract_class") != std::string::npos);
     REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
                 .find("set(CMAKE_MSVC_RUNTIME_LIBRARY \"MultiThreaded\")") != std::string::npos);
     REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
