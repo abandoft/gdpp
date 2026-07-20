@@ -358,6 +358,10 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${CMAKE_SOURCE_DIR}/third/godot-cpp/include"
                 "${GDPP_SDK_DIRECTORY}/godot-cpp/include"
+        COMMAND "${CMAKE_COMMAND}"
+                -DGDPP_CLASS_DB_INPUT=${CMAKE_SOURCE_DIR}/third/godot-cpp/include/godot_cpp/core/class_db.hpp
+                -DGDPP_CLASS_DB_OUTPUT=${GDPP_SDK_DIRECTORY}/godot-cpp/include/godot_cpp/core/class_db.hpp
+                -P "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${CMAKE_SOURCE_DIR}/third/godot-cpp/LICENSE.md"
                 "${GDPP_SDK_DIRECTORY}/godot-cpp/LICENSE.md"
@@ -408,6 +412,7 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
             "${GDPP_NATIVE_RUNTIME_HEADER}"
             "${GDPP_NATIVE_RUNTIME_SOURCE}"
             "${GDPP_INTEGER_SEMANTICS_HEADER}"
+            "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
         COMMENT "Packaging compiler-only Godot ${GDPP_SDK_VERSION} SDK"
         VERBATIM
     )
