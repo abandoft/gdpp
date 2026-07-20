@@ -388,6 +388,7 @@ set(GDPP_SEMANTIC_SOURCES
     src/semantic/iteration.cpp
     src/semantic/script_symbols.cpp
     src/semantic/type.cpp
+    src/semantic/conversion.cpp
 )
 set(GDPP_IR_SOURCES
     src/ir/lowering.cpp
