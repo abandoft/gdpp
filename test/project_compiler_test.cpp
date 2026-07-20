@@ -207,6 +207,10 @@ TEST_CASE("project compiler preserves tool mode across incremental cache hits") 
     REQUIRE_EQ(std::count_if(cached.scripts.begin(), cached.scripts.end(),
                              [](const auto& script) { return script.is_tool; }),
                std::ptrdiff_t{1});
+    const auto registration = read_text(options.output_directory / "register_types.cpp");
+    REQUIRE(registration.find("GDREGISTER_CLASS(" + editor->class_name + ")") != std::string::npos);
+    REQUIRE(registration.find("GDREGISTER_RUNTIME_CLASS(" + runtime->class_name + ")") !=
+            std::string::npos);
 }
 
 TEST_CASE("project compiler includes GDScript embedded in text scenes") {
@@ -472,8 +476,8 @@ TEST_CASE("project compiler preserves nested internal class identities across ca
         read_text(options.output_directory / "generated" / result.scripts.front().header_file_name);
     REQUIRE(header.find("class " + *derived + " : public " + *base) != std::string::npos);
     const auto registration = read_text(options.output_directory / "register_types.cpp");
-    REQUIRE(registration.find("GDREGISTER_CLASS(" + *base + ")") <
-            registration.find("GDREGISTER_CLASS(" + *derived + ")"));
+    REQUIRE(registration.find("GDREGISTER_RUNTIME_CLASS(" + *base + ")") <
+            registration.find("GDREGISTER_RUNTIME_CLASS(" + *derived + ")"));
 
     const auto cached = compiler.compile(options);
     REQUIRE(cached.success);
@@ -617,9 +621,12 @@ TEST_CASE("project compiler resolves class and path inheritance in parent-first 
     REQUIRE(child_source.find("godot::Object::cast_to<" + base_class +
                               ">((value).get_validated_object()) != nullptr") != std::string::npos);
     const auto registration = read_text(options.output_directory / "register_types.cpp");
-    const auto base_position = registration.find("GDREGISTER_CLASS(GDPPNative_ProjectBase_");
-    const auto middle_position = registration.find("GDREGISTER_CLASS(GDPPNative_ProjectMiddle_");
-    const auto child_position = registration.find("GDREGISTER_CLASS(GDPPNative_ProjectChild_");
+    const auto base_position =
+        registration.find("GDREGISTER_RUNTIME_CLASS(GDPPNative_ProjectBase_");
+    const auto middle_position =
+        registration.find("GDREGISTER_RUNTIME_CLASS(GDPPNative_ProjectMiddle_");
+    const auto child_position =
+        registration.find("GDREGISTER_RUNTIME_CLASS(GDPPNative_ProjectChild_");
     REQUIRE(base_position < middle_position);
     REQUIRE(middle_position < child_position);
 }
@@ -1097,8 +1104,9 @@ TEST_CASE("project compiler hoists a script-local class used as the root base") 
             std::string::npos);
     REQUIRE(header.find("#include \"\"") == std::string::npos);
     const auto registration = read_text(options.output_directory / "register_types.cpp");
-    REQUIRE(registration.find("GDREGISTER_ABSTRACT_CLASS(" + inner + ")") <
-            registration.find("GDREGISTER_CLASS(" + result.scripts.front().class_name + ")"));
+    REQUIRE(
+        registration.find("register_runtime_abstract_class<" + inner + ">()") <
+        registration.find("GDREGISTER_RUNTIME_CLASS(" + result.scripts.front().class_name + ")"));
 
     write_text(root / "renderer.gd", "class_name LocalRootDerived\n"
                                      "extends LocalRootBase\n"
@@ -1907,7 +1915,7 @@ TEST_CASE("project source selection compiles scripts beside native addons and ne
                "addons/vendor/vendor_scene.tscn::GDScript_vendor";
     }));
     const auto registration = read_text(options.output_directory / "register_types.cpp");
-    REQUIRE(registration.find("GDREGISTER_ABSTRACT_CLASS(GDPPNative_RuntimeAddonBase_") !=
+    REQUIRE(registration.find("register_runtime_abstract_class<GDPPNative_RuntimeAddonBase_") !=
             std::string::npos);
 }
 
@@ -1927,7 +1935,8 @@ TEST_CASE("project compiler enforces cross-script abstract method obligations") 
                                            "class_name ConcreteWork\n"
                                            "func execute(value: int) -> String:\n"
                                            "    return str(value)\n");
-    write_text(root / "inner_types.gd", "class_name InnerContracts\n"
+    write_text(root / "inner_types.gd", "@tool\n"
+                                        "class_name InnerContracts\n"
                                         "@abstract class Contract:\n"
                                         "    @abstract func execute() -> void\n"
                                         "class Implementation extends Contract:\n"
@@ -1943,6 +1952,10 @@ TEST_CASE("project compiler enforces cross-script abstract method obligations") 
                              [](const auto& script) { return script.is_abstract; }),
                std::ptrdiff_t{2});
     const auto registration = read_text(options.output_directory / "register_types.cpp");
+    REQUIRE(registration.find("register_runtime_abstract_class<GDPPNative_WorkContract_") !=
+            std::string::npos);
+    REQUIRE(registration.find("register_runtime_abstract_class<GDPPNative_DeferredWork_") !=
+            std::string::npos);
     REQUIRE(registration.find("GDREGISTER_ABSTRACT_CLASS(GDPPNative_InnerContracts_") !=
             std::string::npos);
     REQUIRE(registration.find("__Contract);") != std::string::npos);
