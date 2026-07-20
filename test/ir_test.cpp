@@ -67,27 +67,25 @@ TEST_CASE("typed IR owns resolved declaration and expression types") {
 
 TEST_CASE("typed IR preserves Godot default argument evaluation contracts") {
     gdpp::DiagnosticBag diagnostics;
-    const auto module = lower_source(
-        "extends Node\n"
-        "var seed: int = 7\n"
-        "func make_value() -> int:\n"
-        "    return seed\n"
-        "func classify(required: int, scalar: int = 1 + 2, "
-        "component: float = Vector2(1, 2).x, wave: float = sin(0.5), "
-        "width: int = len(\"ab\"), runtime: int = make_value(), "
-        "instance_value: int = seed, values: Array = [1, 2]) -> void:\n"
-        "    pass\n",
-        diagnostics);
+    const auto module =
+        lower_source("extends Node\n"
+                     "var seed: int = 7\n"
+                     "func make_value() -> int:\n"
+                     "    return seed\n"
+                     "func classify(required: int, scalar: int = 1 + 2, "
+                     "component: float = Vector2(1, 2).x, wave: float = sin(0.5), "
+                     "width: int = len(\"ab\"), runtime: int = make_value(), "
+                     "instance_value: int = seed, values: Array = [1, 2]) -> void:\n"
+                     "    pass\n",
+                     diagnostics);
 
     REQUIRE(!diagnostics.has_errors());
-    const auto function = std::find_if(module.functions.begin(), module.functions.end(),
-                                       [](const auto& candidate) {
-                                           return candidate.name == "classify";
-                                       });
+    const auto function =
+        std::find_if(module.functions.begin(), module.functions.end(),
+                     [](const auto& candidate) { return candidate.name == "classify"; });
     REQUIRE(function != module.functions.end());
     REQUIRE_EQ(function->parameters.size(), std::size_t{8});
-    REQUIRE_EQ(function->parameters[0].default_evaluation,
-               gdpp::DefaultArgumentEvaluation::absent);
+    REQUIRE_EQ(function->parameters[0].default_evaluation, gdpp::DefaultArgumentEvaluation::absent);
     for (const auto index : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{4}}) {
         REQUIRE_EQ(function->parameters[index].default_evaluation,
                    gdpp::DefaultArgumentEvaluation::compile_time_constant);

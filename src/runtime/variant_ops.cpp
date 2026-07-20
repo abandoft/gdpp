@@ -452,8 +452,8 @@ bool is_instance_of(const godot::Variant& value, const godot::Variant& type_desc
     if (type_descriptor.get_type() == godot::Variant::OBJECT) {
         auto* descriptor_object = type_descriptor.get_validated_object();
         auto* script = godot::Object::cast_to<godot::Script>(descriptor_object);
-        auto* object = value.get_type() == godot::Variant::OBJECT ? value.get_validated_object()
-                                                                  : nullptr;
+        auto* object =
+            value.get_type() == godot::Variant::OBJECT ? value.get_validated_object() : nullptr;
         if (script)
             return object && script->instance_has(object);
     }

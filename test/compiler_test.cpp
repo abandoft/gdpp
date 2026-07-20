@@ -3233,20 +3233,19 @@ TEST_CASE("compiler lowers constant GDScript utility functions through the nativ
     REQUIRE(result.unit.source.find("gdpp::runtime::ordinal") != std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::color8") != std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::is_instance_of") != std::string::npos);
-    REQUIRE(result.unit.source.find(
-                "godot::Variant(godot::StringName(\"Node\"))") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Variant(godot::StringName(\"Node\"))") !=
+            std::string::npos);
 }
 
 TEST_CASE("compiler rejects invalid GDScript utility argument contracts before codegen") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "invalid_language_utilities.gd",
-        "func invalid() -> void:\n"
-        "    char(\"A\")\n"
-        "    ord(1)\n"
-        "    Color8(1, 2)\n"
-        "    type_exists(7)\n"
-        "    is_instance_of(1, [])\n");
+    const auto result =
+        compiler.compile("invalid_language_utilities.gd", "func invalid() -> void:\n"
+                                                          "    char(\"A\")\n"
+                                                          "    ord(1)\n"
+                                                          "    Color8(1, 2)\n"
+                                                          "    type_exists(7)\n"
+                                                          "    is_instance_of(1, [])\n");
 
     REQUIRE(!result.success);
     REQUIRE(result.unit.source.empty());

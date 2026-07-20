@@ -297,8 +297,8 @@ Type SemanticModel::type_of(const ast::Parameter& parameter) const {
     return found == parameter_types_.end() ? unknown_type : found->second;
 }
 
-DefaultArgumentEvaluation SemanticModel::default_argument_evaluation_of(
-    const ast::Parameter& parameter) const noexcept {
+DefaultArgumentEvaluation
+SemanticModel::default_argument_evaluation_of(const ast::Parameter& parameter) const noexcept {
     const auto found = default_argument_evaluations_.find(&parameter);
     return found == default_argument_evaluations_.end() ? DefaultArgumentEvaluation::absent
                                                         : found->second;
@@ -1590,15 +1590,14 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         const auto resolve_intrinsic = [&](const IntrinsicFeature& feature) {
             if (argument_count < feature.minimum_arguments ||
                 argument_count > feature.maximum_arguments) {
-                diagnostics_.error(
-                    feature.kind == IntrinsicKind::length ? "GDS4076" : "GDS4075",
-                    std::string{feature.name} + " expects " +
-                        (feature.minimum_arguments == feature.maximum_arguments
-                             ? "exactly " + std::to_string(feature.minimum_arguments)
-                             : std::to_string(feature.minimum_arguments) + " to " +
-                                   std::to_string(feature.maximum_arguments)) +
-                        " argument(s), got " + std::to_string(argument_count),
-                    expression.span);
+                diagnostics_.error(feature.kind == IntrinsicKind::length ? "GDS4076" : "GDS4075",
+                                   std::string{feature.name} + " expects " +
+                                       (feature.minimum_arguments == feature.maximum_arguments
+                                            ? "exactly " + std::to_string(feature.minimum_arguments)
+                                            : std::to_string(feature.minimum_arguments) + " to " +
+                                                  std::to_string(feature.maximum_arguments)) +
+                                       " argument(s), got " + std::to_string(argument_count),
+                                   expression.span);
             }
             const auto checked =
                 std::min(argument_count, static_cast<std::size_t>(feature.maximum_arguments));
@@ -1619,9 +1618,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                        expression.operand(index + 1)->span, context);
                     break;
                 case IntrinsicArgumentRule::string_name:
-                    require_assignable({TypeKind::string_name, "StringName"},
-                                       argument_types[index], expression.operand(index + 1)->span,
-                                       context);
+                    require_assignable({TypeKind::string_name, "StringName"}, argument_types[index],
+                                       expression.operand(index + 1)->span, context);
                     break;
                 case IntrinsicArgumentRule::type_descriptor: {
                     const auto& argument = *expression.operand(index + 1);
@@ -1637,8 +1635,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         argument_types[index].kind != TypeKind::script_resource) {
                         diagnostics_.error(
                             "GDS4144",
-                            context +
-                                " must be a TYPE_* constant, engine class, or script type",
+                            context + " must be a TYPE_* constant, engine class, or script type",
                             argument.span);
                     }
                     break;
@@ -1668,15 +1665,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 result = variant_type;
                 break;
             }
-            ApiResolution resolution{ApiResolutionKind::intrinsic,
-                                     std::string{feature.name},
-                                     "",
-                                     "",
-                                     result,
-                                     feature.minimum_arguments,
-                                     feature.maximum_arguments,
-                                     false,
-                                     true};
+            ApiResolution resolution{
+                ApiResolutionKind::intrinsic, std::string{feature.name}, "",    "",  result,
+                feature.minimum_arguments,    feature.maximum_arguments, false, true};
             resolution.intrinsic = feature.kind;
             model_.api_resolutions_.insert_or_assign(&callee, std::move(resolution));
         };
@@ -2826,12 +2817,10 @@ bool SemanticAnalyzer::is_constant_expression(const ast::Expression& expression)
             return true;
         }
         // Godot reduces named access on a constant value (for example Vector2(1, 2).x).
-        return expression.operand_count() == 1 &&
-               is_constant_expression(*expression.operand(0));
+        return expression.operand_count() == 1 && is_constant_expression(*expression.operand(0));
     }
     case ast::ExpressionKind::unary:
-        return expression.operand_count() == 1 &&
-               is_constant_expression(*expression.operand(0));
+        return expression.operand_count() == 1 && is_constant_expression(*expression.operand(0));
     case ast::ExpressionKind::await_expression:
         return false;
     case ast::ExpressionKind::binary:

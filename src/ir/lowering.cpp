@@ -833,14 +833,13 @@ ir::Module IrLowerer::lower(const ast::Script& script) const {
 bool IrVerifier::verify_parameter(const ir::Parameter& parameter) {
     bool valid = true;
     const bool has_default = parameter.default_value != nullptr;
-    const bool has_evaluation =
-        parameter.default_evaluation != DefaultArgumentEvaluation::absent;
+    const bool has_evaluation = parameter.default_evaluation != DefaultArgumentEvaluation::absent;
     if (has_default != has_evaluation) {
-        diagnostics_.error(
-            "GDS5038",
-            has_default ? "default argument IR is missing its evaluation contract"
-                        : "parameter without a default carries an evaluation contract",
-            parameter.span);
+        diagnostics_.error("GDS5038",
+                           has_default
+                               ? "default argument IR is missing its evaluation contract"
+                               : "parameter without a default carries an evaluation contract",
+                           parameter.span);
         valid = false;
     }
     if (parameter.default_value)

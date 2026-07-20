@@ -2542,9 +2542,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 } else if (argument.resolution == ir::ResolutionKind::inner_type) {
                     type_name = inner_cpp_type(argument.resolved_owner);
                 }
-                return type_name.empty()
-                           ? emit_expression(argument)
-                           : "godot::Variant(" + godot_string_name(type_name) + ")";
+                return type_name.empty() ? emit_expression(argument)
+                                         : "godot::Variant(" + godot_string_name(type_name) + ")";
             };
             const bool zero_arity_vararg = utility_function && utility_function->is_vararg &&
                                            utility_function->required_arguments == 0 &&
