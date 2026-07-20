@@ -3508,9 +3508,9 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
             require_expression_assignable(type, *parameter.default_value, *analyzed_default,
                                           parameter.span, "invalid default value");
     }
-    const auto current_required = static_cast<std::size_t>(std::count_if(
-        function.parameters.begin(), function.parameters.end(),
-        [](const auto& parameter) { return parameter.default_value == nullptr; }));
+    const auto current_required = static_cast<std::size_t>(
+        std::count_if(function.parameters.begin(), function.parameters.end(),
+                      [](const auto& parameter) { return parameter.default_value == nullptr; }));
     const auto validate_override = [&](const std::string& owner, const Type& parent_return,
                                        const std::vector<Type>& parent_parameters,
                                        const std::size_t parent_required,
@@ -3523,15 +3523,14 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
         }
         if (current_required > parent_required ||
             function.parameters.size() < parent_parameters.size()) {
-            diagnostics_.error(
-                "GDS4102",
-                owner + " override '" + function.name + "' accepts " +
-                    std::to_string(current_required) + " to " +
-                    std::to_string(function.parameters.size()) +
-                    " argument(s), which does not include the parent range " +
-                    std::to_string(parent_required) + " to " +
-                    std::to_string(parent_parameters.size()),
-                function.span);
+            diagnostics_.error("GDS4102",
+                               owner + " override '" + function.name + "' accepts " +
+                                   std::to_string(current_required) + " to " +
+                                   std::to_string(function.parameters.size()) +
+                                   " argument(s), which does not include the parent range " +
+                                   std::to_string(parent_required) + " to " +
+                                   std::to_string(parent_parameters.size()),
+                               function.span);
         }
         if (function.return_type &&
             ((expected_return_.is_dynamic() && !parent_return.is_dynamic()) ||
@@ -3552,30 +3551,40 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
                 inherited_script_method &&
                 index < inherited_script_method->explicit_parameter_types.size() &&
                 inherited_script_method->explicit_parameter_types[index];
-            if (explicit_type &&
-                ((hard_variant_parent && !current_type.is_dynamic()) ||
-                 !override_type_accepts(current_type, parent_parameters[index]))) {
-                diagnostics_.error(
-                    "GDS4121",
-                    "parameter " + std::to_string(index + 1) + " of " + owner + " override '" +
-                        function.name + "' must accept " +
-                        parent_parameters[index].display_name() + ", got " +
-                        current_type.display_name(),
-                    parameter.span);
+            if (explicit_type && ((hard_variant_parent && !current_type.is_dynamic()) ||
+                                  !override_type_accepts(current_type, parent_parameters[index]))) {
+                diagnostics_.error("GDS4121",
+                                   "parameter " + std::to_string(index + 1) + " of " + owner +
+                                       " override '" + function.name + "' must accept " +
+                                       parent_parameters[index].display_name() + ", got " +
+                                       current_type.display_name(),
+                                   parameter.span);
             }
         }
     };
     if (inherited_script_method) {
-        validate_override("script", inherited_script_method->type,
-                          inherited_script_method->parameters,
-                          inherited_script_method->required_arguments,
-                          inherited_script_method->is_static);
+        validate_override(
+            "script", inherited_script_method->type, inherited_script_method->parameters,
+            inherited_script_method->required_arguments, inherited_script_method->is_static);
     } else if (virtual_method) {
         std::vector<Type> api_parameters;
         api_parameters.reserve(virtual_method->maximum_arguments);
+        bool exposes_native_pointer =
+            std::string_view{virtual_method->return_type}.find('*') != std::string_view::npos;
         for (std::size_t index = 0; index < virtual_method->maximum_arguments; ++index) {
-            if (const auto* argument = api_.argument(*virtual_method, index))
+            if (const auto* argument = api_.argument(*virtual_method, index)) {
                 api_parameters.push_back(type_from_godot_api(argument->type));
+                exposes_native_pointer =
+                    exposes_native_pointer ||
+                    std::string_view{argument->type}.find('*') != std::string_view::npos;
+            }
+        }
+        if (exposes_native_pointer) {
+            diagnostics_.error(
+                "GDS4118",
+                "Godot virtual override '" + function.name +
+                    "' exposes an internal native pointer ABI that GDScript cannot represent",
+                function.span);
         }
         const auto api_return = std::string_view{virtual_method->return_type}.empty()
                                     ? void_type
