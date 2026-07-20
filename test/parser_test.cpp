@@ -93,6 +93,25 @@ TEST_CASE("parser leaves bodyless function validity to semantic analysis") {
     REQUIRE(script.functions.back().has_body);
 }
 
+TEST_CASE("parser disambiguates inline abstract class annotations from the script") {
+    const gdpp::SourceFile source{"inline_abstract.gd", "@abstract class Contract:\n"
+                                                         "    @abstract func execute()\n"
+                                                         "class EmptyImplementation extends Contract:\n"
+                                                         "    pass\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE(script.annotations.empty());
+    REQUIRE_EQ(script.classes.size(), std::size_t{2});
+    REQUIRE_EQ(script.classes.front().annotations.size(), std::size_t{1});
+    REQUIRE_EQ(script.classes.front().annotations.front().name, std::string{"abstract"});
+    REQUIRE(script.classes.front().functions.front().is_abstract);
+    REQUIRE(!script.classes.front().functions.front().has_body);
+    REQUIRE(script.classes.back().functions.empty());
+}
+
 TEST_CASE("parser preserves the bounded Godot RPC annotation contract") {
     const gdpp::SourceFile valid{"rpc.gd", "extends Node\n"
                                            "@rpc(\"any_peer\", \"call_local\", \"reliable\", 3)\n"

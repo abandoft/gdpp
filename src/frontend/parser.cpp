@@ -759,6 +759,15 @@ ast::ClassDeclaration Parser::parse_class(std::vector<ast::Annotation> annotatio
                 skip_newlines();
             continue;
         }
+        if (match(TokenKind::kw_pass)) {
+            if (!pending_annotations.empty()) {
+                diagnostics_.error("GDS2009", "annotation is not attached to a declaration",
+                                   pending_annotations.front().span);
+                pending_annotations.clear();
+            }
+            skip_newlines();
+            continue;
+        }
         parse_class_member(declaration, pending_annotations);
         skip_newlines();
     }
@@ -1377,7 +1386,10 @@ ast::Script Parser::parse_script() {
                  has_annotation_target(feature->targets, AnnotationTarget::signal) ||
                  has_annotation_target(feature->targets, AnnotationTarget::enumeration) ||
                  has_annotation_target(feature->targets, AnnotationTarget::inner_class));
-            if (is_script_annotation && !script_header_closed) {
+            const bool inline_declaration_annotation =
+                can_target_declaration && !check(TokenKind::newline);
+            if (is_script_annotation && !script_header_closed &&
+                !inline_declaration_annotation) {
                 if (!script_annotation_names.insert(annotation.name).second) {
                     diagnostics_.error("GDS2028",
                                        "script annotation '@" + annotation.name +
