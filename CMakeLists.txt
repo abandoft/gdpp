@@ -382,6 +382,7 @@ set(GDPP_FRONTEND_SOURCES
 )
 set(GDPP_SEMANTIC_SOURCES
     src/semantic/analyzer.cpp
+    src/semantic/flow.cpp
     src/semantic/godot_api.cpp
     src/semantic/intrinsics.cpp
     src/semantic/iteration.cpp
