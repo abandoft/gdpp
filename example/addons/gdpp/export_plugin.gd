@@ -25,6 +25,7 @@ var _compiler: Object
 var _ready := false
 var _script_classes: Dictionary = {}
 var _compiled_scripts: Dictionary = {}
+var _abstract_scripts: Dictionary = {}
 var _runtime_descriptor := ""
 var _export_scan_descriptor := ""
 var _output_library := ""
@@ -527,6 +528,9 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
     _compiled_scripts.clear()
     for script_path: String in _script_classes:
         _compiled_scripts[script_path] = true
+    _abstract_scripts.clear()
+    for script_path: String in distribution_result.get("abstract_scripts", PackedStringArray()):
+        _abstract_scripts[script_path] = true
     _build_id = str(distribution_result.get("build_id", ""))
     _output_library = str(distribution_result.get("output_library", ""))
     if not _native_artifact_exists(_output_library):
@@ -632,7 +636,10 @@ func _validate_native_classes() -> bool:
                 "native class '%s' for '%s' is unavailable" % [native_class_name, script_path]
             )
             return false
-        if not ClassDB.can_instantiate(native_class_name):
+        if (
+            not _abstract_scripts.has(script_path)
+            and not ClassDB.can_instantiate(native_class_name)
+        ):
             _fail_export(
                 "native class '%s' for '%s' cannot be instantiated" % [
                     native_class_name,
@@ -1735,6 +1742,7 @@ func _reset_export_state() -> void:
     _ready = false
     _script_classes.clear()
     _compiled_scripts.clear()
+    _abstract_scripts.clear()
     _runtime_descriptor = ""
     _export_scan_descriptor = ""
     _output_library = ""

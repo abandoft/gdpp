@@ -62,6 +62,16 @@ foreach(required_scene_compatibility IN ITEMS
             "${required_scene_compatibility}")
     endif()
 endforeach()
+foreach(required_abstract_contract IN ITEMS
+        "distribution_result.get(\"abstract_scripts\", PackedStringArray())"
+        "not _abstract_scripts.has(script_path)"
+        "and not ClassDB.can_instantiate(native_class_name)")
+    string(FIND "${export_plugin}" "${required_abstract_contract}" abstract_contract_offset)
+    if(abstract_contract_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Abstract native export validation is missing: ${required_abstract_contract}")
+    endif()
+endforeach()
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/plugin.gd" editor_plugin)
 string(FIND "${editor_plugin}"
     "if not DirAccess.dir_exists_absolute(ndk_parent):" safe_ndk_probe)
