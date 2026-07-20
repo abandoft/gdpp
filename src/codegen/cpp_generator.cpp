@@ -1986,7 +1986,19 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             if (member != current_script_->members.end())
                 return script_method_native_name(*current_script_, *member);
         }
-        return expression.value == "self" ? "this" : sanitize_identifier(expression.value);
+        {
+            auto identifier =
+                expression.value == "self" ? std::string{"this"}
+                                            : sanitize_identifier(expression.value);
+            if (expression.storage_type.kind != TypeKind::unknown &&
+                expression.storage_type != expression.type &&
+                (expression.resolution == ir::ResolutionKind::none ||
+                 expression.resolution == ir::ResolutionKind::local_constant)) {
+                identifier =
+                    emit_conversion(expression.type, expression.storage_type, std::move(identifier));
+            }
+            return identifier;
+        }
     case ir::ExpressionKind::unary: {
         if (expression.value == "-" &&
             expression.operands.at(0)->kind == ir::ExpressionKind::literal &&
