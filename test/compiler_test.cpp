@@ -2099,6 +2099,50 @@ TEST_CASE("compiler applies Godot-compatible numeric and builtin conversions") {
     REQUIRE(result.unit.source.find("static_cast<int64_t>") != std::string::npos);
 }
 
+TEST_CASE("compiler covers strict and explicit Godot conversion families end to end") {
+    const gdpp::Compiler compiler;
+    const auto valid = compiler.compile(
+        "conversion_families.gd",
+        "func convert(path: NodePath, object: Object, values: Array, "
+        "strings: PackedStringArray, vector_i: Vector2i, rect_i: Rect2i, "
+        "basis: Basis, projection: Projection) -> Array:\n"
+        "    var text: String = path\n"
+        "    var restored_path: NodePath = text\n"
+        "    var vector: Vector2 = vector_i\n"
+        "    var rect: Rect2 = rect_i\n"
+        "    var rotation: Quaternion = basis\n"
+        "    var transform: Transform3D = projection\n"
+        "    var packed: PackedInt64Array = values\n"
+        "    var unpacked: Array = strings\n"
+        "    var handle: RID = object\n"
+        "    var parsed: int = \"42\" as int\n"
+        "    var serialized: String = [1, 2] as String\n"
+        "    return [text, restored_path, vector, rect, rotation, transform, packed, "
+        "unpacked, handle, parsed, serialized]\n");
+    const auto invalid = compiler.compile(
+        "invalid_casts.gd", "extends Node\n"
+                            "func reject() -> void:\n"
+                            "    var vector = \"not a vector\" as Vector2\n"
+                            "    var text = Node.new() as String\n"
+                            "    var dictionary = [] as Dictionary\n"
+                            "    var nonnullable = null as String\n"
+                            "    print(vector, text, dictionary, nonnullable)\n");
+
+    REQUIRE(valid.success);
+    REQUIRE(valid.unit.source.find("static_cast<godot::String>(godot::Variant(path))") !=
+            std::string::npos);
+    REQUIRE(valid.unit.source.find("static_cast<godot::RID>(godot::Variant(object))") !=
+            std::string::npos);
+    REQUIRE(valid.unit.source.find("static_cast<int64_t>(godot::Variant(godot::String(\"42\")))") !=
+            std::string::npos);
+    REQUIRE(!invalid.success);
+    REQUIRE_EQ(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                             [](const auto& diagnostic) {
+                                 return diagnostic.code == "GDS4075";
+                             }),
+               std::ptrdiff_t{4});
+}
+
 TEST_CASE("compiler infers native Godot virtual signatures and escapes C++ keywords") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("virtuals.gd", "extends Node\n"
