@@ -331,6 +331,8 @@ void collect_expression_lambdas(const ir::Expression& expression, std::string_vi
 void lower_functions(const std::vector<ir::Function>& functions, std::string_view owner,
                      std::vector<mir::Function>& output) {
     for (const auto& function : functions) {
+        if (function.is_abstract)
+            continue;
         const auto name = std::string{owner} + "::" + function.name;
         output.push_back(
             FunctionBuilder{name, mir::FunctionRole::method, function.span}.build(function.body));

@@ -620,6 +620,9 @@ ir::Class IrLowerer::lower_class(const ast::ClassDeclaration& declaration) const
     ir::Class lowered;
     lowered.name = declaration.name;
     lowered.base_type = declaration.base_type.value_or("RefCounted");
+    lowered.is_abstract = std::any_of(
+        declaration.annotations.begin(), declaration.annotations.end(),
+        [](const ast::Annotation& annotation) { return annotation.name == "abstract"; });
     lowered.span = declaration.span;
     for (const auto& enumeration : declaration.enums) {
         ir::Enum result;
@@ -676,6 +679,7 @@ ir::Class IrLowerer::lower_class(const ast::ClassDeclaration& declaration) const
         result.name = function.name;
         result.return_type = semantic_.return_type_of(function);
         result.is_static = function.is_static;
+        result.is_abstract = function.is_abstract;
         result.is_coroutine = semantic_.is_coroutine(function);
         if (const auto* rpc = semantic_.rpc_configuration_of(function))
             result.rpc = *rpc;
@@ -817,6 +821,7 @@ ir::Module IrLowerer::lower(const ast::Script& script) const {
         lowered.name = function.name;
         lowered.return_type = semantic_.return_type_of(function);
         lowered.is_static = function.is_static;
+        lowered.is_abstract = function.is_abstract;
         lowered.is_coroutine = semantic_.is_coroutine(function);
         if (const auto* rpc = semantic_.rpc_configuration_of(function))
             lowered.rpc = *rpc;
@@ -1267,6 +1272,21 @@ bool IrVerifier::verify_class(const ir::Class& declaration) {
         for (const auto& parameter : function.parameters) {
             valid = verify_parameter(parameter) && valid;
         }
+        if (function.is_abstract && !function.body.empty()) {
+            diagnostics_.error("GDS5039", "abstract function IR cannot contain a body",
+                               function.span);
+            valid = false;
+        }
+        if (function.is_abstract && (function.is_static || function.is_coroutine)) {
+            diagnostics_.error("GDS5040", "abstract function IR has an executable ABI",
+                               function.span);
+            valid = false;
+        }
+        if (function.is_abstract && !declaration.is_abstract) {
+            diagnostics_.error("GDS5041", "concrete internal class IR declares an abstract method",
+                               function.span);
+            valid = false;
+        }
         for (const auto& statement : function.body)
             valid = verify_statement(statement) && valid;
     }
@@ -1351,6 +1371,21 @@ bool IrVerifier::verify(const ir::Module& module) {
         }
         for (const auto& parameter : function.parameters) {
             valid = verify_parameter(parameter) && valid;
+        }
+        if (function.is_abstract && !function.body.empty()) {
+            diagnostics_.error("GDS5039", "abstract function IR cannot contain a body",
+                               function.span);
+            valid = false;
+        }
+        if (function.is_abstract && (function.is_static || function.is_coroutine)) {
+            diagnostics_.error("GDS5040", "abstract function IR has an executable ABI",
+                               function.span);
+            valid = false;
+        }
+        if (function.is_abstract && !module.is_abstract) {
+            diagnostics_.error("GDS5041", "concrete module IR declares an abstract method",
+                               function.span);
+            valid = false;
         }
         for (const auto& statement : function.body) {
             if (!verify_statement(statement))

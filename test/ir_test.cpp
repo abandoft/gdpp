@@ -5,6 +5,7 @@
 #include "gdpp/frontend/lexer.hpp"
 #include "gdpp/frontend/parser.hpp"
 #include "gdpp/ir/lowering.hpp"
+#include "gdpp/ir/mir.hpp"
 #include "gdpp/ir/optimizer.hpp"
 #include "gdpp/semantic/analyzer.hpp"
 
@@ -112,6 +113,32 @@ TEST_CASE("typed IR rejects missing default argument evaluation contracts") {
     REQUIRE(!verifier.verify(module));
     REQUIRE(std::any_of(diagnostics.items().begin(), diagnostics.items().end(),
                         [](const auto& diagnostic) { return diagnostic.code == "GDS5038"; }));
+}
+
+TEST_CASE("typed IR models abstract methods as non-executable contracts") {
+    gdpp::ir::Module module;
+    module.class_name = "AbstractWorker";
+    module.is_abstract = true;
+    gdpp::ir::Function function;
+    function.name = "execute";
+    function.return_type = {gdpp::TypeKind::void_type, "void"};
+    function.is_abstract = true;
+    module.functions.push_back(std::move(function));
+
+    gdpp::DiagnosticBag diagnostics;
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+    const auto mir = gdpp::MirLowerer{}.lower(module);
+    REQUIRE(mir.functions.empty());
+
+    gdpp::ir::Statement body_statement;
+    body_statement.kind = gdpp::ir::StatementKind::pass_statement;
+    module.functions.front().body.push_back(std::move(body_statement));
+    gdpp::DiagnosticBag invalid_diagnostics;
+    gdpp::IrVerifier invalid_verifier{invalid_diagnostics};
+    REQUIRE(!invalid_verifier.verify(module));
+    REQUIRE(std::any_of(invalid_diagnostics.items().begin(), invalid_diagnostics.items().end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS5039"; }));
 }
 
 TEST_CASE("typed IR preserves flow-proven non-null object reads") {

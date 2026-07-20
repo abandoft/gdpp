@@ -211,6 +211,7 @@ struct Function {
     Type return_type;
     std::vector<Statement> body;
     bool is_static{false};
+    bool is_abstract{false};
     bool is_coroutine{false};
     std::optional<RpcConfiguration> rpc;
     SourceSpan span{};
@@ -229,6 +230,7 @@ struct LambdaExpression {
 struct Class {
     std::string name;
     std::string base_type{"RefCounted"};
+    bool is_abstract{false};
     std::vector<Enum> enums;
     std::vector<Field> fields;
     std::vector<Signal> signals;
