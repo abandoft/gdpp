@@ -37,6 +37,18 @@ func _run() -> void:
     if not ClassDB.class_call_static(tool_class, &"static_ready"):
         _fail("@tool static initialization did not execute in the editor")
         return
+    if ClassDB.class_call_static(tool_class, &"runtime_instance_available"):
+        _fail("@tool constructed a non-tool script instance in the editor")
+        return
+    if ClassDB.class_call_static(tool_class, &"runtime_static_contract") != [17, 42]:
+        _fail("@tool could not use non-tool constants and static methods")
+        return
+    if not ClassDB.class_call_static(tool_class, &"runtime_static_field_is_null"):
+        _fail("Non-tool static field did not read as null from @tool code")
+        return
+    if ClassDB.class_call_static(runtime_class, &"static_ready"):
+        _fail("Non-tool static initialization executed in the editor")
+        return
 
     var tool_count_before := int(
         ClassDB.class_call_static(tool_class, &"constructed_instances")
