@@ -39,6 +39,7 @@ func _run() -> void:
     var typed_container_class := _native_class_for("typed_container_case.gd")
     var integer_semantics_class := _native_class_for("integer_semantics_case.gd")
     var flow_narrowing_class := _native_class_for("flow_narrowing_case.gd")
+    var virtual_signature_class := _native_class_for("virtual_signature_case.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -54,6 +55,7 @@ func _run() -> void:
         or typed_container_class.is_empty()
         or integer_semantics_class.is_empty()
         or flow_narrowing_class.is_empty()
+        or virtual_signature_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
@@ -139,6 +141,27 @@ func _run() -> void:
         return
     native_flow = null
     script_flow = null
+    var native_virtual: Object = ClassDB.instantiate(virtual_signature_class)
+    var script_virtual: Object = load("res://virtual_signature_case.gd").new()
+    if native_virtual == null or script_virtual == null:
+        push_error("Virtual-signature differential fixtures are unavailable")
+        quit(1)
+        return
+    var native_virtual_trace: Array = native_virtual.call("run")
+    var script_virtual_trace: Array = script_virtual.call("run")
+    var expected_virtual_trace: Array = [[1.25, null], [2.5, "manual"]]
+    if (
+        native_virtual_trace != script_virtual_trace
+        or native_virtual_trace != expected_virtual_trace
+    ):
+        push_error(
+            "Virtual signature adaptation differs from GDScript: native=%s script=%s"
+            % [native_virtual_trace, script_virtual_trace]
+        )
+        quit(1)
+        return
+    native_virtual.free()
+    script_virtual.free()
     var native_integers: Object = ClassDB.instantiate(integer_semantics_class)
     var script_integers: Object = load("res://integer_semantics_case.gd").new()
     if native_integers == null or script_integers == null:
