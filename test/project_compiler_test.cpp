@@ -213,6 +213,55 @@ TEST_CASE("project compiler preserves tool mode across incremental cache hits") 
             std::string::npos);
 }
 
+TEST_CASE("project compiler isolates tool access to runtime script state") {
+    const auto root = fixture_root("project-tool-runtime-isolation");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "runtime_state.gd", "extends RefCounted\n"
+                                          "class_name RuntimeState\n"
+                                          "const ANSWER := 42\n"
+                                          "static var shared: Variant = \"runtime\"\n"
+                                          "static func answer() -> int:\n"
+                                          "    return ANSWER\n");
+    write_text(root / "tool_consumer.gd", "@tool\n"
+                                          "extends RefCounted\n"
+                                          "class_name ToolConsumer\n"
+                                          "static func inspect() -> Array:\n"
+                                          "    var instance := RuntimeState.new()\n"
+                                          "    RuntimeState.shared = \"changed\"\n"
+                                          "    return [instance, RuntimeState.shared, "
+                                          "RuntimeState.answer()]\n");
+    const auto options = project_options(root);
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    const auto tool =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path.filename() == "tool_consumer.gd";
+        });
+    const auto runtime =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path.filename() == "runtime_state.gd";
+        });
+    REQUIRE(tool != result.scripts.end());
+    REQUIRE(runtime != result.scripts.end());
+    const auto tool_header =
+        read_text(options.output_directory / "generated" / tool->header_file_name);
+    const auto tool_source =
+        read_text(options.output_directory / "generated" / tool->source_file_name);
+    const auto runtime_source =
+        read_text(options.output_directory / "generated" / runtime->source_file_name);
+    REQUIRE(tool_header.find("if (!T::_gdpp_tool_mode && gdpp::runtime::is_editor_hint())") !=
+            std::string::npos);
+    REQUIRE(tool_source.find("gdpp::runtime::is_editor_hint() ? godot::Variant()") !=
+            std::string::npos);
+    REQUIRE(tool_source.find("if (!gdpp::runtime::is_editor_hint()) " + runtime->class_name +
+                             "::_gdpp_set_shared") != std::string::npos);
+    REQUIRE(tool_source.find(runtime->class_name + "::answer()") != std::string::npos);
+    REQUIRE(runtime_source.find("static thread_local godot::Variant editor_value{}") !=
+            std::string::npos);
+}
+
 TEST_CASE("project compiler rejects unsafe tool to runtime inheritance transitions") {
     const auto root = fixture_root("project-tool-inheritance");
     std::error_code error;
