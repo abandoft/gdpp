@@ -1875,6 +1875,12 @@ TEST_CASE("project compiler enforces cross-script abstract method obligations") 
                                            "class_name ConcreteWork\n"
                                            "func execute(value: int) -> String:\n"
                                            "    return str(value)\n");
+    write_text(root / "inner_types.gd", "class_name InnerContracts\n"
+                                        "@abstract class Contract:\n"
+                                        "    @abstract func execute() -> void\n"
+                                        "class Implementation extends Contract:\n"
+                                        "    func execute() -> void:\n"
+                                        "        pass\n");
 
     const auto options = project_options(root);
     const gdpp::ProjectCompiler compiler;
@@ -1885,6 +1891,13 @@ TEST_CASE("project compiler enforces cross-script abstract method obligations") 
                    return script.is_abstract;
                }),
                std::ptrdiff_t{2});
+    const auto registration = read_text(options.output_directory / "register_types.cpp");
+    REQUIRE(registration.find("GDREGISTER_ABSTRACT_CLASS(GDPPNative_InnerContracts_") !=
+            std::string::npos);
+    REQUIRE(registration.find("__Contract);") != std::string::npos);
+    REQUIRE(registration.find("GDREGISTER_CLASS(GDPPNative_InnerContracts_") !=
+            std::string::npos);
+    REQUIRE(registration.find("__Implementation);") != std::string::npos);
 
     write_text(root / "missing.gd", "extends DeferredWork\n"
                                     "class_name MissingWork\n");

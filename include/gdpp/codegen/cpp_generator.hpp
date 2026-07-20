@@ -23,6 +23,7 @@ struct GeneratedUnit {
     std::string header;
     std::string source;
     std::vector<std::string> inner_class_names;
+    std::vector<std::string> abstract_inner_class_names;
     bool is_abstract{false};
 };
 

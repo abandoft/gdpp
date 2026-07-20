@@ -39,6 +39,7 @@ struct CompiledProjectScript {
     std::string header_file_name;
     std::string source_file_name;
     std::vector<std::string> inner_class_names;
+    std::vector<std::string> abstract_inner_class_names;
     bool is_abstract{false};
     bool cache_hit{false};
 };

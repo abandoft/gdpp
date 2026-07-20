@@ -5183,8 +5183,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     for (const auto& [qualified, declaration] : named_inner_classes)
         order_inner(order_inner, qualified, *declaration);
     for (const auto& [qualified, declaration] : ordered_inner_classes) {
-        static_cast<void>(declaration);
-        unit.inner_class_names.push_back(inner_native_names_.at(qualified));
+        const auto& native_name = inner_native_names_.at(qualified);
+        unit.inner_class_names.push_back(native_name);
+        if (declaration->is_abstract)
+            unit.abstract_inner_class_names.push_back(native_name);
     }
     const auto file_stem =
         current_script_

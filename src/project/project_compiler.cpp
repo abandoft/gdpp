@@ -1043,7 +1043,13 @@ std::string generated_registration(const std::vector<CompiledProjectScript>& scr
            << "    if (level != godot::MODULE_INITIALIZATION_LEVEL_SCENE) return;\n";
     for (const auto& script : scripts) {
         for (const auto& inner_class_name : script.inner_class_names) {
-            output << "    GDREGISTER_CLASS(" << inner_class_name << ");\n";
+            const bool is_abstract =
+                std::find(script.abstract_inner_class_names.begin(),
+                          script.abstract_inner_class_names.end(), inner_class_name) !=
+                script.abstract_inner_class_names.end();
+            output << "    "
+                   << (is_abstract ? "GDREGISTER_ABSTRACT_CLASS(" : "GDREGISTER_CLASS(")
+                   << inner_class_name << ");\n";
         }
         output << "    "
                << (script.is_abstract ? "GDREGISTER_ABSTRACT_CLASS(" : "GDREGISTER_CLASS(")
@@ -2256,8 +2262,11 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         const auto expected_class_name =
             "GDPPNative_" + input.native_class_stem + "_" + input.public_abi_hash.substr(0, 16);
         for (const auto& inner : input.inner_classes) {
-            script.inner_class_names.push_back(expected_class_name + "__" +
-                                               native_inner_suffix(inner.name));
+            const auto native_name =
+                expected_class_name + "__" + native_inner_suffix(inner.name);
+            script.inner_class_names.push_back(native_name);
+            if (inner.is_abstract)
+                script.abstract_inner_class_names.push_back(native_name);
         }
         const auto cached = old_manifest.find(input.relative);
         if (loaded_manifest.cache_compatible && cached != old_manifest.end() &&
@@ -2303,6 +2312,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             script.header_file_name = compilation.unit.header_file_name;
             script.source_file_name = compilation.unit.source_file_name;
             script.inner_class_names = compilation.unit.inner_class_names;
+            script.abstract_inner_class_names = compilation.unit.abstract_inner_class_names;
             script.is_abstract = compilation.unit.is_abstract;
             pending.push_back({result.scripts.size(), std::move(compilation.unit.header),
                                std::move(compilation.unit.source)});

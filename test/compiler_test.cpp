@@ -1895,6 +1895,8 @@ TEST_CASE("compiler emits pure virtual C++ for abstract method contracts") {
     REQUIRE(root.unit.source.find("&GDPPNative_WorkContract::execute") != std::string::npos);
 
     REQUIRE(inner.success);
+    REQUIRE_EQ(inner.unit.abstract_inner_class_names.size(), std::size_t{1});
+    REQUIRE(inner.unit.abstract_inner_class_names.front().find("__Contract") != std::string::npos);
     REQUIRE(inner.unit.header.find("virtual godot::String execute(int64_t value) = 0;") !=
             std::string::npos);
     REQUIRE(inner.unit.header.find("virtual godot::String execute(int64_t value) override;") !=
