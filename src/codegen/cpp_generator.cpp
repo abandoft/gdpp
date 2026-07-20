@@ -1864,7 +1864,7 @@ std::string CodeGenerator::emit_truthy(const ir::Expression& expression) const {
             ref_counted = symbol && api_.inherits(symbol->godot_base_type, "RefCounted");
         }
         if (value == "this")
-            return "(this != nullptr)";
+            return "true";
         return ref_counted ? "(" + value + ").is_valid()" : "(" + value + " != nullptr)";
     }
     return "(godot::Variant(" + value + ")).booleanize()";

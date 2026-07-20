@@ -1437,7 +1437,7 @@ TEST_CASE("compiler applies zero-value truthiness to every Godot value family") 
     REQUIRE(valid.success);
     REQUIRE(booleanize_count() >= std::size_t{14});
     REQUIRE(valid.unit.source.find("(node != nullptr)") != std::string::npos);
-    REQUIRE(valid.unit.source.find("(this != nullptr)") != std::string::npos);
+    REQUIRE(valid.unit.source.find("(!(true))") != std::string::npos);
     REQUIRE(!invalid.success);
     REQUIRE_EQ(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
                              [](const auto& diagnostic) {
