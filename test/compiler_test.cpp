@@ -2386,6 +2386,27 @@ TEST_CASE("semantic flow narrows type-tested values in if and while bodies") {
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
 }
 
+TEST_CASE("generated object method calls reject null and freed receivers") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "safe_receiver.gd", "extends Node\n"
+                            "func typed_count(value: Node) -> int:\n"
+                            "    return value.get_child_count()\n"
+                            "func narrowed_count(value: Variant) -> int:\n"
+                            "    if value is Node:\n"
+                            "        return value.get_child_count()\n"
+                            "    return 0\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("gdpp::runtime::is_instance_valid") != std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "Cannot call 'get_child_count' on a null or freed object at safe_receiver.gd:3") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "Cannot call 'get_child_count' on a null or freed object at safe_receiver.gd:6") !=
+            std::string::npos);
+}
+
 TEST_CASE("semantic flow narrows short-circuit logical operands") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(

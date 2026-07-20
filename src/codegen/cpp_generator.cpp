@@ -2644,6 +2644,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         }
         std::string invocation;
         std::string receiver_setup;
+        std::string receiver_name;
         const auto suffix = std::to_string(temporary_counter_++);
         if (callee.resolution == ir::ResolutionKind::script_constructor) {
             invocation =
@@ -2660,6 +2661,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                    callee.operands.at(0)->resolution != ir::ResolutionKind::script_type &&
                    callee.operands.at(0)->resolution != ir::ResolutionKind::inner_type) {
             const auto receiver = "_gdpp_call_receiver_" + suffix;
+            receiver_name = receiver;
             receiver_setup =
                 "auto &&" + receiver + " = " + emit_expression(*callee.operands.at(0)) + "; ";
             const auto connector =
@@ -2685,6 +2687,19 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             result += " -> " + (expression.coroutine_call ? std::string{"godot::Variant"}
                                                           : cpp_type(expression.type));
         result += " { " + receiver_setup;
+        if (!receiver_name.empty() &&
+            callee.operands.at(0)->type.kind == TypeKind::object) {
+            const auto location =
+                current_source_path_ + ":" + std::to_string(callee.span.begin.line);
+            const auto message = godot_string("Cannot call '" + callee.value +
+                                              "' on a null or freed object at " + location);
+            result += "if (!gdpp::runtime::is_instance_valid(godot::Variant(" + receiver_name +
+                      "))) { ";
+            result += expression.type.kind == TypeKind::void_type
+                          ? "ERR_FAIL_EDMSG(" + message + "); "
+                          : "ERR_FAIL_V_EDMSG({}, " + message + "); ";
+            result += "} ";
+        }
         for (std::size_t index = 1; index < expression.operands.size(); ++index) {
             const auto& argument = *expression.operands[index];
             const auto temporary =
