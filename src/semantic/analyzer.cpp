@@ -3295,6 +3295,8 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
     const auto previous_in_function = in_function_;
     const auto previous_function_name = current_function_name_;
     const auto previous_callable_suspends = current_callable_suspends_;
+    auto previous_flow_types = std::move(flow_types_);
+    flow_types_.clear();
     in_function_ = true;
     current_function_name_ = function.name;
     current_callable_suspends_ = false;
@@ -3435,6 +3437,7 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
     current_callable_suspends_ = previous_callable_suspends;
     in_function_ = previous_in_function;
     current_function_name_ = previous_function_name;
+    flow_types_ = std::move(previous_flow_types);
 }
 
 void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
@@ -3445,6 +3448,8 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
     const auto previous_function_name = current_function_name_;
     const auto previous_dynamic_await = allow_dynamic_await_return_;
     const auto previous_callable_suspends = current_callable_suspends_;
+    auto previous_flow_types = std::move(flow_types_);
+    flow_types_.clear();
 
     expected_return_ = expression.return_type
                            ? type_from_name(*expression.return_type, expression.span)
@@ -3494,6 +3499,7 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
     current_function_static_ = previous_static;
     current_function_name_ = previous_function_name;
     expected_return_ = previous_return;
+    flow_types_ = std::move(previous_flow_types);
 }
 
 void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {

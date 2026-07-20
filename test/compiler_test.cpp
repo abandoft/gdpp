@@ -2422,6 +2422,19 @@ TEST_CASE("semantic flow invalidates a refinement after direct reassignment") {
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named") != std::string::npos);
 }
 
+TEST_CASE("semantic flow does not leak transient branch facts into deferred lambdas") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "flow_lambda.gd", "extends Node\n"
+                          "func defer_name(value: Variant) -> Callable:\n"
+                          "    if value is Node:\n"
+                          "        return func() -> Variant: return value.name\n"
+                          "    return func() -> Variant: return null\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("gdpp::runtime::get_named(value") != std::string::npos);
+}
+
 TEST_CASE("typed scene nodes retain dynamic script dispatch for unknown members") {
     const gdpp::Compiler compiler;
     const auto result =
