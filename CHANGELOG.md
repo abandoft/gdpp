@@ -1,3 +1,11 @@
+## 1.5.0
+
+- Added end-to-end flow-sensitive typing for `is`/`is not`, null and truthiness checks, short-circuit expressions, `if`/`while`, conditional expressions, post-dominating guards, structural `match`, and guarded bindings.
+- Introduced stable symbol identities and a branch-state lattice with conservative joins, reassignment invalidation, callable isolation, and bounded analysis of large logical chains.
+- Preserved both effective and storage types plus non-null proofs in typed HIR, allowing the C++ backend to specialize Variant-backed reads without changing their native storage ABI.
+- Added source-located null/released-object guards for statically resolved method calls and property reads instead of permitting unchecked native dereferences.
+- Added strict generated-C++ compilation and real Godot 4.7 GDScript/AOT differential coverage for the complete narrowing contract.
+
 ## 1.4.0
 
 - Unified frontend constant evaluation, HIR optimization, generated typed C++, and dynamic runtime integer operations behind one portable 64-bit contract.
