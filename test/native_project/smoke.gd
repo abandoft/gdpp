@@ -43,6 +43,7 @@ func _run() -> void:
     var default_argument_class := _native_class_for("default_argument_case.gd")
     var language_utility_class := _native_class_for("language_utility_case.gd")
     var annotation_contract_class := _native_class_for("annotation_contract_case.gd")
+    var static_context_class := _native_class_for("static_context_case.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -62,6 +63,7 @@ func _run() -> void:
         or default_argument_class.is_empty()
         or language_utility_class.is_empty()
         or annotation_contract_class.is_empty()
+        or static_context_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
@@ -239,6 +241,23 @@ func _run() -> void:
         return
     native_annotation = null
     script_annotation = null
+    var native_static_context: Object = ClassDB.instantiate(static_context_class)
+    var script_static_context: Object = load("res://static_context_case.gd").new()
+    if native_static_context == null or script_static_context == null:
+        push_error("Static-context differential fixtures are unavailable")
+        quit(1)
+        return
+    var native_static_result: Array = native_static_context.call("run")
+    var script_static_result: Array = script_static_context.call("run")
+    if native_static_result != script_static_result:
+        push_error(
+            "Static contexts differ from GDScript: native=%s script=%s"
+            % [native_static_result, script_static_result]
+        )
+        quit(1)
+        return
+    native_static_context = null
+    script_static_context = null
     var native_integers: Object = ClassDB.instantiate(integer_semantics_class)
     var script_integers: Object = load("res://integer_semantics_case.gd").new()
     if native_integers == null or script_integers == null:
