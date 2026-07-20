@@ -120,6 +120,7 @@ struct ApiResolution {
 class SemanticModel final {
   public:
     [[nodiscard]] Type type_of(const ast::Expression& expression) const;
+    [[nodiscard]] Type storage_type_of(const ast::Expression& expression) const;
     [[nodiscard]] Type type_of(const ast::VariableDeclaration& declaration) const;
     [[nodiscard]] Type property_type_of(const ast::VariableDeclaration& declaration) const;
     [[nodiscard]] Type type_of(const ast::Statement& statement) const;

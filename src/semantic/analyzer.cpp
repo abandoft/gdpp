@@ -248,6 +248,16 @@ Type SemanticModel::type_of(const ast::Expression& expression) const {
     return found == expression_types_.end() ? unknown_type : found->second;
 }
 
+Type SemanticModel::storage_type_of(const ast::Expression& expression) const {
+    const auto found = referenced_symbols_.find(&expression);
+    if (found != referenced_symbols_.end() &&
+        (found->second.kind == SymbolKind::local ||
+         found->second.kind == SymbolKind::parameter)) {
+        return found->second.type;
+    }
+    return type_of(expression);
+}
+
 Type SemanticModel::type_of(const ast::VariableDeclaration& declaration) const {
     const auto found = variable_types_.find(&declaration);
     return found == variable_types_.end() ? unknown_type : found->second;
