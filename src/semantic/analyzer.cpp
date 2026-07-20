@@ -4730,9 +4730,12 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
                            script.span);
     }
     for (const auto& annotation : script.annotations) {
-        if (annotation.name == "icon" && (annotation.arguments.size() != 1 ||
-                                          !is_string_literal(*annotation.arguments.front()))) {
+        if (annotation.name != "icon")
+            continue;
+        if (annotation.arguments.size() != 1 || !is_string_literal(*annotation.arguments.front())) {
             diagnostics_.error("GDS4114", "@icon expects one string literal path", annotation.span);
+        } else if (annotation.arguments.front()->value().empty()) {
+            diagnostics_.error("GDS4115", "@icon path cannot be empty", annotation.span);
         }
     }
     current_script_ = script_symbols_ ? script_symbols_->find_path(current_script_path_) : nullptr;

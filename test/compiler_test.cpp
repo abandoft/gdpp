@@ -959,6 +959,23 @@ TEST_CASE("editor extension base classes require tool execution mode") {
                         [](const auto& diagnostic) { return diagnostic.code == "GDS4152"; }));
 }
 
+TEST_CASE("compiler publishes valid script icon metadata") {
+    const gdpp::Compiler compiler;
+    const auto valid = compiler.compile("icon_class.gd", "@icon(\"icons/type.svg\")\n"
+                                                         "class_name IconClass\n"
+                                                         "extends Node\n");
+    const auto empty = compiler.compile("empty_icon.gd", "@icon(\"\")\n"
+                                                         "class_name EmptyIcon\n"
+                                                         "extends Node\n");
+
+    REQUIRE(valid.success);
+    REQUIRE(valid.unit.icon_path.has_value());
+    REQUIRE_EQ(*valid.unit.icon_path, std::string{"icons/type.svg"});
+    REQUIRE(!empty.success);
+    REQUIRE(std::any_of(empty.diagnostics.begin(), empty.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4115"; }));
+}
+
 TEST_CASE("compiler preserves UTF-8 and unique-node paths in generated Godot strings") {
     const gdpp::Compiler compiler;
     const auto result =
