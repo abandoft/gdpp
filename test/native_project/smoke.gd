@@ -38,6 +38,7 @@ func _run() -> void:
     var await_expression_class := _native_class_for("await_expression_case.gd")
     var typed_container_class := _native_class_for("typed_container_case.gd")
     var integer_semantics_class := _native_class_for("integer_semantics_case.gd")
+    var flow_narrowing_class := _native_class_for("flow_narrowing_case.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -52,6 +53,7 @@ func _run() -> void:
         or await_expression_class.is_empty()
         or typed_container_class.is_empty()
         or integer_semantics_class.is_empty()
+        or flow_narrowing_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
@@ -108,6 +110,35 @@ func _run() -> void:
         return
     native_typed_container = null
     script_typed_container = null
+    var native_flow: Object = ClassDB.instantiate(flow_narrowing_class)
+    var script_flow: Object = load("res://flow_narrowing_case.gd").new()
+    if native_flow == null or script_flow == null:
+        push_error("Flow-narrowing differential fixtures are unavailable")
+        quit(1)
+        return
+    var native_flow_report: Dictionary = native_flow.call("run")
+    var script_flow_report: Dictionary = script_flow.call("run")
+    var expected_flow_report: Dictionary = {
+        "object": "flow-node",
+        "short_circuit": true,
+        "deep_object": true,
+        "postdominator": "flow-node",
+        "conditional": "flow-node",
+        "array_match": 3,
+        "dictionary_match": 1,
+        "guarded_binding": "flow-node",
+        "assignment_invalidation": 42,
+        "non_null": "flow-node",
+    }
+    if native_flow_report != script_flow_report or native_flow_report != expected_flow_report:
+        push_error(
+            "Flow narrowing differs from GDScript: native=%s script=%s"
+            % [native_flow_report, script_flow_report]
+        )
+        quit(1)
+        return
+    native_flow = null
+    script_flow = null
     var native_integers: Object = ClassDB.instantiate(integer_semantics_class)
     var script_integers: Object = load("res://integer_semantics_case.gd").new()
     if native_integers == null or script_integers == null:
