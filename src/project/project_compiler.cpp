@@ -2058,6 +2058,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             symbol.base_script_path = inputs[*input.script_base].relative;
         symbol.globally_named = input.globally_named;
         symbol.is_abstract = input.is_abstract;
+        symbol.is_tool = input.script.tool;
         symbol.autoload_name = input.autoload_name;
         symbol.members = input.members;
         symbol.enums = input.enums;
@@ -2258,6 +2259,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         script.public_abi_hash = input.public_abi_hash;
         script.dependencies = input.dependencies;
         script.is_abstract = input.is_abstract;
+        script.is_tool = input.script.tool;
         const auto expected_class_name =
             "GDPPNative_" + input.native_class_stem + "_" + input.public_abi_hash.substr(0, 16);
         for (const auto& inner : input.inner_classes) {
@@ -2312,6 +2314,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             script.inner_class_names = compilation.unit.inner_class_names;
             script.abstract_inner_class_names = compilation.unit.abstract_inner_class_names;
             script.is_abstract = compilation.unit.is_abstract;
+            script.is_tool = compilation.unit.is_tool;
             pending.push_back({result.scripts.size(), std::move(compilation.unit.header),
                                std::move(compilation.unit.source)});
             ++result.compiled_count;

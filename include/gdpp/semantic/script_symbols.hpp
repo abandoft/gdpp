@@ -66,6 +66,7 @@ struct ScriptClassSymbol {
     std::string autoload_name;
     bool globally_named{false};
     bool is_abstract{false};
+    bool is_tool{false};
     std::vector<ScriptMemberSymbol> members;
     std::vector<ScriptEnumSymbol> enums;
     std::vector<ScriptInnerClassSymbol> inner_classes;

@@ -166,6 +166,42 @@ TEST_CASE("project compiler ignores cross-platform filesystem metadata") {
     REQUIRE(result.diagnostics.empty());
 }
 
+TEST_CASE("project compiler preserves tool mode across incremental cache hits") {
+    const auto root = fixture_root("project-tool-metadata");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "editor_worker.gd", "@tool\n"
+                                          "extends Node\n"
+                                          "class_name EditorWorker\n");
+    write_text(root / "runtime_worker.gd", "extends Node\n"
+                                           "class_name RuntimeWorker\n");
+    const auto options = project_options(root);
+    const gdpp::ProjectCompiler compiler;
+
+    const auto first = compiler.compile(options);
+    REQUIRE(first.success);
+    REQUIRE_EQ(first.scripts.size(), std::size_t{2});
+    const auto editor =
+        std::find_if(first.scripts.begin(), first.scripts.end(), [](const auto& script) {
+            return script.relative_path.filename() == "editor_worker.gd";
+        });
+    const auto runtime =
+        std::find_if(first.scripts.begin(), first.scripts.end(), [](const auto& script) {
+            return script.relative_path.filename() == "runtime_worker.gd";
+        });
+    REQUIRE(editor != first.scripts.end());
+    REQUIRE(runtime != first.scripts.end());
+    REQUIRE(editor->is_tool);
+    REQUIRE(!runtime->is_tool);
+
+    const auto cached = compiler.compile(options);
+    REQUIRE(cached.success);
+    REQUIRE_EQ(cached.cache_hit_count, std::size_t{2});
+    REQUIRE_EQ(std::count_if(cached.scripts.begin(), cached.scripts.end(),
+                             [](const auto& script) { return script.is_tool; }),
+               std::ptrdiff_t{1});
+}
+
 TEST_CASE("project compiler includes GDScript embedded in text scenes") {
     const auto root = fixture_root("project-embedded-scripts");
     std::error_code error;
