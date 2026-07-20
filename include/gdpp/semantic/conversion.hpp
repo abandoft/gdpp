@@ -21,5 +21,10 @@ enum class ConversionKind {
                                              const Type& source) noexcept;
 [[nodiscard]] bool is_explicitly_convertible(const Type& target,
                                              const Type& source) noexcept;
+// Godot's analyzer accepts several container conversions that its typed storage rejects at
+// runtime. AOT code must preserve that second boundary instead of letting godot-cpp's converting
+// constructors silently coerce every element.
+[[nodiscard]] bool is_typed_storage_compatible(const Type& target,
+                                               const Type& source) noexcept;
 
 } // namespace gdpp

@@ -201,6 +201,24 @@ TEST_CASE("typed containers are invariant for assignment but builtin-compatible 
     REQUIRE(gdpp::is_implicitly_convertible(untyped_dictionary, scores));
 }
 
+TEST_CASE("typed storage accepts only its exact runtime container signature") {
+    const gdpp::Type integers{gdpp::TypeKind::array, "Array[int]"};
+    const gdpp::Type floats{gdpp::TypeKind::array, "Array[float]"};
+    const gdpp::Type untyped_array{gdpp::TypeKind::array, "Array"};
+    const gdpp::Type packed{gdpp::TypeKind::builtin, "PackedInt64Array"};
+    const gdpp::Type scores{gdpp::TypeKind::dictionary, "Dictionary[String, int]"};
+    const gdpp::Type untyped_dictionary{gdpp::TypeKind::dictionary, "Dictionary"};
+    const gdpp::Type dynamic{gdpp::TypeKind::variant, "Variant"};
+
+    REQUIRE(gdpp::is_typed_storage_compatible(integers, integers));
+    REQUIRE(!gdpp::is_typed_storage_compatible(integers, floats));
+    REQUIRE(!gdpp::is_typed_storage_compatible(integers, untyped_array));
+    REQUIRE(!gdpp::is_typed_storage_compatible(integers, packed));
+    REQUIRE(!gdpp::is_typed_storage_compatible(scores, untyped_dictionary));
+    REQUIRE(gdpp::is_typed_storage_compatible(integers, dynamic));
+    REQUIRE(gdpp::is_typed_storage_compatible(untyped_array, floats));
+}
+
 TEST_CASE("dynamic conversion never makes void or null value types assignable") {
     const gdpp::Type variant{gdpp::TypeKind::variant, "Variant"};
     const gdpp::Type integer{gdpp::TypeKind::integer, "int"};

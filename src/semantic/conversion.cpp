@@ -211,4 +211,10 @@ bool is_explicitly_convertible(const Type& target, const Type& source) noexcept 
     return classify_conversion(target, source) != ConversionKind::incompatible;
 }
 
+bool is_typed_storage_compatible(const Type& target, const Type& source) noexcept {
+    if (!is_explicitly_typed_container(target) || source.is_dynamic())
+        return true;
+    return target.kind == source.kind && target.name == source.name;
+}
+
 } // namespace gdpp
