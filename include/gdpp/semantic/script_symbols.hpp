@@ -32,6 +32,7 @@ struct ScriptMemberSymbol {
     bool read_only{false};
     std::int64_t constant_value{0};
     bool is_coroutine{false};
+    bool is_abstract{false};
 };
 
 struct ScriptEnumEntrySymbol {
@@ -52,6 +53,7 @@ struct ScriptInnerClassSymbol {
     std::string base_class_name;
     std::vector<ScriptMemberSymbol> members;
     std::vector<ScriptEnumSymbol> enums;
+    bool is_abstract{false};
 };
 
 struct ScriptClassSymbol {

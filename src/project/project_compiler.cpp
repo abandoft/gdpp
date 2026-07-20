@@ -624,6 +624,9 @@ ScriptInnerClassSymbol inner_class_symbol(const ast::ClassDeclaration& declarati
     symbol.name = declaration.name;
     symbol.godot_base_type = declaration.base_type.value_or("RefCounted");
     symbol.base_class_name = declaration.base_type.value_or("");
+    symbol.is_abstract = std::any_of(
+        declaration.annotations.begin(), declaration.annotations.end(),
+        [](const ast::Annotation& annotation) { return annotation.name == "abstract"; });
     for (const auto& variable : declaration.variables) {
         symbol.members.push_back(
             {variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field,
@@ -648,6 +651,7 @@ ScriptInnerClassSymbol inner_class_symbol(const ast::ClassDeclaration& declarati
                                                : signature_type(function.return_type, nullptr, api);
         member.is_static = function.is_static;
         member.is_coroutine = statements_contain_await(function.body);
+        member.is_abstract = function.is_abstract;
         member.has_explicit_type = function.name == "_init" || function.return_type.has_value();
         for (const auto& parameter : function.parameters) {
             member.parameters.push_back(signature_type(
@@ -1432,6 +1436,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                               : signature_type(function.return_type, nullptr, target_api);
             member.is_static = function.is_static;
             member.is_coroutine = statements_contain_await(function.body);
+            member.is_abstract = function.is_abstract;
             member.has_explicit_type = function.name == "_init" || function.return_type.has_value();
             for (const auto& parameter : function.parameters) {
                 member.parameters.push_back(signature_type(
@@ -1923,7 +1928,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                      << static_cast<int>(member.type.kind) << ':' << member.type.name << ':'
                      << member.required_arguments << ':' << member.is_static << ':'
                      << member.has_accessor << ':' << member.has_explicit_type << ':'
-                     << member.is_coroutine;
+                     << member.is_coroutine << ':' << member.is_abstract;
             if (const auto bridge = bridge_classes.find(member.type.name);
                 bridge != bridge_classes.end()) {
                 identity << ":bridge-abi:" << bridge_contract_identity(*bridge->second.bridge);
@@ -1950,12 +1955,14 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             identity << '\n';
         }
         for (const auto& inner : input.inner_classes) {
-            identity << "inner:" << inner.name << ':' << inner.godot_base_type << '\n';
+            identity << "inner:" << inner.name << ':' << inner.godot_base_type << ':'
+                     << inner.is_abstract << '\n';
             for (const auto& member : inner.members) {
                 identity << "inner-member:" << static_cast<int>(member.kind) << ':' << member.name
                          << ':' << static_cast<int>(member.type.kind) << ':' << member.type.name
                          << ':' << member.required_arguments << ':' << member.is_static << ':'
-                         << member.has_accessor << ':' << member.is_coroutine;
+                         << member.has_accessor << ':' << member.is_coroutine << ':'
+                         << member.is_abstract;
                 if (const auto bridge = bridge_classes.find(member.type.name);
                     bridge != bridge_classes.end()) {
                     identity << ":bridge-abi:" << bridge_contract_identity(*bridge->second.bridge);
