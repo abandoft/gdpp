@@ -525,6 +525,8 @@ TEST_CASE("project compiler registers internal classes and includes complete enu
                "        value = initial\n"
                "signal changed(value: int)\n"
                "var chart: CorpusChartData.Chart = CorpusChartData.Chart.FIRST\n"
+               "func select_chart(index: int) -> CorpusChartData.Chart:\n"
+               "    return index as CorpusChartData.Chart\n"
                "func attach() -> void:\n"
                "    changed.connect(\n"
                "        func(value: int) -> void:\n"
