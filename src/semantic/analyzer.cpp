@@ -428,6 +428,16 @@ void SemanticAnalyzer::require_truthy_value(const Type& type, const SourceSpan s
     }
 }
 
+void SemanticAnalyzer::require_inferable_type(const Type& type, const SourceSpan span,
+                                              const std::string& context) {
+    if (type.kind == TypeKind::nil) {
+        diagnostics_.error("GDS4154", context + " cannot infer a concrete type from null", span);
+    } else if (!type.is_value()) {
+        diagnostics_.error("GDS4154", context + " cannot infer a type from a void expression",
+                           span);
+    }
+}
+
 void SemanticAnalyzer::require_expression_assignable(const Type& target,
                                                      const ast::Expression& expression,
                                                      const Type& source, const SourceSpan span,
@@ -3251,8 +3261,12 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
             statement.expression() ? analyze_expression(*statement.expression()) : variant_type;
         Type type = statement.type().has_value() ? type_from_name(*statement.type(), statement.span)
                                                  : variant_type;
-        if (statement.infer_type() || (statement.is_constant() && !statement.type()))
+        if (statement.infer_type()) {
+            require_inferable_type(initializer, statement.span, "local variable");
             type = initializer;
+        } else if (statement.is_constant() && !statement.type()) {
+            type = initializer;
+        }
         if (statement.type().has_value() && statement.expression()) {
             require_expression_assignable(type, *statement.expression(), initializer,
                                           statement.span, "invalid initializer");
@@ -3783,6 +3797,8 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
         if (parameter.default_value)
             analyzed_default = analyze_expression(*parameter.default_value);
         await_expression_allowed_ = previous_await_context;
+        if (parameter.infer_type && analyzed_default)
+            require_inferable_type(*analyzed_default, parameter.span, "parameter");
         const auto type = parameter.type.has_value()
                               ? type_from_name(*parameter.type, parameter.span)
                           : parameter.infer_type && analyzed_default ? *analyzed_default
@@ -3937,6 +3953,8 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
         if (parameter.default_value)
             analyzed_default = analyze_expression(*parameter.default_value);
         await_expression_allowed_ = previous_await_context;
+        if (parameter.infer_type && analyzed_default)
+            require_inferable_type(*analyzed_default, parameter.span, "lambda parameter");
         const auto type = parameter.type ? type_from_name(*parameter.type, parameter.span)
                           : parameter.infer_type && analyzed_default ? *analyzed_default
                                                                      : variant_type;
@@ -4108,7 +4126,10 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
             variable.initializer ? analyze_expression(*variable.initializer) : variant_type;
         instance_context_available_ = saved_variable_instance_context;
         Type type = variable.type ? type_from_name(*variable.type, variable.span) : variant_type;
-        if (variable.infer_type || (variable.is_constant && !variable.type)) {
+        if (variable.infer_type) {
+            require_inferable_type(initializer, variable.span, "internal field");
+            type = initializer;
+        } else if (variable.is_constant && !variable.type) {
             type = initializer;
         } else if (variable.type && variable.initializer) {
             require_expression_assignable(type, *variable.initializer, initializer, variable.span,
@@ -5047,7 +5068,10 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
         instance_context_available_ = saved_instance_context;
         Type type = variable.type.has_value() ? type_from_name(*variable.type, variable.span)
                                               : variant_type;
-        if (variable.infer_type || (variable.is_constant && !variable.type.has_value())) {
+        if (variable.infer_type) {
+            require_inferable_type(initializer, variable.span, "field");
+            type = initializer;
+        } else if (variable.is_constant && !variable.type.has_value()) {
             type = initializer;
         } else if (variable.type.has_value() && variable.initializer) {
             require_expression_assignable(type, *variable.initializer, initializer, variable.span,
