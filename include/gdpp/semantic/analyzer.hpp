@@ -46,6 +46,7 @@ struct Symbol {
     SymbolStorage storage{SymbolStorage::class_member};
     std::optional<std::int64_t> constant_integer_value;
     FlowSymbolId identity{0};
+    std::optional<Type> constant_value_type;
 
     Symbol() = default;
     Symbol(SymbolKind symbol_kind, std::string symbol_name, Type symbol_type,
@@ -53,14 +54,16 @@ struct Symbol {
            std::optional<std::string> string_value = std::nullopt,
            SymbolStorage symbol_storage = SymbolStorage::class_member,
            std::optional<std::int64_t> integer_value = std::nullopt,
-           FlowSymbolId symbol_identity = 0)
+           FlowSymbolId symbol_identity = 0,
+           std::optional<Type> reduced_type = std::nullopt)
         : kind(symbol_kind), name(std::move(symbol_name)), type(std::move(symbol_type)),
           declaration(declaration_span), read_only(symbol_read_only),
           constant_string_value(std::move(string_value)),
           storage(symbol_kind == SymbolKind::local || symbol_kind == SymbolKind::parameter
                       ? SymbolStorage::function_local
                       : symbol_storage),
-          constant_integer_value(integer_value), identity(symbol_identity) {}
+          constant_integer_value(integer_value), identity(symbol_identity),
+          constant_value_type(std::move(reduced_type)) {}
 };
 
 enum class ApiResolutionKind {
@@ -224,6 +227,8 @@ class SemanticAnalyzer final {
     [[nodiscard]] Type resolve_binary_expression(const ast::Expression& expression,
                                                  const Type& left, const Type& right);
     [[nodiscard]] bool is_constant_expression(const ast::Expression& expression) const;
+    [[nodiscard]] Type constant_value_type_of(const ast::Expression& expression,
+                                              const Type& fallback) const;
     [[nodiscard]] std::optional<std::string>
     constant_string_expression(const ast::Expression& expression) const;
     [[nodiscard]] std::optional<std::int64_t>

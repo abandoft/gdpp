@@ -932,6 +932,15 @@ Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expressi
         } else {
             valid_conversion = is_explicitly_convertible(right, left);
         }
+        if (valid_conversion && is_constant_expression(*expression.operand(0))) {
+            const auto constant_source =
+                constant_value_type_of(*expression.operand(0), left);
+            if (!constant_source.is_dynamic()) {
+                const auto conversion = classify_conversion(right, constant_source);
+                valid_conversion = conversion == ConversionKind::identity ||
+                                   conversion == ConversionKind::implicit;
+            }
+        }
         if (!valid_conversion) {
             diagnostics_.error("GDS4075",
                                "invalid cast: cannot convert " + left.display_name() + " to " +
@@ -3023,6 +3032,16 @@ bool SemanticAnalyzer::is_constant_expression(const ast::Expression& expression)
     return false;
 }
 
+Type SemanticAnalyzer::constant_value_type_of(const ast::Expression& expression,
+                                              const Type& fallback) const {
+    if (expression.kind() == ast::ExpressionKind::identifier) {
+        const auto* symbol = model_.symbol_of(expression);
+        if (symbol && symbol->kind == SymbolKind::constant && symbol->constant_value_type)
+            return *symbol->constant_value_type;
+    }
+    return fallback;
+}
+
 std::optional<std::string>
 SemanticAnalyzer::constant_string_expression(const ast::Expression& expression) const {
     if (expression.kind() == ast::ExpressionKind::literal &&
@@ -3275,9 +3294,15 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         const auto constant_string = statement.is_constant() && statement.expression()
                                          ? constant_string_expression(*statement.expression())
                                          : std::optional<std::string>{};
+        const auto constant_integer = statement.is_constant() && statement.expression()
+                                          ? constant_integer_expression(*statement.expression())
+                                          : std::optional<std::int64_t>{};
+        const auto constant_value_type = statement.is_constant() && statement.expression()
+                                             ? std::optional<Type>{initializer}
+                                             : std::nullopt;
         declare({statement.is_constant() ? SymbolKind::constant : SymbolKind::local,
                  statement.name(), type, statement.span, statement.is_constant(), constant_string,
-                 SymbolStorage::function_local});
+                 SymbolStorage::function_local, constant_integer, 0, constant_value_type});
         return FlowResult{true, false, false, false};
     }
     case ast::StatementKind::assignment: {
@@ -4158,6 +4183,7 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
                     constant_string_expression(*variable.initializer);
                 found->second.constant_integer_value =
                     constant_integer_expression(*variable.initializer);
+                found->second.constant_value_type = initializer;
             }
         }
     };
@@ -5091,6 +5117,7 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
                     constant_string_expression(*variable.initializer);
                 found->second.constant_integer_value =
                     constant_integer_expression(*variable.initializer);
+                found->second.constant_value_type = initializer;
             }
         }
     };
