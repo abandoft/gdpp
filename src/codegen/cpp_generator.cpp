@@ -898,7 +898,11 @@ std::string property_info(const ir::Field& field, const GodotApi& api,
         usage = field.property->arguments[2].value;
         if (usage.rfind("PROPERTY_USAGE_", 0) == 0)
             usage = "godot::" + usage;
-        usage = "static_cast<uint32_t>(" + usage + ")";
+        // GDScript always marks declared fields as script variables in addition to the explicit
+        // @export_custom usage mask. Omitting this bit changes reflection and serialization even
+        // when the user supplied PROPERTY_USAGE_DEFAULT verbatim.
+        usage = "(static_cast<uint32_t>(" + usage +
+                ") | static_cast<uint32_t>(godot::PROPERTY_USAGE_SCRIPT_VARIABLE))";
     } else if (!field.property) {
         usage = "godot::PROPERTY_USAGE_SCRIPT_VARIABLE";
     }
