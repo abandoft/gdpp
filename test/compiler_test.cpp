@@ -3543,6 +3543,48 @@ TEST_CASE("compiler matches zero-arity varargs constant preload and warning rang
                         }));
 }
 
+TEST_CASE("warning ignores scope every semantic warning on a function") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "warning_scope.gd", "class Worker:\n"
+                            "    static func run() -> void:\n"
+                            "        pass\n"
+                            "@warning_ignore(\"static_called_on_instance\", \"redundant_await\", "
+                            "\"unreachable_pattern\", \"unreachable_code\")\n"
+                            "func suppressed() -> void:\n"
+                            "    var worker := Worker.new()\n"
+                            "    worker.run()\n"
+                            "    await 42\n"
+                            "    match 1:\n"
+                            "        _:\n"
+                            "            pass\n"
+                            "        1:\n"
+                            "            pass\n"
+                            "    return\n"
+                            "    print(1)\n"
+                            "func reported() -> void:\n"
+                            "    var worker := Worker.new()\n"
+                            "    worker.run()\n"
+                            "    await 42\n"
+                            "    match 1:\n"
+                            "        _:\n"
+                            "            pass\n"
+                            "        1:\n"
+                            "            pass\n"
+                            "    return\n"
+                            "    print(1)\n");
+
+    REQUIRE(result.success);
+    const auto warning_count = [&](const std::string_view code) {
+        return std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                             [&](const auto& diagnostic) { return diagnostic.code == code; });
+    };
+    REQUIRE_EQ(warning_count("GDS4130"), std::ptrdiff_t{1});
+    REQUIRE_EQ(warning_count("GDS4093"), std::ptrdiff_t{1});
+    REQUIRE_EQ(warning_count("GDS4044"), std::ptrdiff_t{1});
+    REQUIRE_EQ(warning_count("GDS4069"), std::ptrdiff_t{1});
+}
+
 TEST_CASE("dynamic logical operators short circuit and utility arguments keep source order") {
     const gdpp::Compiler compiler;
     const auto result =
