@@ -46,5 +46,15 @@ func _run() -> void:
         push_error("GDPP direct build retained %d development libraries" % development_count)
         quit(1)
         return
+    var descriptor := FileAccess.get_file_as_string(str(result.get("extension_descriptor", "")))
+    var classes: Dictionary = result.get("script_classes", {})
+    var hello_class := str(classes.get("res://hello.gd", ""))
+    if (
+        "[icons]" not in descriptor
+        or '%s = "res://icon.svg"' % hello_class not in descriptor
+    ):
+        push_error("GDPP development descriptor lost @icon metadata")
+        quit(1)
+        return
     print("GDPP_DIRECT_BUILD_OK")
     quit(0)
