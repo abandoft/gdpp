@@ -4,7 +4,12 @@
 - Introduced stable symbol identities and a branch-state lattice with conservative joins, reassignment invalidation, callable isolation, and bounded analysis of large logical chains.
 - Preserved both effective and storage types plus non-null proofs in typed HIR, allowing the C++ backend to specialize Variant-backed reads without changing their native storage ABI.
 - Added source-located null/released-object guards for statically resolved method calls and property reads instead of permitting unchecked native dereferences.
-- Added strict generated-C++ compilation and real Godot 4.7 GDScript/AOT differential coverage for the complete narrowing contract.
+- Completed default-argument lowering and Callable metadata, including omitted-argument dispatch, override compatibility checks, callable arity validation, and exact Godot virtual ABI adapters.
+- Implemented the constant and runtime contracts for GDScript language utilities, including `assert`, `is_instance_of`, `type_exists`, `convert`, `str_to_var`, and `var_to_str`.
+- Made unresolved values, types, and annotation constants fail closed, and constant-folded exported property hint/usage metadata while preserving Godot's script-variable identity.
+- Enforced static-context ownership across fields, methods, accessors, `super`, node shorthand, and nested lambdas, while retaining valid static and inner-class access.
+- Sequenced every eager binary operand explicitly so generated C++17 preserves GDScript's left-to-right side-effect order across native, Variant, membership, power, and comparison expressions.
+- Expanded strict generated-C++ compilation and real Godot 4.7 GDScript/AOT differential coverage for narrowing, callable ABI, language utilities, annotations, static context, and evaluation order.
 
 ## 1.4.0
 
