@@ -221,6 +221,8 @@ class SemanticAnalyzer final {
     void analyze_match_pattern(const ast::MatchPattern& pattern, const Type& matched_type);
     [[nodiscard]] bool is_assignment_target(const ast::Expression& expression) const noexcept;
     [[nodiscard]] Type type_from_name(const std::string& name, SourceSpan span = {});
+    [[nodiscard]] bool override_type_accepts(const Type& target,
+                                             const Type& source) const noexcept;
     [[nodiscard]] Type container_element_type(const Type& container, SourceSpan span = {});
     [[nodiscard]] Type iteration_element_type(const Type& container, SourceSpan span = {});
     [[nodiscard]] std::optional<Type> object_iteration_element_type(const Type& object,

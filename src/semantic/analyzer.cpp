@@ -681,6 +681,37 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
     return type;
 }
 
+bool SemanticAnalyzer::override_type_accepts(const Type& target,
+                                             const Type& source) const noexcept {
+    if (target == source || target.is_dynamic() || source.is_dynamic())
+        return true;
+    if (target.kind != TypeKind::object || source.kind != TypeKind::object)
+        return is_assignable(target, source);
+    if (target.name == "Object")
+        return true;
+    if (api_.find_class(target.name) && api_.find_class(source.name))
+        return api_.inherits(source.name, target.name);
+    if (script_symbols_) {
+        const auto* source_script = script_symbols_->find_class(source.name);
+        const auto* target_script = script_symbols_->find_class(target.name);
+        if (source_script && target_script)
+            return script_symbols_->inherits(*source_script, target.name);
+        if (source_script && api_.find_class(target.name))
+            return api_.inherits(source_script->godot_base_type, target.name);
+    }
+    const auto* source_inner = find_inner_class(source.name);
+    const auto* target_inner = find_inner_class(target.name);
+    if (source_inner && target_inner) {
+        for (auto* current = source_inner; current; current = inner_base_of(*current)) {
+            if (current == target_inner)
+                return true;
+        }
+    }
+    if (source_inner && api_.find_class(target.name))
+        return api_.inherits(source_inner->godot_base_type, target.name);
+    return false;
+}
+
 Type SemanticAnalyzer::container_element_type(const Type& container, SourceSpan span) {
     if (container.kind == TypeKind::integer)
         return {TypeKind::integer, "int"};
@@ -3411,16 +3442,21 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
         diagnostics_.error("GDS4066", "_static_init cannot declare a non-void return type",
                            function.span);
     }
-    const auto* virtual_method =
-        function.is_static ? nullptr : api_.find_method(base_type_, function.name);
+    const auto* virtual_method = api_.find_method(base_type_, function.name);
     if (virtual_method && !virtual_method->is_virtual)
         virtual_method = nullptr;
     const ScriptMemberSymbol* inherited_script_method = nullptr;
-    if (!function.is_static && function.name != "_init" && script_symbols_ && current_script_) {
+    if (function.name != "_init" && current_inner_base_) {
+        for (auto* base = current_inner_base_; base && !inherited_script_method;
+             base = inner_base_of(*base)) {
+            const auto* inherited = find_inner_member(*base, function.name);
+            if (inherited && inherited->kind == ScriptMemberKind::function)
+                inherited_script_method = inherited;
+        }
+    } else if (function.name != "_init" && script_symbols_ && current_script_) {
         if (const auto* base = script_symbols_->base_of(*current_script_)) {
             const auto* inherited = script_symbols_->find_member(*base, function.name);
-            if (inherited && inherited->kind == ScriptMemberKind::function &&
-                !inherited->is_static) {
+            if (inherited && inherited->kind == ScriptMemberKind::function) {
                 inherited_script_method = inherited;
             }
         }
@@ -3432,26 +3468,6 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
         : virtual_method && std::string_view{virtual_method->return_type}.empty() ? void_type
         : virtual_method ? type_from_godot_api(virtual_method->return_type)
                          : variant_type;
-    if (virtual_method && function.return_type) {
-        const auto api_return = std::string_view{virtual_method->return_type}.empty()
-                                    ? void_type
-                                    : type_from_godot_api(virtual_method->return_type);
-        if (expected_return_ != api_return) {
-            diagnostics_.error("GDS4120",
-                               "Godot virtual override '" + function.name + "' must return " +
-                                   api_return.display_name() + ", got " +
-                                   expected_return_.display_name(),
-                               function.span);
-        }
-    }
-    if (virtual_method &&
-        std::any_of(function.parameters.begin(), function.parameters.end(),
-                    [](const auto& parameter) { return parameter.default_value != nullptr; })) {
-        diagnostics_.error("GDS4118",
-                           "Godot virtual override '" + function.name +
-                               "' cannot redeclare default arguments in the native ABI",
-                           function.span);
-    }
     model_.function_return_types_[&function] = expected_return_;
     // Native coroutine methods expose a Variant that is either the synchronously completed
     // source return value or a per-call completion Signal. This preserves typed and untyped
@@ -3486,28 +3502,86 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
                           : inherited_argument                       ? *inherited_argument
                           : virtual_argument ? type_from_godot_api(virtual_argument->type)
                                              : variant_type;
-        if (virtual_argument && parameter.type) {
-            const auto api_type = type_from_godot_api(virtual_argument->type);
-            if (type != api_type) {
-                diagnostics_.error("GDS4121",
-                                   "parameter " + std::to_string(index + 1) +
-                                       " of Godot virtual override '" + function.name +
-                                       "' must be " + api_type.display_name() + ", got " +
-                                       type.display_name(),
-                                   parameter.span);
-            }
-        }
         model_.parameter_types_[&parameter] = type;
         declare({SymbolKind::parameter, parameter.name, type, parameter.span, false});
         if (analyzed_default)
             require_expression_assignable(type, *parameter.default_value, *analyzed_default,
                                           parameter.span, "invalid default value");
     }
-    if (virtual_method && function.parameters.size() != virtual_method->maximum_arguments) {
-        diagnostics_.error("GDS4102",
-                           "Godot virtual method '" + function.name + "' expects " +
-                               std::to_string(virtual_method->maximum_arguments) + " parameter(s)",
-                           function.span);
+    const auto current_required = static_cast<std::size_t>(std::count_if(
+        function.parameters.begin(), function.parameters.end(),
+        [](const auto& parameter) { return parameter.default_value == nullptr; }));
+    const auto validate_override = [&](const std::string& owner, const Type& parent_return,
+                                       const std::vector<Type>& parent_parameters,
+                                       const std::size_t parent_required,
+                                       const bool parent_static) {
+        if (function.is_static != parent_static) {
+            diagnostics_.error("GDS4143",
+                               owner + " override '" + function.name +
+                                   "' must preserve the parent's static/instance qualifier",
+                               function.span);
+        }
+        if (current_required > parent_required ||
+            function.parameters.size() < parent_parameters.size()) {
+            diagnostics_.error(
+                "GDS4102",
+                owner + " override '" + function.name + "' accepts " +
+                    std::to_string(current_required) + " to " +
+                    std::to_string(function.parameters.size()) +
+                    " argument(s), which does not include the parent range " +
+                    std::to_string(parent_required) + " to " +
+                    std::to_string(parent_parameters.size()),
+                function.span);
+        }
+        if (function.return_type &&
+            ((expected_return_.is_dynamic() && !parent_return.is_dynamic()) ||
+             !override_type_accepts(parent_return, expected_return_))) {
+            diagnostics_.error("GDS4120",
+                               owner + " override '" + function.name +
+                                   "' must return a subtype of " + parent_return.display_name() +
+                                   ", got " + expected_return_.display_name(),
+                               function.span);
+        }
+        const auto checked = std::min(function.parameters.size(), parent_parameters.size());
+        for (std::size_t index = 0; index < checked; ++index) {
+            const auto& parameter = function.parameters[index];
+            const auto current_type = model_.type_of(parameter);
+            const bool explicit_type = parameter.type.has_value() || parameter.infer_type;
+            const bool hard_variant_parent =
+                parent_parameters[index].is_dynamic() && owner == "script" &&
+                inherited_script_method &&
+                index < inherited_script_method->explicit_parameter_types.size() &&
+                inherited_script_method->explicit_parameter_types[index];
+            if (explicit_type &&
+                ((hard_variant_parent && !current_type.is_dynamic()) ||
+                 !override_type_accepts(current_type, parent_parameters[index]))) {
+                diagnostics_.error(
+                    "GDS4121",
+                    "parameter " + std::to_string(index + 1) + " of " + owner + " override '" +
+                        function.name + "' must accept " +
+                        parent_parameters[index].display_name() + ", got " +
+                        current_type.display_name(),
+                    parameter.span);
+            }
+        }
+    };
+    if (inherited_script_method) {
+        validate_override("script", inherited_script_method->type,
+                          inherited_script_method->parameters,
+                          inherited_script_method->required_arguments,
+                          inherited_script_method->is_static);
+    } else if (virtual_method) {
+        std::vector<Type> api_parameters;
+        api_parameters.reserve(virtual_method->maximum_arguments);
+        for (std::size_t index = 0; index < virtual_method->maximum_arguments; ++index) {
+            if (const auto* argument = api_.argument(*virtual_method, index))
+                api_parameters.push_back(type_from_godot_api(argument->type));
+        }
+        const auto api_return = std::string_view{virtual_method->return_type}.empty()
+                                    ? void_type
+                                    : type_from_godot_api(virtual_method->return_type);
+        validate_override("Godot virtual", api_return, api_parameters,
+                          virtual_method->required_arguments, virtual_method->is_static);
     }
     const auto flow = analyze_statements(function.body);
     if (current_callable_suspends_)
