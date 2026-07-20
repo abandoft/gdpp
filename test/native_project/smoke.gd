@@ -41,6 +41,7 @@ func _run() -> void:
     var flow_narrowing_class := _native_class_for("flow_narrowing_case.gd")
     var virtual_signature_class := _native_class_for("virtual_signature_case.gd")
     var default_argument_class := _native_class_for("default_argument_case.gd")
+    var language_utility_class := _native_class_for("language_utility_case.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -58,6 +59,7 @@ func _run() -> void:
         or flow_narrowing_class.is_empty()
         or virtual_signature_class.is_empty()
         or default_argument_class.is_empty()
+        or language_utility_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
@@ -190,6 +192,34 @@ func _run() -> void:
         return
     native_defaults = null
     script_defaults = null
+    var native_utilities: Object = ClassDB.instantiate(language_utility_class)
+    var script_utilities: Object = load("res://language_utility_case.gd").new()
+    if native_utilities == null or script_utilities == null:
+        push_error("GDScript utility differential fixtures are unavailable")
+        quit(1)
+        return
+    var native_utility_report: Dictionary = native_utilities.call("run")
+    var script_utility_report: Dictionary = script_utilities.call("run")
+    var expected_utility_report: Dictionary = {
+        "converted": 42,
+        "types_exist": [true, false],
+        "character": "🙂",
+        "ordinal": 0x1f642,
+        "colors": [Color8(255, 128, 0), Color8(255, 128, 0, 64)],
+        "instances": [true, false, true, false],
+    }
+    if (
+        native_utility_report != script_utility_report
+        or native_utility_report != expected_utility_report
+    ):
+        push_error(
+            "GDScript utility functions differ from the native runtime: native=%s script=%s"
+            % [native_utility_report, script_utility_report]
+        )
+        quit(1)
+        return
+    native_utilities = null
+    script_utilities = null
     var native_integers: Object = ClassDB.instantiate(integer_semantics_class)
     var script_integers: Object = load("res://integer_semantics_case.gd").new()
     if native_integers == null or script_integers == null:
