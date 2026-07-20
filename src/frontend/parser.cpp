@@ -645,13 +645,22 @@ ast::FunctionDeclaration Parser::parse_function(bool is_static,
     ast::FunctionDeclaration function;
     function.is_static = is_static;
     function.annotations = std::move(annotations);
+    function.is_abstract =
+        std::any_of(function.annotations.begin(), function.annotations.end(),
+                    [](const auto& annotation) { return annotation.name == "abstract"; });
     function.name = consume(TokenKind::identifier, "expected a function name").lexeme;
     function.parameters = parse_parameters("function");
     if (match(TokenKind::arrow)) {
         function.return_type = parse_type_name("expected a return type after '->'");
     }
-    consume(TokenKind::colon, "expected ':' after function signature");
-    function.body = parse_suite();
+    function.has_body = match(TokenKind::colon);
+    if (function.has_body) {
+        function.body = parse_suite();
+    } else if (!check(TokenKind::newline) && !check(TokenKind::dedent) && !at_end()) {
+        diagnostics_.error("GDS2033", "unexpected token after bodyless function signature",
+                           current().span);
+        synchronize();
+    }
     function.span = joined(begin, previous().span);
     return function;
 }
@@ -1359,13 +1368,16 @@ ast::Script Parser::parse_script() {
             auto annotation = parse_annotation();
             const auto* feature =
                 LanguageFeatureRegistry::latest().find_annotation(annotation.name);
-            if (feature && has_annotation_target(feature->targets, AnnotationTarget::script)) {
-                if (script_header_closed) {
-                    diagnostics_.error("GDS2027",
-                                       "script annotation '@" + annotation.name +
-                                           "' must appear before extends and class_name",
-                                       annotation.span);
-                }
+            const bool is_script_annotation =
+                feature && has_annotation_target(feature->targets, AnnotationTarget::script);
+            const bool can_target_declaration =
+                feature &&
+                (has_annotation_target(feature->targets, AnnotationTarget::field) ||
+                 has_annotation_target(feature->targets, AnnotationTarget::function) ||
+                 has_annotation_target(feature->targets, AnnotationTarget::signal) ||
+                 has_annotation_target(feature->targets, AnnotationTarget::enumeration) ||
+                 has_annotation_target(feature->targets, AnnotationTarget::inner_class));
+            if (is_script_annotation && !script_header_closed) {
                 if (!script_annotation_names.insert(annotation.name).second) {
                     diagnostics_.error("GDS2028",
                                        "script annotation '@" + annotation.name +
@@ -1378,6 +1390,11 @@ ast::Script Parser::parse_script() {
             } else if (feature &&
                        has_annotation_target(feature->targets, AnnotationTarget::directive)) {
                 apply_warning_directive(annotation);
+            } else if (is_script_annotation && !can_target_declaration) {
+                diagnostics_.error("GDS2027",
+                                   "script annotation '@" + annotation.name +
+                                       "' must appear before extends and class_name",
+                                   annotation.span);
             } else {
                 annotations.push_back(std::move(annotation));
             }

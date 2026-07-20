@@ -338,6 +338,8 @@ struct FunctionDeclaration {
     Block body;
     std::vector<Annotation> annotations;
     bool is_static{false};
+    bool is_abstract{false};
+    bool has_body{true};
     SourceSpan span{};
 };
 

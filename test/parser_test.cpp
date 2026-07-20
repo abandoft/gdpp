@@ -58,6 +58,41 @@ TEST_CASE("parser accepts latest script annotations directives and single-line s
     REQUIRE_EQ(script.functions.back().body.size(), std::size_t{2});
 }
 
+TEST_CASE("parser preserves bodyless abstract function signatures") {
+    const gdpp::SourceFile source{"abstract.gd", "@abstract\n"
+                                                 "class_name AbstractWorker\n"
+                                                 "@abstract\n"
+                                                 "func execute(value: int) -> String\n"
+                                                 "func concrete() -> int:\n"
+                                                 "    return 42\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.functions.size(), std::size_t{2});
+    REQUIRE(script.functions.front().is_abstract);
+    REQUIRE(!script.functions.front().has_body);
+    REQUIRE(script.functions.front().body.empty());
+    REQUIRE(!script.functions.back().is_abstract);
+    REQUIRE(script.functions.back().has_body);
+    REQUIRE_EQ(script.functions.back().body.size(), std::size_t{1});
+}
+
+TEST_CASE("parser leaves bodyless function validity to semantic analysis") {
+    const gdpp::SourceFile source{"bodyless.gd", "func missing_body() -> void\n"
+                                                 "func recovered() -> void:\n"
+                                                 "    pass\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.functions.size(), std::size_t{2});
+    REQUIRE(!script.functions.front().has_body);
+    REQUIRE(script.functions.back().has_body);
+}
+
 TEST_CASE("parser preserves the bounded Godot RPC annotation contract") {
     const gdpp::SourceFile valid{"rpc.gd", "extends Node\n"
                                            "@rpc(\"any_peer\", \"call_local\", \"reliable\", 3)\n"
