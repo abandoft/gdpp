@@ -8,7 +8,7 @@
 - Expanded generated-code compilation and real Godot 4.7.1 GDScript/AOT differential coverage for all truthiness categories, built-in conversions, packed arrays, typed-container metadata recovery, String conversion divergence, and RID storage behavior.
 - Kept nested warning-control scopes distinct and normalized the analyzer to the pinned formatter, preserving warning-as-error builds across Clang, GCC, and MSVC release gates.
 - Restored complete compilation of the pinned rhythm-game and role-playing-game projects after the stricter type work exposed qualified-enum and runtime-container boundary regressions.
-- Preserved abstract native script contracts during binary-only export by carrying compiler metadata into ClassDB validation, including the Godot 4.4 compatibility path.
+- Preserved abstract native script contracts during binary-only export by carrying compiler metadata into ClassDB validation and patching the required runtime registration API into every host, Android, Web, and iOS SDK.
 - Advanced the native runtime ABI to 5 for the new guarded conversion and typed-storage contract.
 
 ## 1.5.0
