@@ -49,6 +49,7 @@ func _run() -> void:
     var abstract_implementation_class := _native_class_for("abstract_implementation.gd")
     var tool_mode_class := _native_class_for("tool_mode_case.gd")
     var runtime_mode_class := _native_class_for("runtime_mode_case.gd")
+    var type_semantics_class := _native_class_for("type_semantics_case.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -74,6 +75,7 @@ func _run() -> void:
         or abstract_implementation_class.is_empty()
         or tool_mode_class.is_empty()
         or runtime_mode_class.is_empty()
+        or type_semantics_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
@@ -110,6 +112,71 @@ func _run() -> void:
         return
     native_tool_mode = null
     native_runtime_mode = null
+
+    var native_type_semantics: Object = ClassDB.instantiate(type_semantics_class)
+    var type_semantics_script: Script = load("res://type_semantics_case.gd")
+    var script_type_semantics: Object = null
+    if type_semantics_script != null:
+        script_type_semantics = type_semantics_script.new()
+    if native_type_semantics == null or script_type_semantics == null:
+        push_error("Type semantics differential fixtures are unavailable")
+        native_type_semantics = null
+        script_type_semantics = null
+        quit(1)
+        return
+    var expected_truthiness: Array[bool] = [
+        true, true, false, true, false, true, false, true,
+        false, true, false, true, false, true, false, true,
+        true, true, false, true, true, false, true, false,
+        true, false, true, false, true, false, true, false,
+    ]
+    var native_truthiness: Array = native_type_semantics.call("truthiness_trace")
+    var script_truthiness: Array = script_type_semantics.call("truthiness_trace")
+    if (
+        native_truthiness != script_truthiness
+        or native_truthiness != expected_truthiness
+    ):
+        push_error(
+            "Native truthiness differs from GDScript: native=%s script=%s"
+            % [native_truthiness, script_truthiness]
+        )
+        native_type_semantics = null
+        script_type_semantics = null
+        quit(1)
+        return
+    var texture := ImageTexture.create_from_image(
+        Image.create(1, 1, false, Image.FORMAT_RGBA8)
+    )
+    var conversion_arguments := [
+        texture,
+        [1, 2],
+        PackedStringArray(["alpha", "beta"]),
+        Vector2i(2, 3),
+        Rect2i(1, 2, 3, 4),
+        Basis(),
+        Projection(),
+        [5, 6] as Array[int],
+        {"one": 1} as Dictionary[String, int],
+    ]
+    var native_conversions: Dictionary = native_type_semantics.callv(
+        "conversion_trace", conversion_arguments
+    )
+    var script_conversions: Dictionary = script_type_semantics.callv(
+        "conversion_trace", conversion_arguments
+    )
+    if native_conversions != script_conversions:
+        push_error(
+            "Native conversions differ from GDScript: native=%s script=%s"
+            % [native_conversions, script_conversions]
+        )
+        native_type_semantics = null
+        script_type_semantics = null
+        texture = null
+        quit(1)
+        return
+    native_type_semantics = null
+    script_type_semantics = null
+    texture = null
 
     var native_iteration: Object = ClassDB.instantiate(iteration_class)
     var script_iteration: Object = load("res://iteration_case.gd").new()
