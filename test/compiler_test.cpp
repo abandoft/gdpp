@@ -2366,20 +2366,19 @@ TEST_CASE("compiler lowers negated type tests and checked object downcasts") {
 
 TEST_CASE("semantic flow narrows type-tested values in if and while bodies") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "flow_type_tests.gd", "extends Node\n"
-                              "func object_name(value: Variant) -> String:\n"
-                              "    if value is Node:\n"
-                              "        return value.name\n"
-                              "    return \"\"\n"
-                              "func array_size(value: Variant) -> int:\n"
-                              "    while value is Array:\n"
-                              "        return value.size()\n"
-                              "    return 0\n");
+    const auto result =
+        compiler.compile("flow_type_tests.gd", "extends Node\n"
+                                               "func object_name(value: Variant) -> String:\n"
+                                               "    if value is Node:\n"
+                                               "        return value.name\n"
+                                               "    return \"\"\n"
+                                               "func array_size(value: Variant) -> int:\n"
+                                               "    while value is Array:\n"
+                                               "        return value.size()\n"
+                                               "    return 0\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") !=
-            std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") != std::string::npos);
     REQUIRE(result.unit.source.find("->get_name()") != std::string::npos);
     REQUIRE(result.unit.source.find("static_cast<godot::Array>(value)") != std::string::npos);
     REQUIRE(result.unit.source.find(".size()") != std::string::npos);
@@ -2388,14 +2387,14 @@ TEST_CASE("semantic flow narrows type-tested values in if and while bodies") {
 
 TEST_CASE("generated object method calls reject null and freed receivers") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "safe_receiver.gd", "extends Node\n"
-                            "func typed_count(value: Node) -> int:\n"
-                            "    return value.get_child_count()\n"
-                            "func narrowed_count(value: Variant) -> int:\n"
-                            "    if value is Node:\n"
-                            "        return value.get_child_count()\n"
-                            "    return 0\n");
+    const auto result =
+        compiler.compile("safe_receiver.gd", "extends Node\n"
+                                             "func typed_count(value: Node) -> int:\n"
+                                             "    return value.get_child_count()\n"
+                                             "func narrowed_count(value: Variant) -> int:\n"
+                                             "    if value is Node:\n"
+                                             "        return value.get_child_count()\n"
+                                             "    return 0\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("gdpp::runtime::is_instance_valid") != std::string::npos);
@@ -2409,14 +2408,14 @@ TEST_CASE("generated object method calls reject null and freed receivers") {
 
 TEST_CASE("generated object property reads reject null and freed receivers") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "safe_property.gd", "extends Node\n"
-                            "func typed_name(value: Node) -> String:\n"
-                            "    return value.name\n"
-                            "func narrowed_name(value: Variant) -> String:\n"
-                            "    if value is Node:\n"
-                            "        return value.name\n"
-                            "    return \"\"\n");
+    const auto result =
+        compiler.compile("safe_property.gd", "extends Node\n"
+                                             "func typed_name(value: Node) -> String:\n"
+                                             "    return value.name\n"
+                                             "func narrowed_name(value: Variant) -> String:\n"
+                                             "    if value is Node:\n"
+                                             "        return value.name\n"
+                                             "    return \"\"\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("_gdpp_property_receiver_") != std::string::npos);
@@ -2430,34 +2429,33 @@ TEST_CASE("generated object property reads reject null and freed receivers") {
 
 TEST_CASE("semantic flow narrows short-circuit logical operands") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "flow_short_circuit.gd", "extends Node\n"
-                                 "func positive(value: Variant) -> bool:\n"
-                                 "    return value is int and value > 0\n"
-                                 "func named(value: Variant) -> bool:\n"
-                                 "    return value is not Node or value.name == &\"ready\"\n"
-                                 "func positioned(value: Variant) -> bool:\n"
-                                 "    return value is Node and value is Node2D and value.position.x > 0\n");
+    const auto result =
+        compiler.compile("flow_short_circuit.gd",
+                         "extends Node\n"
+                         "func positive(value: Variant) -> bool:\n"
+                         "    return value is int and value > 0\n"
+                         "func named(value: Variant) -> bool:\n"
+                         "    return value is not Node or value.name == &\"ready\"\n"
+                         "func positioned(value: Variant) -> bool:\n"
+                         "    return value is Node and value is Node2D and value.position.x > 0\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("static_cast<int64_t>(value)") != std::string::npos);
-    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") !=
-            std::string::npos);
-    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node2D>") !=
-            std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node2D>") != std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
 }
 
 TEST_CASE("semantic flow invalidates a refinement after direct reassignment") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "flow_assignment.gd", "extends Node\n"
-                              "func replace(value: Variant) -> Variant:\n"
-                              "    if value is Node:\n"
-                              "        value = 40\n"
-                              "        value += 2\n"
-                              "        return value.name\n"
-                              "    return value\n");
+    const auto result =
+        compiler.compile("flow_assignment.gd", "extends Node\n"
+                                               "func replace(value: Variant) -> Variant:\n"
+                                               "    if value is Node:\n"
+                                               "        value = 40\n"
+                                               "        value += 2\n"
+                                               "        return value.name\n"
+                                               "    return value\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("gdpp::runtime::binary") != std::string::npos);
@@ -2466,12 +2464,12 @@ TEST_CASE("semantic flow invalidates a refinement after direct reassignment") {
 
 TEST_CASE("semantic flow does not leak transient branch facts into deferred lambdas") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "flow_lambda.gd", "extends Node\n"
-                          "func defer_name(value: Variant) -> Callable:\n"
-                          "    if value is Node:\n"
-                          "        return func() -> Variant: return value.name\n"
-                          "    return func() -> Variant: return null\n");
+    const auto result =
+        compiler.compile("flow_lambda.gd", "extends Node\n"
+                                           "func defer_name(value: Variant) -> Callable:\n"
+                                           "    if value is Node:\n"
+                                           "        return func() -> Variant: return value.name\n"
+                                           "    return func() -> Variant: return null\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named(value") != std::string::npos);
@@ -2479,60 +2477,56 @@ TEST_CASE("semantic flow does not leak transient branch facts into deferred lamb
 
 TEST_CASE("semantic flow carries the sole fallthrough refinement past guards") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "flow_postdominator.gd", "extends Node\n"
-                               "func after_negative_guard(value: Variant) -> String:\n"
-                               "    if value is not Node:\n"
-                               "        return \"\"\n"
-                               "    return value.name\n"
-                               "func after_else_guard(value: Variant) -> String:\n"
-                               "    if value is Node:\n"
-                               "        pass\n"
-                               "    else:\n"
-                               "        return \"\"\n"
-                               "    return value.name\n");
+    const auto result = compiler.compile("flow_postdominator.gd",
+                                         "extends Node\n"
+                                         "func after_negative_guard(value: Variant) -> String:\n"
+                                         "    if value is not Node:\n"
+                                         "        return \"\"\n"
+                                         "    return value.name\n"
+                                         "func after_else_guard(value: Variant) -> String:\n"
+                                         "    if value is Node:\n"
+                                         "        pass\n"
+                                         "    else:\n"
+                                         "        return \"\"\n"
+                                         "    return value.name\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") !=
-            std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") != std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
 }
 
 TEST_CASE("semantic flow narrows each lazy conditional-expression arm") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "flow_conditional.gd", "extends Node\n"
-                              "func direct(value: Variant) -> String:\n"
-                              "    return value.name if value is Node else \"\"\n"
-                              "func negated(value: Variant) -> String:\n"
-                              "    return \"\" if value is not Node else value.name\n");
+    const auto result = compiler.compile("flow_conditional.gd",
+                                         "extends Node\n"
+                                         "func direct(value: Variant) -> String:\n"
+                                         "    return value.name if value is Node else \"\"\n"
+                                         "func negated(value: Variant) -> String:\n"
+                                         "    return \"\" if value is not Node else value.name\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") !=
-            std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") != std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
 }
 
 TEST_CASE("semantic flow narrows structural match subjects and guarded bindings") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "flow_match.gd", "extends Node\n"
-                        "func container_size(value: Variant) -> int:\n"
-                        "    match value:\n"
-                        "        []: return value.size()\n"
-                        "        {}: return value.size()\n"
-                        "        _: return -1\n"
-                        "func guarded_name(value: Variant) -> String:\n"
-                        "    match value:\n"
-                        "        var item when item is Node: return item.name\n"
-                        "        _: return \"\"\n");
+    const auto result =
+        compiler.compile("flow_match.gd", "extends Node\n"
+                                          "func container_size(value: Variant) -> int:\n"
+                                          "    match value:\n"
+                                          "        []: return value.size()\n"
+                                          "        {}: return value.size()\n"
+                                          "        _: return -1\n"
+                                          "func guarded_name(value: Variant) -> String:\n"
+                                          "    match value:\n"
+                                          "        var item when item is Node: return item.name\n"
+                                          "        _: return \"\"\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("static_cast<godot::Array>(value)") != std::string::npos);
-    REQUIRE(result.unit.source.find("static_cast<godot::Dictionary>(value)") !=
-            std::string::npos);
-    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") !=
-            std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<godot::Dictionary>(value)") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") != std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::call_dynamic") == std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
 }

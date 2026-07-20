@@ -67,13 +67,12 @@ TEST_CASE("typed IR owns resolved declaration and expression types") {
 
 TEST_CASE("typed IR preserves flow-proven non-null object reads") {
     gdpp::DiagnosticBag diagnostics;
-    const auto module = lower_source(
-        "extends Node\n"
-        "func guarded_name(value: Node) -> String:\n"
-        "    if value != null:\n"
-        "        return value.name\n"
-        "    return \"\"\n",
-        diagnostics);
+    const auto module = lower_source("extends Node\n"
+                                     "func guarded_name(value: Node) -> String:\n"
+                                     "    if value != null:\n"
+                                     "        return value.name\n"
+                                     "    return \"\"\n",
+                                     diagnostics);
 
     REQUIRE(!diagnostics.has_errors());
     const auto& conditional = module.functions.front().body.front();

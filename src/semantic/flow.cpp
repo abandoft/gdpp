@@ -83,8 +83,7 @@ FlowTypeState::join_fallthrough(const std::vector<const FlowTypeState*>& predece
     return result;
 }
 
-FlowRefinements sequence_refinements(const FlowRefinements& first,
-                                     const FlowRefinements& second) {
+FlowRefinements sequence_refinements(const FlowRefinements& first, const FlowRefinements& second) {
     auto result = first;
     for (const auto& [symbol, type] : second.types)
         result.types.insert_or_assign(symbol, type);
@@ -92,8 +91,7 @@ FlowRefinements sequence_refinements(const FlowRefinements& first,
     return result;
 }
 
-FlowRefinements common_refinements(const FlowRefinements& first,
-                                   const FlowRefinements& second) {
+FlowRefinements common_refinements(const FlowRefinements& first, const FlowRefinements& second) {
     FlowRefinements result;
     const auto* smaller = &first.types;
     const auto* larger = &second.types;

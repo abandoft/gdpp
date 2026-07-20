@@ -1987,15 +1987,14 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 return script_method_native_name(*current_script_, *member);
         }
         {
-            auto identifier =
-                expression.value == "self" ? std::string{"this"}
-                                            : sanitize_identifier(expression.value);
+            auto identifier = expression.value == "self" ? std::string{"this"}
+                                                         : sanitize_identifier(expression.value);
             if (expression.storage_type.kind != TypeKind::unknown &&
                 expression.storage_type != expression.type &&
                 (expression.resolution == ir::ResolutionKind::none ||
                  expression.resolution == ir::ResolutionKind::local_constant)) {
-                identifier =
-                    emit_conversion(expression.type, expression.storage_type, std::move(identifier));
+                identifier = emit_conversion(expression.type, expression.storage_type,
+                                             std::move(identifier));
             }
             return identifier;
         }
@@ -2687,14 +2686,13 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             result += " -> " + (expression.coroutine_call ? std::string{"godot::Variant"}
                                                           : cpp_type(expression.type));
         result += " { " + receiver_setup;
-        if (!receiver_name.empty() &&
-            callee.operands.at(0)->type.kind == TypeKind::object) {
+        if (!receiver_name.empty() && callee.operands.at(0)->type.kind == TypeKind::object) {
             const auto location =
                 current_source_path_ + ":" + std::to_string(callee.span.begin.line);
             const auto message = godot_string("Cannot call '" + callee.value +
                                               "' on a null or freed object at " + location);
-            result += "if (!gdpp::runtime::is_instance_valid(godot::Variant(" + receiver_name +
-                      "))) { ";
+            result +=
+                "if (!gdpp::runtime::is_instance_valid(godot::Variant(" + receiver_name + "))) { ";
             result += expression.type.kind == TypeKind::void_type
                           ? "ERR_FAIL_EDMSG(" + message + "); "
                           : "ERR_FAIL_V_EDMSG({}, " + message + "); ";
@@ -2802,15 +2800,14 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                    godot_string_name(expression.value) + ")";
         }
         const auto& receiver = *expression.operands.at(0);
-        const bool checked_object_access =
-            receiver.type.kind == TypeKind::object && object != "this" &&
-            receiver.resolution != ir::ResolutionKind::godot_type &&
-            receiver.resolution != ir::ResolutionKind::script_type &&
-            receiver.resolution != ir::ResolutionKind::inner_type;
-        const auto receiver_name =
-            checked_object_access
-                ? "_gdpp_property_receiver_" + std::to_string(temporary_counter_++)
-                : object;
+        const bool checked_object_access = receiver.type.kind == TypeKind::object &&
+                                           object != "this" &&
+                                           receiver.resolution != ir::ResolutionKind::godot_type &&
+                                           receiver.resolution != ir::ResolutionKind::script_type &&
+                                           receiver.resolution != ir::ResolutionKind::inner_type;
+        const auto receiver_name = checked_object_access ? "_gdpp_property_receiver_" +
+                                                               std::to_string(temporary_counter_++)
+                                                         : object;
         const auto finish_object_access = [&](std::string access) {
             if (!checked_object_access)
                 return access;
@@ -2818,18 +2815,18 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 current_source_path_ + ":" + std::to_string(expression.span.begin.line);
             const auto message = godot_string("Cannot access member '" + expression.value +
                                               "' on a null or freed object at " + location);
-            return "([&]() -> " + cpp_type(expression.type) + " { auto &&" + receiver_name +
-                   " = " + object +
-                   "; if (!gdpp::runtime::is_instance_valid(godot::Variant(" + receiver_name +
-                   "))) { ERR_FAIL_V_EDMSG({}, " + message + "); } return " + access + "; }())";
+            return "([&]() -> " + cpp_type(expression.type) + " { auto &&" + receiver_name + " = " +
+                   object + "; if (!gdpp::runtime::is_instance_valid(godot::Variant(" +
+                   receiver_name + "))) { ERR_FAIL_V_EDMSG({}, " + message + "); } return " +
+                   access + "; }())";
         };
         const auto connector =
             expression.resolution == ir::ResolutionKind::enum_member ||
                     expression.resolution == ir::ResolutionKind::builtin_constant
                 ? "::"
-            : expression.operands.at(0)->resolution == ir::ResolutionKind::godot_type      ? "::"
-            : expression.operands.at(0)->resolution == ir::ResolutionKind::script_type     ? "::"
-            : expression.operands.at(0)->resolution == ir::ResolutionKind::inner_type      ? "::"
+            : expression.operands.at(0)->resolution == ir::ResolutionKind::godot_type  ? "::"
+            : expression.operands.at(0)->resolution == ir::ResolutionKind::script_type ? "::"
+            : expression.operands.at(0)->resolution == ir::ResolutionKind::inner_type  ? "::"
             : receiver_name == "this" || expression.operands.at(0)->type.kind == TypeKind::object
                 ? "->"
                 : ".";
@@ -2845,9 +2842,9 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                                                   {TypeKind::integer, "int"}, std::move(index));
                 }
             }
-            return finish_object_access(emit_api_return(
-                expression.type,
-                receiver_name + connector + expression.getter + "(" + index + ")"));
+            return finish_object_access(
+                emit_api_return(expression.type,
+                                receiver_name + connector + expression.getter + "(" + index + ")"));
         }
         if (expression.resolution == ir::ResolutionKind::script_property &&
             !expression.getter.empty()) {
@@ -2857,15 +2854,14 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             expression.direct_access && expression.operands.at(0)->type.kind == TypeKind::builtin) {
             return emit_direct_builtin_member(expression.resolved_owner, object, expression.value);
         }
-        return finish_object_access(
-            receiver_name + connector +
-            (expression.resolution == ir::ResolutionKind::enum_member
-                 ? enum_identifier(expression.value)
-                 : sanitize_identifier(expression.value)) +
-            (expression.resolution == ir::ResolutionKind::script_constant &&
-                     managed_static_constant(expression.type)
-                 ? "()"
-                 : ""));
+        return finish_object_access(receiver_name + connector +
+                                    (expression.resolution == ir::ResolutionKind::enum_member
+                                         ? enum_identifier(expression.value)
+                                         : sanitize_identifier(expression.value)) +
+                                    (expression.resolution == ir::ResolutionKind::script_constant &&
+                                             managed_static_constant(expression.type)
+                                         ? "()"
+                                         : ""));
     }
     case ir::ExpressionKind::subscript:
         if (expression.operands.at(0)->type.is_dynamic() ||

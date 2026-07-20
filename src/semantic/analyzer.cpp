@@ -251,8 +251,7 @@ Type SemanticModel::type_of(const ast::Expression& expression) const {
 Type SemanticModel::storage_type_of(const ast::Expression& expression) const {
     const auto found = referenced_symbols_.find(&expression);
     if (found != referenced_symbols_.end() &&
-        (found->second.kind == SymbolKind::local ||
-         found->second.kind == SymbolKind::parameter)) {
+        (found->second.kind == SymbolKind::local || found->second.kind == SymbolKind::parameter)) {
         return found->second.type;
     }
     return type_of(expression);
@@ -912,8 +911,8 @@ SemanticAnalyzer::conditional_refinements(const ast::Expression& expression) con
     }
     if (expression.kind() == ast::ExpressionKind::identifier) {
         const auto* symbol = model_.symbol_of(expression);
-        if (symbol && (symbol->kind == SymbolKind::local ||
-                       symbol->kind == SymbolKind::parameter) &&
+        if (symbol &&
+            (symbol->kind == SymbolKind::local || symbol->kind == SymbolKind::parameter) &&
             symbol->identity != 0) {
             ConditionalRefinements result;
             result.when_true.non_null.insert(symbol->identity);
@@ -928,8 +927,7 @@ SemanticAnalyzer::conditional_refinements(const ast::Expression& expression) con
         const auto left = conditional_refinements(*expression.operand(0));
         const auto right = conditional_refinements(*expression.operand(1));
         if (expression.value() == "and") {
-            const auto right_false_path =
-                sequence_refinements(left.when_true, right.when_false);
+            const auto right_false_path = sequence_refinements(left.when_true, right.when_false);
             return {sequence_refinements(left.when_true, right.when_true),
                     common_refinements(left.when_false, right_false_path)};
         }
@@ -948,12 +946,12 @@ SemanticAnalyzer::conditional_refinements(const ast::Expression& expression) con
         const auto* symbol = value && value->kind() == ast::ExpressionKind::identifier
                                  ? model_.symbol_of(*value)
                                  : nullptr;
-        if (symbol && (symbol->kind == SymbolKind::local ||
-                       symbol->kind == SymbolKind::parameter) &&
+        if (symbol &&
+            (symbol->kind == SymbolKind::local || symbol->kind == SymbolKind::parameter) &&
             symbol->identity != 0) {
             ConditionalRefinements result;
-            auto& non_null = expression.value() == "!=" ? result.when_true.non_null
-                                                         : result.when_false.non_null;
+            auto& non_null =
+                expression.value() == "!=" ? result.when_true.non_null : result.when_false.non_null;
             non_null.insert(symbol->identity);
             return result;
         }
@@ -1015,16 +1013,15 @@ Type SemanticAnalyzer::analyze_binary_tree(const ast::Expression& expression) {
             continue;
         }
         if (frame.stage == Stage::after_left) {
-            const auto logical = frame.expression->value() == "and" ||
-                                 frame.expression->value() == "or";
+            const auto logical =
+                frame.expression->value() == "and" || frame.expression->value() == "or";
             Frame completion{frame.expression, Stage::after_right, std::nullopt};
             if (logical) {
                 completion.saved_flow = flow_types_;
                 const auto left_refinements =
                     conditional_refinements(*frame.expression->operand(0));
-                flow_types_.apply(frame.expression->value() == "and"
-                                      ? left_refinements.when_true
-                                      : left_refinements.when_false);
+                flow_types_.apply(frame.expression->value() == "and" ? left_refinements.when_true
+                                                                     : left_refinements.when_false);
             }
             work.push_back(std::move(completion));
             work.push_back({frame.expression->operand(1).get(), Stage::enter, std::nullopt});
@@ -3029,7 +3026,8 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
             require_assignable(target, assigned, statement.span, "invalid assignment");
         }
         if (const auto* symbol = model_.symbol_of(*statement.condition());
-            symbol && (symbol->kind == SymbolKind::local || symbol->kind == SymbolKind::parameter)) {
+            symbol &&
+            (symbol->kind == SymbolKind::local || symbol->kind == SymbolKind::parameter)) {
             flow_types_.invalidate(symbol->identity);
         }
         return FlowResult{true, false, false, false};
@@ -3055,9 +3053,9 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
             scopes_.pop_back();
         }
         const auto else_state = flow_types_;
-        flow_types_ = FlowTypeState::join_fallthrough(
-            {body_flow.falls_through ? &body_state : nullptr,
-             else_flow.falls_through ? &else_state : nullptr});
+        flow_types_ =
+            FlowTypeState::join_fallthrough({body_flow.falls_through ? &body_state : nullptr,
+                                             else_flow.falls_through ? &else_state : nullptr});
         return FlowResult{body_flow.falls_through || else_flow.falls_through,
                           body_flow.returns || else_flow.returns,
                           body_flow.breaks || else_flow.breaks,
@@ -3088,8 +3086,9 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
             std::optional<Type> structural_type;
             bool uniform_structural_type = !branch.patterns.empty();
             for (const auto& pattern : branch.patterns) {
-                const auto candidate = pattern.kind() == ast::MatchPatternKind::array
-                                           ? std::optional<Type>{{TypeKind::array, "Array"}}
+                const auto candidate =
+                    pattern.kind() == ast::MatchPatternKind::array
+                        ? std::optional<Type>{{TypeKind::array, "Array"}}
                     : pattern.kind() == ast::MatchPatternKind::dictionary
                         ? std::optional<Type>{{TypeKind::dictionary, "Dictionary"}}
                         : std::nullopt;
