@@ -977,11 +977,23 @@ Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expressi
                                    conversion == ConversionKind::implicit;
             }
         }
+        const bool deterministic_runtime_failure =
+            valid_conversion && !is_explicit_runtime_constructible(right, left);
+        if (deterministic_runtime_failure) {
+            diagnostics_.error(
+                "GDS4156",
+                "cast is accepted by Godot's analyzer but has no runtime constructor from " +
+                    left.display_name() + " to " + right.display_name(),
+                expression.span);
+            valid_conversion = false;
+        }
         if (!valid_conversion) {
-            diagnostics_.error("GDS4075",
-                               "invalid cast: cannot convert " + left.display_name() + " to " +
-                                   right.display_name(),
-                               expression.span);
+            if (!deterministic_runtime_failure) {
+                diagnostics_.error("GDS4075",
+                                   "invalid cast: cannot convert " + left.display_name() + " to " +
+                                       right.display_name(),
+                                   expression.span);
+            }
         }
         return right;
     }
