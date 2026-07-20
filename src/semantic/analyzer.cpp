@@ -1,6 +1,7 @@
 #include "gdpp/semantic/analyzer.hpp"
 
 #include "gdpp/frontend/constant_evaluator.hpp"
+#include "gdpp/semantic/conversion.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -402,61 +403,17 @@ const Symbol* SemanticAnalyzer::resolve(const std::string& name) const noexcept 
 
 void SemanticAnalyzer::require_assignable(const Type& target, const Type& source, SourceSpan span,
                                           const std::string& context) {
-    const bool inherited_object = target.kind == TypeKind::object &&
-                                  source.kind == TypeKind::object &&
-                                  api_.inherits(source.name, target.name);
-    const bool inherited_script = script_symbols_ && target.kind == TypeKind::object &&
-                                  source.kind == TypeKind::object &&
-                                  script_symbols_->inherits(source.name, target.name);
-    const auto* source_script = script_symbols_ && source.kind == TypeKind::object
-                                    ? script_symbols_->find_class(source.name)
-                                    : nullptr;
-    if (!source_script && current_script_ && source.kind == TypeKind::object &&
-        source.name == current_script_->script_name) {
-        source_script = current_script_;
-    }
-    const bool script_inherits_engine = source_script && target.kind == TypeKind::object &&
-                                        api_.inherits(source_script->godot_base_type, target.name);
-    const bool current_script_inherits = source_script && script_symbols_ &&
-                                         target.kind == TypeKind::object &&
-                                         script_symbols_->inherits(*source_script, target.name);
-    const auto* target_script = script_symbols_ && target.kind == TypeKind::object
-                                    ? script_symbols_->find_class(target.name)
-                                    : nullptr;
-    const bool safe_object_downcast =
-        target.kind == TypeKind::object && source.kind == TypeKind::object &&
-        (api_.inherits(target.name, source.name) ||
-         (target_script && api_.inherits(target_script->godot_base_type, source.name)));
-    const bool checked_script_downcast = script_symbols_ && target.kind == TypeKind::object &&
-                                         source.kind == TypeKind::object &&
-                                         script_symbols_->inherits(target.name, source.name);
+    const bool compatible_objects = target.kind == TypeKind::object &&
+                                    source.kind == TypeKind::object &&
+                                    (object_type_inherits(source, target) ||
+                                     object_type_inherits(target, source));
     const bool same_project_enum =
         current_script_ && target.kind == TypeKind::enumeration &&
         source.kind == TypeKind::enumeration &&
         (target.name == current_script_->script_name + "." + source.name ||
          source.name == current_script_->script_name + "." + target.name);
-    bool constructor_conversion = false;
-    if (target.kind == TypeKind::builtin) {
-        for (std::size_t occurrence = 0;; ++occurrence) {
-            const auto* constructor = api_.find_constructor(target.name, 1, occurrence);
-            if (!constructor)
-                break;
-            const auto* argument = api_.argument(*constructor, 0);
-            if (argument && is_assignable(type_from_godot_api(argument->type), source)) {
-                constructor_conversion = true;
-                break;
-            }
-        }
-    }
-    const bool packed_color_conversion = target.kind == TypeKind::builtin &&
-                                         target.name == "Color" && source.kind == TypeKind::integer;
-    const bool object_rid_conversion = target.kind == TypeKind::builtin && target.name == "RID" &&
-                                       source.kind == TypeKind::object &&
-                                       api_.find_method(source.name, "get_rid");
-    if (!is_assignable(target, source) && !inherited_object && !inherited_script &&
-        !script_inherits_engine && !current_script_inherits && !safe_object_downcast &&
-        !checked_script_downcast && !same_project_enum && !constructor_conversion &&
-        !packed_color_conversion && !object_rid_conversion) {
+    if (!is_implicitly_convertible(target, source) && !compatible_objects &&
+        !same_project_enum) {
         diagnostics_.error("GDS4002",
                            context + ": cannot assign " + source.display_name() + " to " +
                                target.display_name(),
@@ -745,35 +702,52 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
     return type;
 }
 
+bool SemanticAnalyzer::object_type_inherits(const Type& derived, const Type& base) const noexcept {
+    if (derived.kind != TypeKind::object || base.kind != TypeKind::object)
+        return false;
+    if (derived.name == base.name || base.name == "Object")
+        return true;
+    if (api_.find_class(derived.name) && api_.find_class(base.name))
+        return api_.inherits(derived.name, base.name);
+
+    if (script_symbols_) {
+        const auto* derived_script = script_symbols_->find_class(derived.name);
+        const auto* base_script = script_symbols_->find_class(base.name);
+        if (!derived_script && current_script_ && derived.name == current_script_->script_name)
+            derived_script = current_script_;
+        if (derived_script && base_script)
+            return script_symbols_->inherits(*derived_script, base.name);
+        if (derived_script && api_.find_class(base.name))
+            return api_.inherits(derived_script->godot_base_type, base.name);
+
+        const auto* derived_external = script_symbols_->find_external(derived.name);
+        const auto* base_external = script_symbols_->find_external(base.name);
+        if (derived_external && api_.find_class(base.name))
+            return api_.inherits(derived_external->godot_base_type, base.name);
+        if (derived_script && base_external)
+            return derived_script->godot_base_type == base_external->name;
+    }
+
+    const auto* derived_inner = find_inner_class(derived.name);
+    const auto* base_inner = find_inner_class(base.name);
+    if (derived_inner && base_inner) {
+        for (auto* current = derived_inner; current; current = inner_base_of(*current)) {
+            if (current == base_inner)
+                return true;
+        }
+    }
+    if (derived_inner && api_.find_class(base.name))
+        return api_.inherits(derived_inner->godot_base_type, base.name);
+    return false;
+}
+
 bool SemanticAnalyzer::override_type_accepts(const Type& target,
                                              const Type& source) const noexcept {
     if (target == source || target.is_dynamic() || source.is_dynamic())
         return true;
     if (target.kind != TypeKind::object || source.kind != TypeKind::object)
-        return is_assignable(target, source);
-    if (target.name == "Object")
-        return true;
-    if (api_.find_class(target.name) && api_.find_class(source.name))
-        return api_.inherits(source.name, target.name);
-    if (script_symbols_) {
-        const auto* source_script = script_symbols_->find_class(source.name);
-        const auto* target_script = script_symbols_->find_class(target.name);
-        if (source_script && target_script)
-            return script_symbols_->inherits(*source_script, target.name);
-        if (source_script && api_.find_class(target.name))
-            return api_.inherits(source_script->godot_base_type, target.name);
-    }
-    const auto* source_inner = find_inner_class(source.name);
-    const auto* target_inner = find_inner_class(target.name);
-    if (source_inner && target_inner) {
-        for (auto* current = source_inner; current; current = inner_base_of(*current)) {
-            if (current == target_inner)
-                return true;
-        }
-    }
-    if (source_inner && api_.find_class(target.name))
-        return api_.inherits(source_inner->godot_base_type, target.name);
-    return false;
+        return is_implicitly_convertible(target, source);
+    return object_type_inherits(source, target);
 }
 
 Type SemanticAnalyzer::container_element_type(const Type& container, SourceSpan span) {
