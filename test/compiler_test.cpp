@@ -1685,17 +1685,63 @@ TEST_CASE("compiler infers native Godot virtual signatures and escapes C++ keywo
 
     REQUIRE(result.success);
     REQUIRE(result.unit.header.find("virtual void _ready() override") != std::string::npos);
-    REQUIRE(result.unit.header.find("virtual void _process(double delta) override") !=
+    REQUIRE(
+        result.unit.header.find("virtual void _process(double _gdpp_engine_argument_0) override") !=
+        std::string::npos);
+    REQUIRE(result.unit.header.find("virtual void _input(const godot::Ref<godot::InputEvent>& "
+                                    "_gdpp_engine_argument_0) override") != std::string::npos);
+    REQUIRE(result.unit.header.find("virtual void _gdpp_virtual_impl__process(double delta)") !=
             std::string::npos);
-    REQUIRE(result.unit.header.find(
-                "virtual void _input(const godot::Ref<godot::InputEvent>& event) override") !=
-            std::string::npos);
+    REQUIRE(result.unit.source.find("this->_gdpp_virtual_impl__process(") != std::string::npos);
     REQUIRE(result.unit.header.find("_gdpp_id_7468726f77(godot::Variant value)") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("D_METHOD(\"_ready\"") == std::string::npos);
     REQUIRE(result.unit.source.find("D_METHOD(\"_process\"") == std::string::npos);
     REQUIRE(result.unit.source.find("D_METHOD(\"_input\"") == std::string::npos);
     REQUIRE(result.unit.source.find("D_METHOD(\"throw\"") != std::string::npos);
+}
+
+TEST_CASE("compiler adapts flexible GDScript virtual signatures to the exact engine ABI") {
+    const gdpp::Compiler compiler;
+    const auto flexible = compiler.compile(
+        "flexible_virtual.gd", "extends Node\n"
+                               "func _process(delta: Variant = 0.0, context = null) -> void:\n"
+                               "    if context == null:\n"
+                               "        print(delta)\n"
+                               "func invoke() -> void:\n"
+                               "    _process()\n");
+    const auto scalar_abi =
+        compiler.compile("scalar_virtual.gd", "extends Mesh\n"
+                                              "func _surface_get_format(index: int) -> int:\n"
+                                              "    return index\n");
+    const auto raw_pointer = compiler.compile(
+        "raw_pointer_virtual.gd", "extends AudioEffectInstance\n"
+                                  "func _process(source, destination, frame_count) -> void:\n"
+                                  "    pass\n");
+
+    REQUIRE(flexible.success);
+    REQUIRE(flexible.unit.header.find(
+                "virtual void _process(double _gdpp_engine_argument_0) override") !=
+            std::string::npos);
+    REQUIRE(flexible.unit.header.find(
+                "virtual void _gdpp_virtual_impl__process(godot::Variant "
+                "_gdpp_argument_delta = gdpp::runtime::default_argument(), godot::Variant "
+                "_gdpp_argument_context = gdpp::runtime::default_argument())") !=
+            std::string::npos);
+    REQUIRE(flexible.unit.source.find(
+                "this->_gdpp_virtual_impl__process(godot::Variant(_gdpp_engine_argument_0), "
+                "gdpp::runtime::default_argument())") != std::string::npos);
+    REQUIRE(flexible.unit.source.find("_gdpp_virtual_impl__process(") != std::string::npos);
+
+    REQUIRE(scalar_abi.success);
+    REQUIRE(scalar_abi.unit.header.find(
+                "virtual uint32_t _surface_get_format(int32_t _gdpp_engine_argument_0) const "
+                "override") != std::string::npos);
+    REQUIRE(scalar_abi.unit.source.find("return static_cast<uint32_t>(") != std::string::npos);
+
+    REQUIRE(!raw_pointer.success);
+    REQUIRE(std::any_of(raw_pointer.diagnostics.begin(), raw_pointer.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4118"; }));
 }
 
 TEST_CASE("compiler emits injective ASCII names for Unicode and C++ identifiers") {
