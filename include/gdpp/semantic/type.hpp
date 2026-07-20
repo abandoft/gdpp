@@ -46,6 +46,51 @@ enum class TruthinessKind {
     object_validity,
 };
 
+// A dependency-free mirror of Godot 4's stable Variant::Type domain. Keeping it in the compiler
+// core lets semantic conversion decisions and generated runtime conversions share one vocabulary
+// without linking the compiler executable to godot-cpp.
+enum class VariantType {
+    nil,
+    boolean,
+    integer,
+    floating,
+    string,
+    vector2,
+    vector2i,
+    rect2,
+    rect2i,
+    vector3,
+    vector3i,
+    transform2d,
+    vector4,
+    vector4i,
+    plane,
+    quaternion,
+    aabb,
+    basis,
+    transform3d,
+    projection,
+    color,
+    string_name,
+    node_path,
+    rid,
+    object,
+    callable,
+    signal,
+    dictionary,
+    array,
+    packed_byte_array,
+    packed_int32_array,
+    packed_int64_array,
+    packed_float32_array,
+    packed_float64_array,
+    packed_string_array,
+    packed_vector2_array,
+    packed_vector3_array,
+    packed_color_array,
+    packed_vector4_array,
+};
+
 struct Type {
     TypeKind kind{TypeKind::unknown};
     std::string name;
@@ -77,6 +122,8 @@ struct ContainerTypeDescriptor {
 };
 
 [[nodiscard]] Type type_from_annotation(const std::string& annotation);
+[[nodiscard]] std::optional<VariantType> variant_type_of(const Type& type) noexcept;
+[[nodiscard]] std::string_view variant_type_name(VariantType type) noexcept;
 [[nodiscard]] Type packed_array_element_type(const Type& packed_array);
 [[nodiscard]] std::optional<std::vector<std::string>>
 generic_type_arguments(std::string_view type_name, std::string_view container_name,

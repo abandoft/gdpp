@@ -174,6 +174,157 @@ Type type_from_annotation(const std::string& annotation) {
     return {TypeKind::object, annotation};
 }
 
+std::optional<VariantType> variant_type_of(const Type& type) noexcept {
+    switch (type.kind) {
+    case TypeKind::nil:
+        return VariantType::nil;
+    case TypeKind::boolean:
+        return VariantType::boolean;
+    case TypeKind::integer:
+    case TypeKind::enumeration:
+        return VariantType::integer;
+    case TypeKind::floating:
+        return VariantType::floating;
+    case TypeKind::string:
+        return VariantType::string;
+    case TypeKind::string_name:
+        return VariantType::string_name;
+    case TypeKind::array:
+        return VariantType::array;
+    case TypeKind::dictionary:
+        return VariantType::dictionary;
+    case TypeKind::object:
+    case TypeKind::script_resource:
+        return VariantType::object;
+    case TypeKind::builtin:
+        break;
+    case TypeKind::unknown:
+    case TypeKind::variant:
+    case TypeKind::void_type:
+        return std::nullopt;
+    }
+
+    static const std::unordered_map<std::string, VariantType> builtin_types{
+        {"Vector2", VariantType::vector2},
+        {"Vector2i", VariantType::vector2i},
+        {"Rect2", VariantType::rect2},
+        {"Rect2i", VariantType::rect2i},
+        {"Vector3", VariantType::vector3},
+        {"Vector3i", VariantType::vector3i},
+        {"Transform2D", VariantType::transform2d},
+        {"Vector4", VariantType::vector4},
+        {"Vector4i", VariantType::vector4i},
+        {"Plane", VariantType::plane},
+        {"Quaternion", VariantType::quaternion},
+        {"AABB", VariantType::aabb},
+        {"Basis", VariantType::basis},
+        {"Transform3D", VariantType::transform3d},
+        {"Projection", VariantType::projection},
+        {"Color", VariantType::color},
+        {"NodePath", VariantType::node_path},
+        {"RID", VariantType::rid},
+        {"Callable", VariantType::callable},
+        {"Signal", VariantType::signal},
+        {"PackedByteArray", VariantType::packed_byte_array},
+        {"PackedInt32Array", VariantType::packed_int32_array},
+        {"PackedInt64Array", VariantType::packed_int64_array},
+        {"PackedFloat32Array", VariantType::packed_float32_array},
+        {"PackedFloat64Array", VariantType::packed_float64_array},
+        {"PackedStringArray", VariantType::packed_string_array},
+        {"PackedVector2Array", VariantType::packed_vector2_array},
+        {"PackedVector3Array", VariantType::packed_vector3_array},
+        {"PackedColorArray", VariantType::packed_color_array},
+        {"PackedVector4Array", VariantType::packed_vector4_array},
+    };
+    const auto found = builtin_types.find(type.name);
+    return found == builtin_types.end() ? std::nullopt
+                                        : std::optional<VariantType>{found->second};
+}
+
+std::string_view variant_type_name(const VariantType type) noexcept {
+    switch (type) {
+    case VariantType::nil:
+        return "Nil";
+    case VariantType::boolean:
+        return "bool";
+    case VariantType::integer:
+        return "int";
+    case VariantType::floating:
+        return "float";
+    case VariantType::string:
+        return "String";
+    case VariantType::vector2:
+        return "Vector2";
+    case VariantType::vector2i:
+        return "Vector2i";
+    case VariantType::rect2:
+        return "Rect2";
+    case VariantType::rect2i:
+        return "Rect2i";
+    case VariantType::vector3:
+        return "Vector3";
+    case VariantType::vector3i:
+        return "Vector3i";
+    case VariantType::transform2d:
+        return "Transform2D";
+    case VariantType::vector4:
+        return "Vector4";
+    case VariantType::vector4i:
+        return "Vector4i";
+    case VariantType::plane:
+        return "Plane";
+    case VariantType::quaternion:
+        return "Quaternion";
+    case VariantType::aabb:
+        return "AABB";
+    case VariantType::basis:
+        return "Basis";
+    case VariantType::transform3d:
+        return "Transform3D";
+    case VariantType::projection:
+        return "Projection";
+    case VariantType::color:
+        return "Color";
+    case VariantType::string_name:
+        return "StringName";
+    case VariantType::node_path:
+        return "NodePath";
+    case VariantType::rid:
+        return "RID";
+    case VariantType::object:
+        return "Object";
+    case VariantType::callable:
+        return "Callable";
+    case VariantType::signal:
+        return "Signal";
+    case VariantType::dictionary:
+        return "Dictionary";
+    case VariantType::array:
+        return "Array";
+    case VariantType::packed_byte_array:
+        return "PackedByteArray";
+    case VariantType::packed_int32_array:
+        return "PackedInt32Array";
+    case VariantType::packed_int64_array:
+        return "PackedInt64Array";
+    case VariantType::packed_float32_array:
+        return "PackedFloat32Array";
+    case VariantType::packed_float64_array:
+        return "PackedFloat64Array";
+    case VariantType::packed_string_array:
+        return "PackedStringArray";
+    case VariantType::packed_vector2_array:
+        return "PackedVector2Array";
+    case VariantType::packed_vector3_array:
+        return "PackedVector3Array";
+    case VariantType::packed_color_array:
+        return "PackedColorArray";
+    case VariantType::packed_vector4_array:
+        return "PackedVector4Array";
+    }
+    return "Unknown";
+}
+
 Type packed_array_element_type(const Type& packed_array) {
     static const std::unordered_map<std::string, Type> elements{
         {"PackedByteArray", {TypeKind::integer, "int"}},
