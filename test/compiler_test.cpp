@@ -1405,6 +1405,7 @@ TEST_CASE("compiler applies zero-value truthiness to every Godot value family") 
         "    results.append(not [])\n"
         "    results.append(not PackedByteArray())\n"
         "    results.append(not node)\n"
+        "    results.append(not self)\n"
         "    match 1:\n"
         "        1 when \"enabled\": results.append(true)\n"
         "    if dynamic and [1]:\n"
@@ -1436,6 +1437,7 @@ TEST_CASE("compiler applies zero-value truthiness to every Godot value family") 
     REQUIRE(valid.success);
     REQUIRE(booleanize_count() >= std::size_t{14});
     REQUIRE(valid.unit.source.find("(node != nullptr)") != std::string::npos);
+    REQUIRE(valid.unit.source.find("(this != nullptr)") != std::string::npos);
     REQUIRE(!invalid.success);
     REQUIRE_EQ(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
                              [](const auto& diagnostic) {
