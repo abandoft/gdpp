@@ -4016,11 +4016,11 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
         declare({SymbolKind::function, function.name, type, function.span, true});
     }
     const auto analyze_internal_variable = [&](const ast::VariableDeclaration& variable) {
-        const auto saved_instance_context = instance_context_available_;
+        const auto saved_variable_instance_context = instance_context_available_;
         instance_context_available_ = !variable.is_static;
         const auto initializer =
             variable.initializer ? analyze_expression(*variable.initializer) : variant_type;
-        instance_context_available_ = saved_instance_context;
+        instance_context_available_ = saved_variable_instance_context;
         Type type = variable.type ? type_from_name(*variable.type, variable.span) : variant_type;
         if (variable.infer_type || (variable.is_constant && !variable.type)) {
             type = initializer;
