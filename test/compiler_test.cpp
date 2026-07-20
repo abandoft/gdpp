@@ -146,7 +146,7 @@ TEST_CASE("compiler applies warning directives and structured await to property 
     REQUIRE(result.unit.source.find("await_signal") != std::string::npos);
 }
 
-TEST_CASE("compiler converts packed arrays to compatible typed Array parameters") {
+TEST_CASE("compiler rejects packed arrays at incompatible Godot typed storage boundaries") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("packed_array_argument.gd",
                                          "func consume(values: Array[String]) -> void:\n"
@@ -154,10 +154,9 @@ TEST_CASE("compiler converts packed arrays to compatible typed Array parameters"
                                          "func forward(values: PackedStringArray) -> void:\n"
                                          "    consume(values)\n");
 
-    REQUIRE(result.success);
-    REQUIRE(result.unit.source.find(
-                "godot::TypedArray<godot::String>(godot::Variant(") !=
-            std::string::npos);
+    REQUIRE(!result.success);
+    REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4155"; }));
 }
 
 TEST_CASE("semantic analysis validates typed container arguments eagerly") {
@@ -2230,6 +2229,27 @@ TEST_CASE("compiler applies strict conversion rules to reduced constant casts") 
                std::ptrdiff_t{3});
 }
 
+TEST_CASE("compiler diagnoses every statically doomed typed container storage path") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "typed_storage_failures.gd",
+        "func reject(plain: Array, packed: PackedInt64Array, "
+        "dictionary: Dictionary, integers: Array[int]) -> void:\n"
+        "    var from_plain: Array[int] = plain\n"
+        "    var from_packed: Array[int] = packed\n"
+        "    var from_dictionary: Dictionary[String, int] = dictionary\n"
+        "    var from_cast: Array[float] = integers as Array[float]\n"
+        "    var inferred := integers as Array[float]\n"
+        "    print(from_plain, from_packed, from_dictionary, from_cast, inferred)\n");
+
+    REQUIRE(!result.success);
+    REQUIRE_EQ(std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                             [](const auto& diagnostic) {
+                                 return diagnostic.code == "GDS4155";
+                             }),
+               std::ptrdiff_t{5});
+}
+
 TEST_CASE("compiler infers native Godot virtual signatures and escapes C++ keywords") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("virtuals.gd", "extends Node\n"
@@ -3170,7 +3190,7 @@ TEST_CASE("compiler rejects invalid type-test operands transactionally") {
     REQUIRE(invalid_value.unit.source.empty());
     bool found_target_diagnostic = false;
     for (const auto& diagnostic : invalid_target.diagnostics)
-        found_target_diagnostic = found_target_diagnostic || diagnostic.code == "GDS4067";
+        found_target_diagnostic = found_target_diagnostic || diagnostic.code == "GDS2001";
     bool found_value_diagnostic = false;
     for (const auto& diagnostic : invalid_value.diagnostics)
         found_value_diagnostic = found_value_diagnostic || diagnostic.code == "GDS4068";
