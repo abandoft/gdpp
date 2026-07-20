@@ -195,6 +195,7 @@ def main() -> None:
                 required,
                 len(arguments_list),
                 is_vararg,
+                function.get("category") == "math",
                 tuple(
                     (
                         argument.get("name", ""),
@@ -295,17 +296,17 @@ def main() -> None:
     lines.append("};")
     lines.append(f"inline constexpr std::size_t utility_function_count = {len(utility_functions)};")
     lines.append("inline constexpr GodotUtilityFunctionRecord utility_functions[] = {")
-    for name, result, required, maximum, vararg, args in utility_functions:
+    for name, result, required, maximum, vararg, is_constant, args in utility_functions:
         first_argument = len(generated_arguments)
         generated_arguments.extend(args)
         lines.append(
             "    {"
             f"{cpp_string(name)}, {cpp_string(result)}, {required}, {maximum}, "
-            f"{first_argument}, {str(vararg).lower()}"
+            f"{first_argument}, {str(vararg).lower()}, {str(is_constant).lower()}"
             "},"
         )
     if not utility_functions:
-        lines.append('    {"", "void", 0, 0, 0, false},')
+        lines.append('    {"", "void", 0, 0, 0, false, false},')
     lines.append("};")
     lines.append("inline constexpr GodotArgumentRecord arguments[] = {")
     for name, type_name, meta, has_default in generated_arguments:

@@ -77,6 +77,7 @@ struct GodotUtilityFunctionRecord {
     std::uint16_t maximum_arguments;
     std::uint32_t first_argument;
     bool is_vararg;
+    bool is_constant;
 };
 
 struct GodotGlobalConstantRecord {
