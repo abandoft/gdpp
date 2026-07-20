@@ -77,6 +77,7 @@ enum class ResolutionKind {
 struct Expression {
     ExpressionKind kind{ExpressionKind::literal};
     Type type;
+    Type storage_type;
     SourceSpan span{};
     std::string value;
     LiteralKind literal_kind{LiteralKind::none};

@@ -414,6 +414,7 @@ ir::ExpressionPtr IrLowerer::lower_expression(const ast::Expression& expression)
     lowered->kind = lower_expression_kind(expression.kind());
     lowered->literal_kind = lower_literal_kind(expression.literal_kind());
     lowered->type = semantic_.type_of(expression);
+    lowered->storage_type = semantic_.storage_type_of(expression);
     lowered->span = expression.span;
     lowered->value = expression.value();
     lowered->coroutine_call = semantic_.is_coroutine_call(expression);

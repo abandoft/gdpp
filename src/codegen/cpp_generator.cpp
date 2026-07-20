@@ -547,6 +547,7 @@ void collect_header_expression_dependencies(const ir::Expression& expression,
 void collect_expression_types(const ir::Expression& expression, NativeTypeIncludes& includes,
                               const GodotApi& api, const ScriptSymbolTable* script_symbols) {
     collect_type(expression.type, includes, api, script_symbols);
+    collect_type(expression.storage_type, includes, api, script_symbols);
     if ((expression.resolution == ir::ResolutionKind::script_autoload ||
          expression.resolution == ir::ResolutionKind::script_type) &&
         !expression.resolved_owner.empty()) {
