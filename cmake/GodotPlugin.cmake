@@ -456,6 +456,11 @@ configure_file(
     COPYONLY
 )
 configure_file(
+    "${CMAKE_SOURCE_DIR}/test/native_project/editor_tool_smoke.gd"
+    "${CMAKE_BINARY_DIR}/editor_tool_smoke.gd"
+    COPYONLY
+)
+configure_file(
     "${CMAKE_SOURCE_DIR}/test/native_project/extension_list.cfg"
     "${GDPP_PROJECT_SMOKE_ROOT}/.godot/extension_list.cfg"
     COPYONLY
@@ -599,6 +604,35 @@ if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
         PROPERTIES
             PASS_REGULAR_EXPRESSION "GDPP_NATIVE_PROJECT_OK"
             FIXTURES_REQUIRED "gdpp_native_extension_registry;gdpp_clean_extension_registry"
+            TIMEOUT 120
+    )
+    add_test(
+        NAME gdpp.godot.prepare_native_project_editor
+        COMMAND "${CMAKE_COMMAND}"
+                -DGDPP_PROJECT_DIRECTORY=${GDPP_EXAMPLE_DIRECTORY}
+                -DGDPP_COMPILER_DESCRIPTOR=res://addons/gdpp/gdpp.gdextension
+                -DGDPP_INCLUDE_PROJECT_EXTENSION=ON
+                -P "${CMAKE_SOURCE_DIR}/test/native_project/write_extension_registry.cmake"
+    )
+    set_tests_properties(
+        gdpp.godot.prepare_native_project_editor
+        PROPERTIES
+            DEPENDS gdpp.godot.native_project
+            FIXTURES_REQUIRED "gdpp_native_extension_registry;gdpp_clean_extension_registry"
+            FIXTURES_SETUP gdpp_native_editor_extension_registry
+    )
+    add_test(
+        NAME gdpp.godot.native_project_editor
+        COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --editor
+                --path "${GDPP_PROJECT_SMOKE_ROOT}"
+                --script "${CMAKE_BINARY_DIR}/editor_tool_smoke.gd"
+    )
+    set_tests_properties(
+        gdpp.godot.native_project_editor
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "GDPP_TOOL_EDITOR_OK"
+            FIXTURES_REQUIRED
+                "gdpp_native_editor_extension_registry;gdpp_clean_extension_registry"
             TIMEOUT 120
     )
     if("4.7" IN_LIST GDPP_PACKAGE_GODOT_VERSIONS)
