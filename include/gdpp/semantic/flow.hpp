@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace gdpp {
@@ -12,9 +13,14 @@ namespace gdpp {
 using FlowSymbolId = std::uint64_t;
 using TypeRefinements = std::unordered_map<FlowSymbolId, Type>;
 
+struct FlowRefinements {
+    TypeRefinements types;
+    std::unordered_set<FlowSymbolId> non_null;
+};
+
 struct ConditionalRefinements {
-    TypeRefinements when_true;
-    TypeRefinements when_false;
+    FlowRefinements when_true;
+    FlowRefinements when_false;
 };
 
 // A flow state contains only facts that are stronger than a symbol's declared storage type.
@@ -23,12 +29,17 @@ struct ConditionalRefinements {
 class FlowTypeState final {
   public:
     [[nodiscard]] const Type* find(FlowSymbolId symbol) const noexcept;
+    [[nodiscard]] bool is_non_null(FlowSymbolId symbol) const noexcept;
     void refine(FlowSymbolId symbol, Type type);
+    void mark_non_null(FlowSymbolId symbol);
     void invalidate(FlowSymbolId symbol) noexcept;
-    void apply(const TypeRefinements& refinements);
+    void apply(const FlowRefinements& refinements);
     void clear() noexcept;
 
     [[nodiscard]] const TypeRefinements& refinements() const noexcept { return refinements_; }
+    [[nodiscard]] const std::unordered_set<FlowSymbolId>& non_null_symbols() const noexcept {
+        return non_null_symbols_;
+    }
 
     [[nodiscard]] static FlowTypeState
     join_fallthrough(std::initializer_list<const FlowTypeState*> predecessors);
@@ -37,11 +48,12 @@ class FlowTypeState final {
 
   private:
     TypeRefinements refinements_;
+    std::unordered_set<FlowSymbolId> non_null_symbols_;
 };
 
-[[nodiscard]] TypeRefinements sequence_refinements(const TypeRefinements& first,
-                                                   const TypeRefinements& second);
-[[nodiscard]] TypeRefinements common_refinements(const TypeRefinements& first,
-                                                 const TypeRefinements& second);
+[[nodiscard]] FlowRefinements sequence_refinements(const FlowRefinements& first,
+                                                   const FlowRefinements& second);
+[[nodiscard]] FlowRefinements common_refinements(const FlowRefinements& first,
+                                                 const FlowRefinements& second);
 
 } // namespace gdpp

@@ -947,7 +947,8 @@ SemanticAnalyzer::conditional_refinements(const ast::Expression& expression) con
         return {};
     ConditionalRefinements result;
     auto& outcome = expression.value() == "is" ? result.when_true : result.when_false;
-    outcome.emplace(symbol->identity, *refined);
+    outcome.types.emplace(symbol->identity, *refined);
+    outcome.non_null.insert(symbol->identity);
     return result;
 }
 
