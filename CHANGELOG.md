@@ -1,3 +1,13 @@
+## 1.6.0
+
+- Completed the Godot Variant type domain, nullability model, and zero-value truthiness semantics across semantic analysis, typed HIR, generated C++17, and the native runtime.
+- Centralized strict assignment, explicit conversion, analyzer compatibility, runtime constructibility, and native storage rules for numeric, string, built-in value, packed array, object, Ref, RID, and container types.
+- Added parameterized `as` targets for `Array[T]` and `Dictionary[K,V]`, strict constant-cast validation, guarded runtime casts, and compile-time rejection of conversions that the GDScript analyzer accepts but its VM cannot construct or store.
+- Enforced invariant typed-container storage with exact runtime element, key, value, object-class, and script metadata instead of relying on godot-cpp converting constructors.
+- Added stable diagnostics for impossible constant casts, typed-container storage violations, deterministic runtime cast failures, and values such as Object-backed RID expressions that native GDExtension storage cannot preserve.
+- Expanded generated-code compilation and real Godot 4.7.1 GDScript/AOT differential coverage for all truthiness categories, built-in conversions, packed arrays, typed-container metadata recovery, String conversion divergence, and RID storage behavior.
+- Advanced the native runtime ABI to 5 for the new guarded conversion and typed-storage contract.
+
 ## 1.5.0
 
 - Added end-to-end flow-sensitive typing for `is`/`is not`, null and truthiness checks, short-circuit expressions, `if`/`while`, conditional expressions, post-dominating guards, structural `match`, and guarded bindings.
