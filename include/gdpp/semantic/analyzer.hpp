@@ -206,6 +206,8 @@ class SemanticAnalyzer final {
     void analyze_function(const ast::FunctionDeclaration& function);
     void analyze_rpc_annotations(const ast::FunctionDeclaration& function);
     void analyze_class(const ast::ClassDeclaration& declaration);
+    void validate_script_abstract_contract(const ast::Script& script);
+    void validate_inner_abstract_contract(const ast::ClassDeclaration& declaration);
     void analyze_lambda(const ast::LambdaExpression& expression);
     void analyze_enums(const std::vector<ast::EnumDeclaration>& declarations);
     void analyze_property_accessors(const ast::VariableDeclaration& variable, const Type& type);

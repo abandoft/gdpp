@@ -3922,13 +3922,20 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
 }
 
 void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
+    const auto abstract_annotations = static_cast<std::size_t>(std::count_if(
+        declaration.annotations.begin(), declaration.annotations.end(),
+        [](const ast::Annotation& annotation) { return annotation.name == "abstract"; }));
     for (const auto& annotation : declaration.annotations) {
-        if (annotation.name == "warning_ignore")
+        if (annotation.name == "warning_ignore" || annotation.name == "abstract")
             continue;
         diagnostics_.error("GDS4113",
                            "internal class annotation '@" + annotation.name +
                                "' is recognized but its lowering is not implemented",
                            annotation.span);
+    }
+    if (abstract_annotations > 1) {
+        diagnostics_.error("GDS4147", "@abstract can only be used once per class",
+                           declaration.span);
     }
     auto saved_scopes = std::move(scopes_);
     auto saved_enum_types = std::move(enum_types_);
@@ -3968,6 +3975,7 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     current_inner_base_ = current_inner_class_ ? inner_base_of(*current_inner_class_) : nullptr;
     base_type_ = current_inner_base_ ? current_inner_base_->godot_base_type
                                      : declaration.base_type.value_or("RefCounted");
+    validate_inner_abstract_contract(declaration);
 
     if (!current_inner_base_ && !api_.find_class(base_type_)) {
         diagnostics_.error("GDS4099",
@@ -4123,6 +4131,90 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     loop_depth_ = saved_loop_depth;
     current_inner_class_ = saved_inner;
     current_inner_base_ = saved_inner_base;
+}
+
+void SemanticAnalyzer::validate_script_abstract_contract(const ast::Script& script) {
+    const bool class_is_abstract = std::any_of(
+        script.annotations.begin(), script.annotations.end(),
+        [](const ast::Annotation& annotation) { return annotation.name == "abstract"; });
+    if (class_is_abstract)
+        return;
+
+    std::unordered_set<std::string> implemented;
+    for (const auto& function : script.functions) {
+        if (function.is_abstract && !function.is_static) {
+            diagnostics_.error(
+                "GDS4149",
+                "concrete script class declares abstract method '" + function.name +
+                    "'; mark the class @abstract or implement the method",
+                function.span);
+        } else {
+            implemented.insert(function.name);
+        }
+    }
+
+    if (!script_symbols_ || !current_script_)
+        return;
+    for (auto* base = script_symbols_->base_of(*current_script_); base && base->is_abstract;
+         base = script_symbols_->base_of(*base)) {
+        for (const auto& member : base->members) {
+            if (member.kind != ScriptMemberKind::function)
+                continue;
+            if (member.is_abstract && implemented.find(member.name) == implemented.end()) {
+                diagnostics_.error(
+                    "GDS4149",
+                    "concrete script class must implement inherited abstract method '" +
+                        base->script_name + "." + member.name + "' or be marked @abstract",
+                    script.span);
+            } else if (!member.is_abstract) {
+                implemented.insert(member.name);
+            }
+        }
+    }
+}
+
+void SemanticAnalyzer::validate_inner_abstract_contract(
+    const ast::ClassDeclaration& declaration) {
+    const bool class_is_abstract = std::count_if(
+                                       declaration.annotations.begin(),
+                                       declaration.annotations.end(),
+                                       [](const ast::Annotation& annotation) {
+                                           return annotation.name == "abstract";
+                                       }) == 1;
+    if (class_is_abstract)
+        return;
+
+    std::unordered_set<std::string> implemented;
+    for (const auto& function : declaration.functions) {
+        if (function.is_abstract && !function.is_static) {
+            diagnostics_.error(
+                "GDS4149",
+                "concrete internal class '" + declaration.name +
+                    "' declares abstract method '" + function.name +
+                    "'; mark the class @abstract or implement the method",
+                function.span);
+        } else {
+            implemented.insert(function.name);
+        }
+    }
+
+    for (auto* base = current_inner_base_; base && base->is_abstract;
+         base = inner_base_of(*base)) {
+        for (const auto& member : base->members) {
+            if (member.kind != ScriptMemberKind::function)
+                continue;
+            if (member.is_abstract && implemented.find(member.name) == implemented.end()) {
+                diagnostics_.error(
+                    "GDS4149",
+                    "concrete internal class '" + declaration.name +
+                        "' must implement inherited abstract method '" + base->name + "." +
+                        member.name + "' or be marked @abstract",
+                    declaration.span);
+            } else if (!member.is_abstract) {
+                implemented.insert(member.name);
+            }
+        }
+    }
 }
 
 void SemanticAnalyzer::analyze_property_accessors(const ast::VariableDeclaration& variable,
@@ -4640,6 +4732,9 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
             ScriptInnerClassSymbol symbol;
             symbol.name = qualified;
             symbol.godot_base_type = declaration.base_type.value_or("RefCounted");
+            symbol.is_abstract = std::any_of(
+                declaration.annotations.begin(), declaration.annotations.end(),
+                [](const ast::Annotation& annotation) { return annotation.name == "abstract"; });
             if (!local_inner_classes_.emplace(qualified, std::move(symbol)).second) {
                 diagnostics_.error("GDS4101", "duplicate internal class '" + qualified + "'",
                                    declaration.span);
@@ -4735,6 +4830,7 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
                                   ? type_from_name(*function.return_type, function.span)
                                   : variant_type;
                 member.is_static = function.is_static;
+                member.is_abstract = function.is_abstract;
                 member.has_explicit_type =
                     function.name == "_init" || function.return_type.has_value();
                 for (const auto& parameter : function.parameters) {
@@ -4789,6 +4885,7 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
         }
     };
     populate_inner_classes(populate_inner_classes, script.classes, "");
+    validate_script_abstract_contract(script);
     if (const auto local_base = local_inner_classes_.find(declared_base);
         local_base != local_inner_classes_.end()) {
         for (const auto& member : local_base->second.members) {

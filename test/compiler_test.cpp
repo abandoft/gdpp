@@ -1814,6 +1814,32 @@ TEST_CASE("semantic analysis enforces abstract function declaration shape") {
                         [](const auto& diagnostic) { return diagnostic.code == "GDS4147"; }));
 }
 
+TEST_CASE("semantic analysis closes internal abstract class obligations") {
+    const gdpp::Compiler compiler;
+    const auto valid = compiler.compile(
+        "abstract_inner.gd", "@abstract class Contract:\n"
+                             "    @abstract func execute(value: int) -> String\n"
+                             "class Implementation extends Contract:\n"
+                             "    func execute(value: int) -> String:\n"
+                             "        return str(value)\n");
+    const auto direct = compiler.compile(
+        "concrete_abstract.gd", "class InvalidContract:\n"
+                                "    @abstract func execute()\n");
+    const auto inherited = compiler.compile(
+        "missing_implementation.gd", "@abstract class Contract:\n"
+                                     "    @abstract func execute()\n"
+                                     "class Missing extends Contract:\n"
+                                     "    pass\n");
+
+    REQUIRE(valid.success);
+    REQUIRE(!direct.success);
+    REQUIRE(!inherited.success);
+    REQUIRE(std::any_of(direct.diagnostics.begin(), direct.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4149"; }));
+    REQUIRE(std::any_of(inherited.diagnostics.begin(), inherited.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4149"; }));
+}
+
 TEST_CASE("compiler resolves versioned builtin value constants") {
     const gdpp::Compiler compiler;
     gdpp::CompileOptions options;
