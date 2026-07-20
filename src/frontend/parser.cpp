@@ -1335,7 +1335,15 @@ ast::ExpressionPtr Parser::parse_expression(int minimum_precedence) {
         const auto right_precedence = effective_operation == TokenKind::power
                                           ? precedence(effective_operation)
                                           : precedence(effective_operation) + 1;
-        auto right = parse_expression(right_precedence);
+        ast::ExpressionPtr right;
+        if (effective_operation == TokenKind::kw_as || effective_operation == TokenKind::kw_is) {
+            const auto type_begin = current().span;
+            const auto type_name = parse_type_name("expected a type after cast or type test");
+            right = make_expression(ast::ExpressionKind::identifier, type_name,
+                                    joined(type_begin, previous().span));
+        } else {
+            right = parse_expression(right_precedence);
+        }
         const bool balanced_logical =
             effective_operation == TokenKind::kw_and || effective_operation == TokenKind::kw_or;
         if (!balanced_logical && ++binary_chain_length > limits_.max_binary_chain_length) {

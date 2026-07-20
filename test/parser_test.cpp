@@ -577,6 +577,7 @@ TEST_CASE("parser builds casts conditional expressions power and node references
     const gdpp::SourceFile source{"modern.gd",
                                   "func choose(enabled: bool) -> Node3D:\n"
                                   "    var node := $Root/Child as Node3D\n"
+                                  "    var typed := [1] as Array[int]\n"
                                   "    var power := 2 ** 3 ** 2\n"
                                   "    return node if enabled else %Fallback as Node3D\n"};
     gdpp::DiagnosticBag diagnostics;
@@ -588,10 +589,12 @@ TEST_CASE("parser builds casts conditional expressions power and node references
     REQUIRE_EQ(node.kind(), gdpp::ast::ExpressionKind::binary);
     REQUIRE_EQ(node.value(), std::string{"as"});
     REQUIRE_EQ(node.operand(0)->kind(), gdpp::ast::ExpressionKind::node_reference);
-    const auto& power = *script.functions.front().body.at(1).expression();
+    const auto& typed = *script.functions.front().body.at(1).expression();
+    REQUIRE_EQ(typed.operand(1)->value(), std::string{"Array[int]"});
+    const auto& power = *script.functions.front().body.at(2).expression();
     REQUIRE_EQ(power.value(), std::string{"**"});
     REQUIRE_EQ(power.operand(1)->value(), std::string{"**"});
-    REQUIRE_EQ(script.functions.front().body.at(2).expression()->kind(),
+    REQUIRE_EQ(script.functions.front().body.at(3).expression()->kind(),
                gdpp::ast::ExpressionKind::conditional);
 }
 
