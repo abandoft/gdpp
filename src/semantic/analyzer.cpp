@@ -869,6 +869,88 @@ Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expressi
                                  : type_from_godot_api(record->return_type);
 }
 
+std::optional<Type> SemanticAnalyzer::narrowed_flow_type(const Type& current,
+                                                         const Type& target) const {
+    if (target.kind == TypeKind::unknown || target.kind == TypeKind::void_type ||
+        target.kind == TypeKind::script_resource) {
+        return std::nullopt;
+    }
+    if (current.is_dynamic())
+        return target;
+    if (current == target)
+        return current;
+    if (current.kind != TypeKind::object || target.kind != TypeKind::object)
+        return std::nullopt;
+
+    const auto inherits = [&](const Type& derived, const Type& base) {
+        if (api_.inherits(derived.name, base.name))
+            return true;
+        if (script_symbols_ && script_symbols_->inherits(derived.name, base.name))
+            return true;
+        const auto* derived_script =
+            script_symbols_ ? script_symbols_->find_class(derived.name) : nullptr;
+        return derived_script && api_.inherits(derived_script->godot_base_type, base.name);
+    };
+    if (inherits(target, current))
+        return target;
+    if (inherits(current, target))
+        return current;
+    return std::nullopt;
+}
+
+ConditionalRefinements
+SemanticAnalyzer::conditional_refinements(const ast::Expression& expression) const {
+    if (expression.kind() == ast::ExpressionKind::unary && expression.value() == "not" &&
+        expression.operand_count() == 1) {
+        auto refinements = conditional_refinements(*expression.operand(0));
+        std::swap(refinements.when_true, refinements.when_false);
+        return refinements;
+    }
+    if (expression.kind() != ast::ExpressionKind::binary || expression.operand_count() != 2)
+        return {};
+
+    if (expression.value() == "and" || expression.value() == "or") {
+        const auto left = conditional_refinements(*expression.operand(0));
+        const auto right = conditional_refinements(*expression.operand(1));
+        if (expression.value() == "and") {
+            const auto right_false_path =
+                sequence_refinements(left.when_true, right.when_false);
+            return {sequence_refinements(left.when_true, right.when_true),
+                    common_refinements(left.when_false, right_false_path)};
+        }
+        const auto right_true_path = sequence_refinements(left.when_false, right.when_true);
+        return {common_refinements(left.when_true, right_true_path),
+                sequence_refinements(left.when_false, right.when_false)};
+    }
+    if (expression.value() != "is" && expression.value() != "is not")
+        return {};
+
+    const auto& value = *expression.operand(0);
+    if (value.kind() != ast::ExpressionKind::identifier)
+        return {};
+    const auto* symbol = model_.symbol_of(value);
+    if (!symbol || (symbol->kind != SymbolKind::local && symbol->kind != SymbolKind::parameter) ||
+        symbol->identity == 0) {
+        return {};
+    }
+    const auto* target_resolution = model_.api_resolution_of(*expression.operand(1));
+    if (!target_resolution ||
+        (target_resolution->kind != ApiResolutionKind::type_reference &&
+         target_resolution->kind != ApiResolutionKind::external_type_reference &&
+         target_resolution->kind != ApiResolutionKind::script_type_reference &&
+         target_resolution->kind != ApiResolutionKind::inner_type_reference)) {
+        return {};
+    }
+    const auto target = model_.type_of(*expression.operand(1));
+    const auto refined = narrowed_flow_type(model_.type_of(value), target);
+    if (!refined)
+        return {};
+    ConditionalRefinements result;
+    auto& outcome = expression.value() == "is" ? result.when_true : result.when_false;
+    outcome.emplace(symbol->identity, *refined);
+    return result;
+}
+
 Type SemanticAnalyzer::analyze_binary_tree(const ast::Expression& expression) {
     struct Frame {
         const ast::Expression* expression{nullptr};
@@ -960,6 +1042,11 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         if (const auto* symbol = resolve(expression.value())) {
             result = symbol->kind == SymbolKind::function ? Type{TypeKind::builtin, "Callable"}
                                                           : symbol->type;
+            if ((symbol->kind == SymbolKind::local || symbol->kind == SymbolKind::parameter) &&
+                symbol->identity != 0) {
+                if (const auto* refined = flow_types_.find(symbol->identity))
+                    result = *refined;
+            }
             model_.referenced_symbols_.emplace(&expression, *symbol);
             if (symbol->kind == SymbolKind::function) {
                 bool is_static = false;

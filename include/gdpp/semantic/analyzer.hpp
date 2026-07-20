@@ -204,6 +204,10 @@ class SemanticAnalyzer final {
     [[nodiscard]] FlowResult analyze_statement(const ast::Statement& statement);
     [[nodiscard]] Type analyze_expression(const ast::Expression& expression);
     [[nodiscard]] Type analyze_binary_tree(const ast::Expression& expression);
+    [[nodiscard]] ConditionalRefinements
+    conditional_refinements(const ast::Expression& expression) const;
+    [[nodiscard]] std::optional<Type> narrowed_flow_type(const Type& current,
+                                                         const Type& target) const;
     [[nodiscard]] Type resolve_binary_expression(const ast::Expression& expression,
                                                  const Type& left, const Type& right);
     [[nodiscard]] bool is_constant_match_expression(const ast::Expression& expression) const;
@@ -274,6 +278,7 @@ class SemanticAnalyzer final {
     std::size_t await_operand_depth_{0};
     const ast::Expression* discarded_expression_{nullptr};
     FlowSymbolId next_symbol_identity_{1};
+    FlowTypeState flow_types_;
 };
 
 } // namespace gdpp
