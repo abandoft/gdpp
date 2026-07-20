@@ -403,17 +403,15 @@ const Symbol* SemanticAnalyzer::resolve(const std::string& name) const noexcept 
 
 void SemanticAnalyzer::require_assignable(const Type& target, const Type& source, SourceSpan span,
                                           const std::string& context) {
-    const bool compatible_objects = target.kind == TypeKind::object &&
-                                    source.kind == TypeKind::object &&
-                                    (object_type_inherits(source, target) ||
-                                     object_type_inherits(target, source));
+    const bool compatible_objects =
+        target.kind == TypeKind::object && source.kind == TypeKind::object &&
+        (object_type_inherits(source, target) || object_type_inherits(target, source));
     const bool same_project_enum =
         current_script_ && target.kind == TypeKind::enumeration &&
         source.kind == TypeKind::enumeration &&
         (target.name == current_script_->script_name + "." + source.name ||
          source.name == current_script_->script_name + "." + target.name);
-    if (!is_implicitly_convertible(target, source) && !compatible_objects &&
-        !same_project_enum) {
+    if (!is_implicitly_convertible(target, source) && !compatible_objects && !same_project_enum) {
         diagnostics_.error("GDS4002",
                            context + ": cannot assign " + source.display_name() + " to " +
                                target.display_name(),
@@ -531,8 +529,8 @@ void SemanticAnalyzer::validate_local_call(const ast::FunctionDeclaration& funct
     const auto checked = std::min(arguments.size(), function.parameters.size());
     for (std::size_t index = 0; index < checked; ++index) {
         const auto& parameter = function.parameters[index];
-        const auto target = parameter.type ? type_from_name(*parameter.type, parameter.span)
-                                           : variant_type;
+        const auto target =
+            parameter.type ? type_from_name(*parameter.type, parameter.span) : variant_type;
         require_expression_assignable(
             target, *call.operand(index + 1), arguments[index], call.operand(index + 1)->span,
             "argument " + std::to_string(index + 1) + " of '" + function.name + "'");
@@ -959,16 +957,15 @@ Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expressi
         if (left.is_dynamic() || right.is_dynamic()) {
             valid_conversion = true;
         } else if (right.kind == TypeKind::object) {
-            valid_conversion = left.kind == TypeKind::nil ||
-                               (left.kind == TypeKind::object &&
-                                (object_type_inherits(left, right) ||
-                                 object_type_inherits(right, left)));
+            valid_conversion =
+                left.kind == TypeKind::nil ||
+                (left.kind == TypeKind::object &&
+                 (object_type_inherits(left, right) || object_type_inherits(right, left)));
         } else {
             valid_conversion = is_explicitly_convertible(right, left);
         }
         if (valid_conversion && is_constant_expression(*expression.operand(0))) {
-            const auto constant_source =
-                constant_value_type_of(*expression.operand(0), left);
+            const auto constant_source = constant_value_type_of(*expression.operand(0), left);
             if (!constant_source.is_dynamic()) {
                 const auto conversion = classify_conversion(right, constant_source);
                 valid_conversion = conversion == ConversionKind::identity ||
@@ -1234,9 +1231,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         if (expression.value().find('[') != std::string::npos) {
             result = type_from_name(expression.value(), expression.span);
             model_.api_resolutions_.emplace(
-                &expression, ApiResolution{ApiResolutionKind::type_reference,
-                                           expression.value(), "", "", result, 0, 0, false,
-                                           true});
+                &expression, ApiResolution{ApiResolutionKind::type_reference, expression.value(),
+                                           "", "", result, 0, 0, false, true});
             break;
         }
         if (expression.value() == "self") {
@@ -3357,8 +3353,7 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         } else if (statement.is_constant() && !statement.type()) {
             type = initializer;
         }
-        if ((statement.type().has_value() || statement.infer_type()) &&
-            statement.expression()) {
+        if ((statement.type().has_value() || statement.infer_type()) && statement.expression()) {
             require_expression_assignable(type, *statement.expression(), initializer,
                                           statement.span, "invalid initializer");
         }
@@ -4216,7 +4211,8 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
         declare({SymbolKind::function, function.name, type, function.span, true});
     }
     const auto analyze_internal_variable = [&](const ast::VariableDeclaration& variable) {
-        const WarningIgnoreScope warning_scope{active_warning_ignores_, variable.annotations};
+        const WarningIgnoreScope variable_warning_scope{active_warning_ignores_,
+                                                        variable.annotations};
         const auto saved_variable_instance_context = instance_context_available_;
         instance_context_available_ = !variable.is_static;
         const auto initializer =
@@ -5176,8 +5172,7 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
             type = initializer;
             if (variable.initializer) {
                 require_expression_assignable(type, *variable.initializer, initializer,
-                                              variable.span,
-                                              "invalid inferred field initializer");
+                                              variable.span, "invalid inferred field initializer");
             }
         } else if (variable.is_constant && !variable.type.has_value()) {
             type = initializer;
