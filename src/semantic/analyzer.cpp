@@ -1061,7 +1061,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         if (const auto* symbol = resolve(expression.value())) {
             result = symbol->kind == SymbolKind::function ? Type{TypeKind::builtin, "Callable"}
                                                           : symbol->type;
-            if ((symbol->kind == SymbolKind::local || symbol->kind == SymbolKind::parameter) &&
+            if (!suppress_flow_refinements_ &&
+                (symbol->kind == SymbolKind::local || symbol->kind == SymbolKind::parameter) &&
                 symbol->identity != 0) {
                 if (const auto* refined = flow_types_.find(symbol->identity))
                     result = *refined;
@@ -2927,8 +2928,12 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
     }
     case ast::StatementKind::assignment: {
         const auto previous_await_context = await_expression_allowed_;
+        const auto previous_suppression = suppress_flow_refinements_;
         await_expression_allowed_ = false;
+        suppress_flow_refinements_ =
+            statement.condition()->kind() == ast::ExpressionKind::identifier;
         const auto target = analyze_expression(*statement.condition());
+        suppress_flow_refinements_ = previous_suppression;
         await_expression_allowed_ = previous_await_context;
         const auto value = analyze_expression(*statement.expression());
         if (!is_assignment_target(*statement.condition())) {
@@ -2974,6 +2979,10 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
                                           "invalid assignment");
         } else {
             require_assignable(target, assigned, statement.span, "invalid assignment");
+        }
+        if (const auto* symbol = model_.symbol_of(*statement.condition());
+            symbol && (symbol->kind == SymbolKind::local || symbol->kind == SymbolKind::parameter)) {
+            flow_types_.invalidate(symbol->identity);
         }
         return FlowResult{true, false, false, false};
     }

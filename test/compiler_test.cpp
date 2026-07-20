@@ -2406,6 +2406,22 @@ TEST_CASE("semantic flow narrows short-circuit logical operands") {
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
 }
 
+TEST_CASE("semantic flow invalidates a refinement after direct reassignment") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "flow_assignment.gd", "extends Node\n"
+                              "func replace(value: Variant) -> Variant:\n"
+                              "    if value is Node:\n"
+                              "        value = 40\n"
+                              "        value += 2\n"
+                              "        return value.name\n"
+                              "    return value\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("gdpp::runtime::binary") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::get_named") != std::string::npos);
+}
+
 TEST_CASE("typed scene nodes retain dynamic script dispatch for unknown members") {
     const gdpp::Compiler compiler;
     const auto result =

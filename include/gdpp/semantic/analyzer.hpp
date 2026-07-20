@@ -279,6 +279,7 @@ class SemanticAnalyzer final {
     const ast::Expression* discarded_expression_{nullptr};
     FlowSymbolId next_symbol_identity_{1};
     FlowTypeState flow_types_;
+    bool suppress_flow_refinements_{false};
 };
 
 } // namespace gdpp
