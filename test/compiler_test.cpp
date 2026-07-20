@@ -1717,7 +1717,16 @@ TEST_CASE("compiler defines static script fields outside the generated header") 
     REQUIRE(result.success);
     REQUIRE(result.unit.header.find("static int64_t& _gdpp_static_count_storage()") !=
             std::string::npos);
-    REQUIRE(result.unit.source.find("value = new int64_t(static_cast<int64_t>(1))") !=
+    REQUIRE(result.unit.header.find(
+                "static std::atomic<std::uint8_t>& _gdpp_static_initialization_state()") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("value = new int64_t{}") != std::string::npos);
+    REQUIRE(result.unit.source.find("*value = static_cast<int64_t>(1)") != std::string::npos);
+    REQUIRE(result.unit.source.find("static thread_local bool active = false") !=
+            std::string::npos);
+    const auto increment = result.unit.source.find("::increment() {");
+    REQUIRE(increment != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_ensure_static_initialized();", increment) !=
             std::string::npos);
     REQUIRE(result.unit.source.find("_gdpp_static_count_storage() =") != std::string::npos);
     REQUIRE(result.unit.source.find("int64_t GDPPNative_Cache::count = 1") == std::string::npos);
@@ -3060,7 +3069,7 @@ TEST_CASE("local constants remain typed read-only values through native code gen
                         [](const auto& diagnostic) { return diagnostic.code == "GDS4006"; }));
 }
 
-TEST_CASE("static constructors are validated and run exactly from native class binding") {
+TEST_CASE("static constructors are validated and run through the class initialization guard") {
     const gdpp::Compiler compiler;
     const auto valid = compiler.compile("static_init.gd", "static var initialized: bool = false\n"
                                                           "static func _static_init() -> void:\n"
@@ -3081,13 +3090,29 @@ TEST_CASE("static constructors are validated and run exactly from native class b
                                                                     "        pass\n");
 
     REQUIRE(valid.success);
+    REQUIRE(valid.unit.header.find("static void _gdpp_ensure_static_initialized()") !=
+            std::string::npos);
+    REQUIRE(valid.unit.source.find("static thread_local bool active = false") != std::string::npos);
+    const auto valid_guard = valid.unit.source.find("::_gdpp_ensure_static_initialized() {");
+    REQUIRE(valid_guard != std::string::npos);
+    REQUIRE(valid.unit.source.find("    _static_init();", valid_guard) != std::string::npos);
+    const auto valid_bind = valid.unit.source.find("::_bind_methods() {");
+    const auto valid_bind_end = valid.unit.source.find("}\n\n", valid_bind);
+    REQUIRE(valid_bind != std::string::npos);
+    REQUIRE(valid_bind_end != std::string::npos);
     REQUIRE(
-        valid.unit.source.find("    if (!gdpp::runtime::is_editor_hint()) _static_init();\n}") !=
+        valid.unit.source.substr(valid_bind, valid_bind_end - valid_bind).find("_static_init();") ==
         std::string::npos);
     REQUIRE(valid.unit.source.find("D_METHOD(\"_static_init\"") == std::string::npos);
     REQUIRE(tool.success);
-    REQUIRE(tool.unit.source.find("    _static_init();\n}") != std::string::npos);
-    REQUIRE(tool.unit.source.find("if (!gdpp::runtime::is_editor_hint()) _static_init();") ==
+    const auto tool_guard = tool.unit.source.find("::_gdpp_ensure_static_initialized() {");
+    REQUIRE(tool_guard != std::string::npos);
+    REQUIRE(tool.unit.source.find("    _static_init();", tool_guard) != std::string::npos);
+    const auto tool_bind = tool.unit.source.find("::_bind_methods() {");
+    const auto tool_bind_end = tool.unit.source.find("}\n\n", tool_bind);
+    REQUIRE(tool_bind != std::string::npos);
+    REQUIRE(tool_bind_end != std::string::npos);
+    REQUIRE(tool.unit.source.substr(tool_bind, tool_bind_end - tool_bind).find("_static_init();") ==
             std::string::npos);
     REQUIRE(!non_static.success);
     REQUIRE(!returning.success);
