@@ -2167,7 +2167,7 @@ TEST_CASE("compiler covers strict and explicit Godot conversion families end to 
     const gdpp::Compiler compiler;
     const auto valid = compiler.compile(
         "conversion_families.gd",
-        "func convert(path: NodePath, object: Object, values: Array, "
+        "func convert(path: NodePath, values: Array, "
         "strings: PackedStringArray, vector_i: Vector2i, rect_i: Rect2i, "
         "basis: Basis, projection: Projection) -> Array:\n"
         "    var text: String = path\n"
@@ -2178,11 +2178,10 @@ TEST_CASE("compiler covers strict and explicit Godot conversion families end to 
         "    var transform: Transform3D = projection\n"
         "    var packed: PackedInt64Array = values\n"
         "    var unpacked: Array = strings\n"
-        "    var handle: RID = object\n"
         "    var parse_source: String = \"42\"\n"
         "    var parsed: int = parse_source as int\n"
         "    return [text, restored_path, vector, rect, rotation, transform, packed, "
-        "unpacked, handle, parsed]\n");
+        "unpacked, parsed]\n");
     const auto invalid = compiler.compile(
         "invalid_casts.gd", "extends Node\n"
                             "func reject() -> void:\n"
@@ -2194,8 +2193,6 @@ TEST_CASE("compiler covers strict and explicit Godot conversion families end to 
 
     REQUIRE(valid.success);
     REQUIRE(valid.unit.source.find("static_cast<godot::String>(godot::Variant(path))") !=
-            std::string::npos);
-    REQUIRE(valid.unit.source.find("static_cast<godot::RID>(godot::Variant(object))") !=
             std::string::npos);
     REQUIRE(valid.unit.source.find(
                 "gdpp::runtime::explicit_variant_cast<int64_t>(godot::Variant(parse_source), "
@@ -2225,6 +2222,22 @@ TEST_CASE("compiler rejects analyzer-only explicit casts without runtime constru
                                  return diagnostic.code == "GDS4156";
                              }),
                std::ptrdiff_t{3});
+}
+
+TEST_CASE("compiler rejects Object values retained behind typed RID locals") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "rid_storage.gd",
+        "func reject(value: Object) -> RID:\n"
+        "    var handle: RID = value\n"
+        "    return value\n");
+
+    REQUIRE(!result.success);
+    REQUIRE_EQ(std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                             [](const auto& diagnostic) {
+                                 return diagnostic.code == "GDS4157";
+                             }),
+               std::ptrdiff_t{2});
 }
 
 TEST_CASE("compiler applies strict conversion rules to reduced constant casts") {
