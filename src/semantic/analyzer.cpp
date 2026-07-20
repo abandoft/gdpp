@@ -1982,6 +1982,12 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     object_resolution &&
                     object_resolution->kind == ApiResolutionKind::inner_type_reference;
                 if (called_on_type && callee.value() == "new") {
+                    if (inner->is_abstract) {
+                        diagnostics_.error("GDS4111",
+                                           "cannot instantiate abstract internal class '" +
+                                               inner->name + "'",
+                                           expression.span);
+                    }
                     const auto initializer = std::find_if(
                         inner->members.begin(), inner->members.end(), [](const auto& member) {
                             return member.kind == ScriptMemberKind::function &&

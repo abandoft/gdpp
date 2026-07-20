@@ -1840,6 +1840,19 @@ TEST_CASE("semantic analysis closes internal abstract class obligations") {
                         [](const auto& diagnostic) { return diagnostic.code == "GDS4149"; }));
 }
 
+TEST_CASE("semantic analysis rejects abstract internal class construction") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "construct_abstract.gd", "@abstract class Contract:\n"
+                                 "    pass\n"
+                                 "func create() -> void:\n"
+                                 "    var invalid := Contract.new()\n");
+
+    REQUIRE(!result.success);
+    REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4111"; }));
+}
+
 TEST_CASE("compiler resolves versioned builtin value constants") {
     const gdpp::Compiler compiler;
     gdpp::CompileOptions options;
