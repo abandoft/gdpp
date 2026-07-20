@@ -443,6 +443,7 @@ void SemanticAnalyzer::require_expression_assignable(const Type& target,
                                                      const Type& source, const SourceSpan span,
                                                      const std::string& context) {
     require_assignable(target, source, span, context);
+    const bool semantically_assignable = is_implicitly_convertible(target, source);
     const auto container = describe_container_type(target);
     if (!container)
         return;
@@ -473,6 +474,14 @@ void SemanticAnalyzer::require_expression_assignable(const Type& target,
                                               std::to_string(index / 2 + 1));
         }
         model_.expression_types_[&expression] = target;
+        return;
+    }
+    const auto runtime_source = runtime_storage_type_of(expression);
+    if (semantically_assignable && !is_typed_storage_compatible(target, runtime_source)) {
+        diagnostics_.error("GDS4155",
+                           context + ": Godot typed storage " + target.display_name() +
+                               " rejects runtime value " + runtime_source.display_name(),
+                           span);
     }
 }
 
@@ -502,6 +511,33 @@ void SemanticAnalyzer::validate_script_call(const ScriptMemberSymbol& member,
         require_expression_assignable(
             member.parameters[index], *call.operand(index + 1), arguments[index], span,
             "argument " + std::to_string(index + 1) + " of '" + member.name + "'");
+    }
+}
+
+void SemanticAnalyzer::validate_local_call(const ast::FunctionDeclaration& function,
+                                           const std::vector<Type>& arguments,
+                                           const ast::Expression& call, SourceSpan span) {
+    const auto required = static_cast<std::size_t>(
+        std::count_if(function.parameters.begin(), function.parameters.end(),
+                      [](const auto& parameter) { return !parameter.default_value; }));
+    if (arguments.size() < required || arguments.size() > function.parameters.size()) {
+        diagnostics_.error(
+            "GDS4054",
+            "script method '" + function.name + "' expects " + std::to_string(required) +
+                (required == function.parameters.size()
+                     ? " argument(s)"
+                     : " to " + std::to_string(function.parameters.size()) + " argument(s)") +
+                ", got " + std::to_string(arguments.size()),
+            span);
+    }
+    const auto checked = std::min(arguments.size(), function.parameters.size());
+    for (std::size_t index = 0; index < checked; ++index) {
+        const auto& parameter = function.parameters[index];
+        const auto target = parameter.type ? type_from_name(*parameter.type, parameter.span)
+                                           : variant_type;
+        require_expression_assignable(
+            target, *call.operand(index + 1), arguments[index], call.operand(index + 1)->span,
+            "argument " + std::to_string(index + 1) + " of '" + function.name + "'");
     }
 }
 
@@ -1185,6 +1221,14 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         result = variant_type;
         break;
     case ast::ExpressionKind::identifier: {
+        if (expression.value().find('[') != std::string::npos) {
+            result = type_from_name(expression.value(), expression.span);
+            model_.api_resolutions_.emplace(
+                &expression, ApiResolution{ApiResolutionKind::type_reference,
+                                           expression.value(), "", "", result, 0, 0, false,
+                                           true});
+            break;
+        }
         if (expression.value() == "self") {
             diagnose_static_instance_access("receiver", expression.value(), expression.span);
             result = current_inner_class_ ? Type{TypeKind::object, current_inner_class_->name}
@@ -1925,6 +1969,12 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                 &callee, ApiResolution{ApiResolutionKind::dynamic_method, "", "",
                                                        "", result, 0, 0, true, false});
                         }
+                    }
+                } else if (symbol->kind == SymbolKind::function) {
+                    if (const auto local = functions_.find(callee.value());
+                        local != functions_.end()) {
+                        validate_local_call(*local->second, argument_types, expression,
+                                            expression.span);
                     }
                 } else if (symbol->kind != SymbolKind::function) {
                     diagnostics_.error(
@@ -3042,6 +3092,17 @@ Type SemanticAnalyzer::constant_value_type_of(const ast::Expression& expression,
     return fallback;
 }
 
+Type SemanticAnalyzer::runtime_storage_type_of(const ast::Expression& expression) const {
+    const auto semantic_type = model_.type_of(expression);
+    if (expression.kind() == ast::ExpressionKind::binary && expression.value() == "as" &&
+        expression.operand_count() == 2 && is_explicitly_typed_container(semantic_type)) {
+        const auto operand_type = model_.storage_type_of(*expression.operand(0));
+        if (operand_type != semantic_type)
+            return operand_type;
+    }
+    return model_.storage_type_of(expression);
+}
+
 std::optional<std::string>
 SemanticAnalyzer::constant_string_expression(const ast::Expression& expression) const {
     if (expression.kind() == ast::ExpressionKind::literal &&
@@ -3286,7 +3347,8 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         } else if (statement.is_constant() && !statement.type()) {
             type = initializer;
         }
-        if (statement.type().has_value() && statement.expression()) {
+        if ((statement.type().has_value() || statement.infer_type()) &&
+            statement.expression()) {
             require_expression_assignable(type, *statement.expression(), initializer,
                                           statement.span, "invalid initializer");
         }
@@ -4154,6 +4216,11 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
         if (variable.infer_type) {
             require_inferable_type(initializer, variable.span, "internal field");
             type = initializer;
+            if (variable.initializer) {
+                require_expression_assignable(type, *variable.initializer, initializer,
+                                              variable.span,
+                                              "invalid inferred internal field initializer");
+            }
         } else if (variable.is_constant && !variable.type) {
             type = initializer;
         } else if (variable.type && variable.initializer) {
@@ -5097,6 +5164,11 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
         if (variable.infer_type) {
             require_inferable_type(initializer, variable.span, "field");
             type = initializer;
+            if (variable.initializer) {
+                require_expression_assignable(type, *variable.initializer, initializer,
+                                              variable.span,
+                                              "invalid inferred field initializer");
+            }
         } else if (variable.is_constant && !variable.type.has_value()) {
             type = initializer;
         } else if (variable.type.has_value() && variable.initializer) {

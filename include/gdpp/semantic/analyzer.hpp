@@ -229,6 +229,7 @@ class SemanticAnalyzer final {
     [[nodiscard]] bool is_constant_expression(const ast::Expression& expression) const;
     [[nodiscard]] Type constant_value_type_of(const ast::Expression& expression,
                                               const Type& fallback) const;
+    [[nodiscard]] Type runtime_storage_type_of(const ast::Expression& expression) const;
     [[nodiscard]] std::optional<std::string>
     constant_string_expression(const ast::Expression& expression) const;
     [[nodiscard]] std::optional<std::int64_t>
@@ -255,6 +256,9 @@ class SemanticAnalyzer final {
                                        const std::string& context);
     void validate_script_call(const ScriptMemberSymbol& member, const std::vector<Type>& arguments,
                               const ast::Expression& call, SourceSpan span);
+    void validate_local_call(const ast::FunctionDeclaration& function,
+                             const std::vector<Type>& arguments, const ast::Expression& call,
+                             SourceSpan span);
     void validate_container_method_call(const Type& container, std::string_view method,
                                         const std::vector<Type>& arguments,
                                         const ast::Expression& call);
