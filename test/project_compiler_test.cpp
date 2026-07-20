@@ -629,6 +629,58 @@ TEST_CASE("project compiler dynamically dispatches script overrides with a diffe
     REQUIRE(base_source.find("gdpp::runtime::call_dynamic") != std::string::npos);
 }
 
+TEST_CASE("project compiler accepts variance-safe script override contracts") {
+    const auto root = fixture_root("project-override-variance");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "base.gd",
+               "extends Node\nclass_name VarianceBase\n"
+               "func transform(value: Node, policy: Variant, limit: int = 1) -> Node:\n"
+               "    return value\n");
+    write_text(root / "child.gd",
+               "extends VarianceBase\nclass_name VarianceChild\n"
+               "func transform(value: Object, policy: Variant, limit: int = 1, "
+               "context = null) -> Node2D:\n"
+               "    return null\n");
+
+    const auto result = gdpp::ProjectCompiler{}.compile(project_options(root));
+
+    REQUIRE(result.success);
+    const auto header = read_text(project_options(root).output_directory /
+                                  "generated/variance_child.gd.hpp");
+    REQUIRE(header.find("_gdpp_native_override_transform") != std::string::npos);
+}
+
+TEST_CASE("project compiler rejects incompatible script override contracts") {
+    const auto root = fixture_root("project-invalid-overrides");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "base.gd",
+               "extends Node\nclass_name InvalidOverrideBase\n"
+               "func arity(value: int, optional: int = 1) -> int: return value\n"
+               "func input(value: Node) -> void: pass\n"
+               "func output() -> Node2D: return null\n"
+               "func qualifier(value: int) -> int: return value\n");
+    write_text(root / "child.gd",
+               "extends InvalidOverrideBase\nclass_name InvalidOverrideChild\n"
+               "func arity(value: int, optional: int, required: int) -> int: return value\n"
+               "func input(value: Node2D) -> void: pass\n"
+               "func output() -> Node: return null\n"
+               "static func qualifier(value: int) -> int: return value\n");
+
+    const auto result = gdpp::ProjectCompiler{}.compile(project_options(root));
+    const auto has_code = [&](const std::string_view code) {
+        return std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                           [&](const auto& item) { return item.diagnostic.code == code; });
+    };
+
+    REQUIRE(!result.success);
+    REQUIRE(has_code("GDS4102"));
+    REQUIRE(has_code("GDS4120"));
+    REQUIRE(has_code("GDS4121"));
+    REQUIRE(has_code("GDS4143"));
+}
+
 TEST_CASE("project compiler rejects missing and cyclic script bases transactionally") {
     const auto missing_root = fixture_root("project-missing-base");
     std::error_code error;
