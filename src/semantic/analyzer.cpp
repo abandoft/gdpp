@@ -906,6 +906,17 @@ SemanticAnalyzer::conditional_refinements(const ast::Expression& expression) con
         std::swap(refinements.when_true, refinements.when_false);
         return refinements;
     }
+    if (expression.kind() == ast::ExpressionKind::identifier) {
+        const auto* symbol = model_.symbol_of(expression);
+        if (symbol && (symbol->kind == SymbolKind::local ||
+                       symbol->kind == SymbolKind::parameter) &&
+            symbol->identity != 0) {
+            ConditionalRefinements result;
+            result.when_true.non_null.insert(symbol->identity);
+            return result;
+        }
+        return {};
+    }
     if (expression.kind() != ast::ExpressionKind::binary || expression.operand_count() != 2)
         return {};
 
@@ -921,6 +932,27 @@ SemanticAnalyzer::conditional_refinements(const ast::Expression& expression) con
         const auto right_true_path = sequence_refinements(left.when_false, right.when_true);
         return {common_refinements(left.when_true, right_true_path),
                 sequence_refinements(left.when_false, right.when_false)};
+    }
+    if (expression.value() == "==" || expression.value() == "!=") {
+        const auto& left = *expression.operand(0);
+        const auto& right = *expression.operand(1);
+        const auto is_null = [](const ast::Expression& operand) {
+            return operand.kind() == ast::ExpressionKind::literal &&
+                   operand.literal_kind() == ast::LiteralKind::nil;
+        };
+        const auto* value = is_null(left) ? &right : is_null(right) ? &left : nullptr;
+        const auto* symbol = value && value->kind() == ast::ExpressionKind::identifier
+                                 ? model_.symbol_of(*value)
+                                 : nullptr;
+        if (symbol && (symbol->kind == SymbolKind::local ||
+                       symbol->kind == SymbolKind::parameter) &&
+            symbol->identity != 0) {
+            ConditionalRefinements result;
+            auto& non_null = expression.value() == "!=" ? result.when_true.non_null
+                                                         : result.when_false.non_null;
+            non_null.insert(symbol->identity);
+            return result;
+        }
     }
     if (expression.value() != "is" && expression.value() != "is not")
         return {};
@@ -3065,6 +3097,7 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
                  matched_symbol->kind == SymbolKind::parameter)) {
                 if (const auto refined = narrowed_flow_type(matched_type, *structural_type))
                     flow_types_.refine(matched_symbol->identity, *refined);
+                flow_types_.mark_non_null(matched_symbol->identity);
             }
             scopes_.emplace_back();
             bool catch_all = false;
