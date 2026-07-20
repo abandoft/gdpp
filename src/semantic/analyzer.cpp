@@ -1587,6 +1587,99 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                        function->maximum_arguments, function->is_vararg, true});
             return true;
         };
+        const auto resolve_intrinsic = [&](const IntrinsicFeature& feature) {
+            if (argument_count < feature.minimum_arguments ||
+                argument_count > feature.maximum_arguments) {
+                diagnostics_.error(
+                    feature.kind == IntrinsicKind::length ? "GDS4076" : "GDS4075",
+                    std::string{feature.name} + " expects " +
+                        (feature.minimum_arguments == feature.maximum_arguments
+                             ? "exactly " + std::to_string(feature.minimum_arguments)
+                             : std::to_string(feature.minimum_arguments) + " to " +
+                                   std::to_string(feature.maximum_arguments)) +
+                        " argument(s), got " + std::to_string(argument_count),
+                    expression.span);
+            }
+            const auto checked =
+                std::min(argument_count, static_cast<std::size_t>(feature.maximum_arguments));
+            for (std::size_t index = 0; index < checked; ++index) {
+                const auto rule = feature.argument_rules[index];
+                const auto context = "argument " + std::to_string(index + 1) + " of '" +
+                                     std::string{feature.name} + "'";
+                switch (rule) {
+                case IntrinsicArgumentRule::any:
+                case IntrinsicArgumentRule::resource_path:
+                    break;
+                case IntrinsicArgumentRule::integer:
+                    require_assignable({TypeKind::integer, "int"}, argument_types[index],
+                                       expression.operand(index + 1)->span, context);
+                    break;
+                case IntrinsicArgumentRule::string:
+                    require_assignable({TypeKind::string, "String"}, argument_types[index],
+                                       expression.operand(index + 1)->span, context);
+                    break;
+                case IntrinsicArgumentRule::string_name:
+                    require_assignable({TypeKind::string_name, "StringName"},
+                                       argument_types[index], expression.operand(index + 1)->span,
+                                       context);
+                    break;
+                case IntrinsicArgumentRule::type_descriptor: {
+                    const auto& argument = *expression.operand(index + 1);
+                    const auto* resolution = model_.api_resolution_of(argument);
+                    const bool type_reference =
+                        resolution &&
+                        (resolution->kind == ApiResolutionKind::type_reference ||
+                         resolution->kind == ApiResolutionKind::external_type_reference ||
+                         resolution->kind == ApiResolutionKind::script_type_reference ||
+                         resolution->kind == ApiResolutionKind::inner_type_reference);
+                    if (!argument_types[index].is_dynamic() &&
+                        argument_types[index].kind != TypeKind::integer && !type_reference &&
+                        argument_types[index].kind != TypeKind::script_resource) {
+                        diagnostics_.error(
+                            "GDS4144",
+                            context +
+                                " must be a TYPE_* constant, engine class, or script type",
+                            argument.span);
+                    }
+                    break;
+                }
+                }
+            }
+            switch (feature.result_rule) {
+            case IntrinsicResultRule::dynamic:
+                result = variant_type;
+                break;
+            case IntrinsicResultRule::boolean:
+                result = {TypeKind::boolean, "bool"};
+                break;
+            case IntrinsicResultRule::integer:
+                result = {TypeKind::integer, "int"};
+                break;
+            case IntrinsicResultRule::string:
+                result = {TypeKind::string, "String"};
+                break;
+            case IntrinsicResultRule::color:
+                result = {TypeKind::builtin, "Color"};
+                break;
+            case IntrinsicResultRule::integer_array:
+                result = {TypeKind::array, "Array[int]"};
+                break;
+            case IntrinsicResultRule::resource:
+                result = variant_type;
+                break;
+            }
+            ApiResolution resolution{ApiResolutionKind::intrinsic,
+                                     std::string{feature.name},
+                                     "",
+                                     "",
+                                     result,
+                                     feature.minimum_arguments,
+                                     feature.maximum_arguments,
+                                     false,
+                                     true};
+            resolution.intrinsic = feature.kind;
+            model_.api_resolutions_.insert_or_assign(&callee, std::move(resolution));
+        };
         if (language_intrinsic && (language_intrinsic->kind == IntrinsicKind::preload ||
                                    language_intrinsic->kind == IntrinsicKind::load)) {
             const bool is_preload = language_intrinsic->kind == IntrinsicKind::preload;
@@ -1710,31 +1803,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                            : std::uint16_t{0},
                                   method && method->is_vararg,
                                   true};
-            } else if (language_intrinsic && language_intrinsic->kind == IntrinsicKind::range) {
-                if (argument_count < language_intrinsic->minimum_arguments ||
-                    argument_count > language_intrinsic->maximum_arguments) {
-                    diagnostics_.error("GDS4075", "range expects 1 to 3 arguments",
-                                       expression.span);
-                }
-                for (std::size_t index = 0; index < argument_types.size(); ++index) {
-                    require_assignable({TypeKind::integer, "int"}, argument_types[index],
-                                       expression.operand(index + 1)->span,
-                                       "range argument " + std::to_string(index + 1));
-                }
-                result = {TypeKind::array, "Array[int]"};
-                ApiResolution resolution{
-                    ApiResolutionKind::intrinsic, "range", "", "", result, 1, 3, false, true};
-                resolution.intrinsic = IntrinsicKind::range;
-                model_.api_resolutions_.emplace(&callee, std::move(resolution));
-            } else if (language_intrinsic && language_intrinsic->kind == IntrinsicKind::length) {
-                if (argument_count != language_intrinsic->minimum_arguments)
-                    diagnostics_.error("GDS4076", "len expects exactly 1 argument",
-                                       expression.span);
-                result = {TypeKind::integer, "int"};
-                ApiResolution resolution{
-                    ApiResolutionKind::intrinsic, "len", "", "", result, 1, 1, false, true};
-                resolution.intrinsic = IntrinsicKind::length;
-                model_.api_resolutions_.emplace(&callee, std::move(resolution));
+            } else if (language_intrinsic) {
+                resolve_intrinsic(*language_intrinsic);
             } else if (resolve_utility(api_.find_utility_function(callee.value()))) {
             } else if (const auto* symbol = resolve(callee.value())) {
                 result = symbol->type;
@@ -2739,7 +2809,12 @@ bool SemanticAnalyzer::is_constant_expression(const ast::Expression& expression)
         const auto* resolution = model_.api_resolution_of(expression);
         return resolution && (resolution->kind == ApiResolutionKind::global_constant ||
                               resolution->kind == ApiResolutionKind::global_enum_value ||
-                              resolution->kind == ApiResolutionKind::external_type_reference);
+                              resolution->kind == ApiResolutionKind::type_reference ||
+                              resolution->kind == ApiResolutionKind::external_type_reference ||
+                              resolution->kind == ApiResolutionKind::script_type_reference ||
+                              resolution->kind == ApiResolutionKind::inner_type_reference ||
+                              resolution->kind == ApiResolutionKind::global_enum_type ||
+                              resolution->kind == ApiResolutionKind::script_enum_type);
     }
     case ast::ExpressionKind::member: {
         const auto* resolution = model_.api_resolution_of(expression);
@@ -2794,8 +2869,8 @@ bool SemanticAnalyzer::is_constant_expression(const ast::Expression& expression)
             return function && function->is_constant;
         }
         if (resolution->kind == ApiResolutionKind::intrinsic) {
-            return resolution->intrinsic == IntrinsicKind::length ||
-                   resolution->intrinsic == IntrinsicKind::preload;
+            const auto* feature = IntrinsicRegistry::latest().find(resolution->intrinsic);
+            return feature && feature->is_constant;
         }
         return false;
     }

@@ -2530,6 +2530,22 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             }
             const auto* utility_function =
                 is_intrinsic ? nullptr : api_.find_utility_function(callee.resolved_owner);
+            const auto emit_intrinsic_argument = [&](const std::size_t index) {
+                const auto& argument = *expression.operands[index];
+                if (callee.intrinsic != IntrinsicKind::is_instance_of || index != 2)
+                    return emit_expression(argument);
+                std::string type_name;
+                if (argument.resolution == ir::ResolutionKind::godot_type ||
+                    argument.resolution == ir::ResolutionKind::external_type ||
+                    argument.resolution == ir::ResolutionKind::script_type) {
+                    type_name = argument.resolved_owner;
+                } else if (argument.resolution == ir::ResolutionKind::inner_type) {
+                    type_name = inner_cpp_type(argument.resolved_owner);
+                }
+                return type_name.empty()
+                           ? emit_expression(argument)
+                           : "godot::Variant(" + godot_string_name(type_name) + ")";
+            };
             const bool zero_arity_vararg = utility_function && utility_function->is_vararg &&
                                            utility_function->required_arguments == 0 &&
                                            expression.operands.size() == 1;
@@ -2543,7 +2559,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 for (std::size_t index = 1; index < expression.operands.size(); ++index) {
                     if (index > 1)
                         direct += ", ";
-                    auto argument = emit_expression(*expression.operands[index]);
+                    auto argument = is_intrinsic ? emit_intrinsic_argument(index)
+                                                 : emit_expression(*expression.operands[index]);
                     if (!is_intrinsic) {
                         if (const auto* function =
                                 api_.find_utility_function(callee.resolved_owner)) {
@@ -2567,7 +2584,9 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             for (std::size_t index = 1; index < expression.operands.size(); ++index) {
                 result += "const auto _gdpp_utility_argument_" + suffix + "_" +
                           std::to_string(index - 1) + " = " +
-                          emit_expression(*expression.operands[index]) + "; ";
+                          (is_intrinsic ? emit_intrinsic_argument(index)
+                                        : emit_expression(*expression.operands[index])) +
+                          "; ";
             }
             std::string call = invocation + "(";
             for (std::size_t index = 1; index < expression.operands.size(); ++index) {
