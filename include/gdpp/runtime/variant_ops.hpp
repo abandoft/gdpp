@@ -7,6 +7,8 @@
 #include <godot_cpp/variant/signal.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/string_name.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
+#include <godot_cpp/variant/typed_dictionary.hpp>
 #include <godot_cpp/variant/variant.hpp>
 
 #include <array>
@@ -22,6 +24,27 @@ class Object;
 }
 
 namespace gdpp::runtime {
+
+// godot-cpp's TypedArray/TypedDictionary converting constructors call assign(), which coerces
+// elements. GDScript typed storage instead requires identical runtime container metadata. Route
+// dynamic boundaries through the strict base-container assignment operators to preserve that
+// contract.
+template <typename TypedContainer>
+[[nodiscard]] TypedContainer strict_typed_storage(const godot::Variant& value) {
+    TypedContainer result;
+    if constexpr (std::is_base_of_v<godot::Array, TypedContainer>) {
+        ERR_FAIL_COND_V_MSG(value.get_type() != godot::Variant::ARRAY, result,
+                            "Cannot assign a non-Array value to typed Array storage.");
+        result = godot::Array(value);
+    } else {
+        static_assert(std::is_base_of_v<godot::Dictionary, TypedContainer>,
+                      "strict_typed_storage requires a typed Godot container");
+        ERR_FAIL_COND_V_MSG(value.get_type() != godot::Variant::DICTIONARY, result,
+                            "Cannot assign a non-Dictionary value to typed Dictionary storage.");
+        result = godot::Dictionary(value);
+    }
+    return result;
+}
 
 [[nodiscard]] godot::Variant binary(godot::Variant::Operator operation, const godot::Variant& left,
                                     const godot::Variant& right);
