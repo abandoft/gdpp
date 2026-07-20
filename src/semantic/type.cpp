@@ -1,5 +1,7 @@
 #include "gdpp/semantic/type.hpp"
 
+#include "gdpp/semantic/conversion.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <unordered_map>
@@ -414,59 +416,7 @@ bool is_explicitly_typed_container(const Type& type) {
 }
 
 bool is_assignable(const Type& target, const Type& source) noexcept {
-    if (target.is_dynamic() || source.is_dynamic())
-        return true;
-    if (target == source)
-        return true;
-    if (target.kind == TypeKind::floating && source.kind == TypeKind::integer)
-        return true;
-    if (target.kind == TypeKind::integer && source.kind == TypeKind::floating)
-        return true;
-    if (target.kind == TypeKind::integer && source.kind == TypeKind::boolean)
-        return true;
-    if (target.kind == TypeKind::string_name && source.kind == TypeKind::string)
-        return true;
-    if (target.kind == TypeKind::string && source.kind == TypeKind::string_name)
-        return true;
-    if (source.kind == TypeKind::nil &&
-        (target.kind == TypeKind::object || target.kind == TypeKind::array ||
-         target.kind == TypeKind::dictionary || target.kind == TypeKind::string ||
-         target.kind == TypeKind::string_name)) {
-        return true;
-    }
-    if (target.kind == TypeKind::array && source.kind == TypeKind::array) {
-        const bool target_typed = target.name.rfind("Array[", 0) == 0;
-        const bool source_typed = source.name.rfind("Array[", 0) == 0;
-        return !target_typed || !source_typed || target.name == source.name;
-    }
-    if (target.kind == TypeKind::array && source.is_packed_array())
-        return true;
-    if (target.kind == TypeKind::dictionary && source.kind == TypeKind::dictionary) {
-        const bool target_typed = target.name.rfind("Dictionary[", 0) == 0;
-        const bool source_typed = source.name.rfind("Dictionary[", 0) == 0;
-        return !target_typed || !source_typed || target.name == source.name;
-    }
-    if (target.kind == TypeKind::enumeration &&
-        (source.kind == TypeKind::integer ||
-         (source.kind == TypeKind::enumeration && target.name == source.name)))
-        return true;
-    if (target.kind == TypeKind::script_resource && source.kind == TypeKind::script_resource)
-        return target.name == source.name;
-    if (target.kind == TypeKind::integer && source.kind == TypeKind::enumeration)
-        return true;
-    if (target.kind == TypeKind::builtin && source.kind == TypeKind::builtin) {
-        return target.name == source.name ||
-               (target.name == "Vector2" && source.name == "Vector2i") ||
-               (target.name == "Vector3" && source.name == "Vector3i") ||
-               (target.name == "Vector4" && source.name == "Vector4i") ||
-               (target.name == "Vector2i" && source.name == "Vector2") ||
-               (target.name == "Vector3i" && source.name == "Vector3") ||
-               (target.name == "Vector4i" && source.name == "Vector4");
-    }
-    if (target.kind == TypeKind::object && source.kind == TypeKind::object) {
-        return target.name == source.name || target.name == "Object";
-    }
-    return false;
+    return is_implicitly_convertible(target, source);
 }
 
 } // namespace gdpp

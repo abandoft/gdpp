@@ -3223,7 +3223,7 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         if (statement.expression()) {
             require_expression_assignable(expected_return_, *statement.expression(), actual,
                                           statement.span, "invalid return value");
-        } else {
+        } else if (expected_return_.kind != TypeKind::void_type) {
             require_assignable(expected_return_, actual, statement.span, "invalid return value");
         }
         return FlowResult{false, true, false, false};
