@@ -2960,15 +2960,28 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
     }
     case ast::StatementKind::if_statement: {
         (void)analyze_expression(*statement.condition());
+        const auto refinements = conditional_refinements(*statement.condition());
+        const auto entry_state = flow_types_;
+
+        flow_types_ = entry_state;
+        flow_types_.apply(refinements.when_true);
         scopes_.emplace_back();
         const auto body_flow = analyze_statements(statement.body());
         scopes_.pop_back();
+        const auto body_state = flow_types_;
+
         auto else_flow = FlowResult{true, false, false, false};
+        flow_types_ = entry_state;
+        flow_types_.apply(refinements.when_false);
         if (!statement.else_body().empty()) {
             scopes_.emplace_back();
             else_flow = analyze_statements(statement.else_body());
             scopes_.pop_back();
         }
+        const auto else_state = flow_types_;
+        flow_types_ = FlowTypeState::join_fallthrough(
+            {body_flow.falls_through ? &body_state : nullptr,
+             else_flow.falls_through ? &else_state : nullptr});
         return FlowResult{body_flow.falls_through || else_flow.falls_through,
                           body_flow.returns || else_flow.returns,
                           body_flow.breaks || else_flow.breaks,
@@ -3023,6 +3036,9 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
     }
     case ast::StatementKind::while_statement: {
         (void)analyze_expression(*statement.condition());
+        const auto refinements = conditional_refinements(*statement.condition());
+        const auto entry_state = flow_types_;
+        flow_types_.apply(refinements.when_true);
         ++loop_depth_;
         scopes_.emplace_back();
         const auto body_flow = analyze_statements(statement.body());
@@ -3032,6 +3048,11 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
             statement.condition()->kind() == ast::ExpressionKind::literal &&
             statement.condition()->literal_kind() == ast::LiteralKind::boolean &&
             statement.condition()->value() == "true";
+        auto normal_exit_state = entry_state;
+        normal_exit_state.apply(refinements.when_false);
+        flow_types_ = body_flow.breaks
+                          ? FlowTypeState::join_fallthrough({&entry_state, &normal_exit_state})
+                          : std::move(normal_exit_state);
         return FlowResult{!constant_true || body_flow.breaks, body_flow.returns, false, false};
     }
     case ast::StatementKind::for_statement: {

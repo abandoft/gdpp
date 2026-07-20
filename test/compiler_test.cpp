@@ -2364,6 +2364,28 @@ TEST_CASE("compiler lowers negated type tests and checked object downcasts") {
         std::string::npos);
 }
 
+TEST_CASE("semantic flow narrows type-tested values in if and while bodies") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "flow_type_tests.gd", "extends Node\n"
+                              "func object_name(value: Variant) -> String:\n"
+                              "    if value is Node:\n"
+                              "        return value.name\n"
+                              "    return \"\"\n"
+                              "func array_size(value: Variant) -> int:\n"
+                              "    while value is Array:\n"
+                              "        return value.size()\n"
+                              "    return 0\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("->get_name()") != std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<godot::Array>(value)") != std::string::npos);
+    REQUIRE(result.unit.source.find(".size()") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
+}
+
 TEST_CASE("typed scene nodes retain dynamic script dispatch for unknown members") {
     const gdpp::Compiler compiler;
     const auto result =
