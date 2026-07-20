@@ -591,8 +591,7 @@ TEST_CASE("compiler completes coroutine state inside structured await continuati
     REQUIRE(result.unit.source.find("return;", cancelled_branch) != std::string::npos);
     REQUIRE(result.unit.source.find("mutable -> godot::Variant {\n"
                                     "    godot::Variant value =") != std::string::npos);
-    REQUIRE(result.unit.source.find("return godot::Variant(static_cast<bool>(") !=
-            std::string::npos);
+    REQUIRE(result.unit.source.find("return godot::Variant(([&]() -> bool") != std::string::npos);
 }
 
 TEST_CASE("compiler routes native script identity through the compatibility runtime") {
@@ -3307,6 +3306,40 @@ TEST_CASE("dynamic logical operators short circuit and utility arguments keep so
     REQUIRE(first < second);
     REQUIRE(result.unit.source.find(" = static_cast<int64_t>(1);", first) != std::string::npos);
     REQUIRE(result.unit.source.find(" = static_cast<int64_t>(2);", second) != std::string::npos);
+}
+
+TEST_CASE("compiler sequences every eager binary operand before evaluation") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "binary_order.gd",
+        "extends Resource\n"
+        "func mark_float(value: float) -> float:\n"
+        "    return value\n"
+        "func mark_string(value: String) -> String:\n"
+        "    return value\n"
+        "func mark_vector(value: Vector2) -> Vector2:\n"
+        "    return value\n"
+        "func mark_variant(value: Variant) -> Variant:\n"
+        "    return value\n"
+        "func ordered() -> Array:\n"
+        "    var arithmetic := mark_float(1.0) + mark_float(2.0)\n"
+        "    var comparison := mark_string(\"a\") < mark_string(\"b\")\n"
+        "    var builtin := mark_vector(Vector2.ONE) + mark_vector(Vector2.RIGHT)\n"
+        "    var dynamic := mark_variant(1) + mark_variant(2)\n"
+        "    var membership := mark_variant(\"x\") in mark_variant([\"x\"])\n"
+        "    var power := mark_float(2.0) ** mark_float(3.0)\n"
+        "    return [arithmetic, comparison, builtin, dynamic, membership, power]\n");
+
+    REQUIRE(result.success);
+    const auto first_left = result.unit.source.find("const auto _gdpp_binary_left_");
+    const auto first_right = result.unit.source.find("const auto _gdpp_binary_right_", first_left);
+    REQUIRE(first_left != std::string::npos);
+    REQUIRE(first_right != std::string::npos);
+    REQUIRE(first_left < first_right);
+    for (const auto* operation : {"OP_ADD", "OP_IN", "OP_POWER"})
+        REQUIRE(result.unit.source.find(operation) != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::binary(godot::Variant::OP_IN, "
+                                    "mark_variant(") == std::string::npos);
 }
 
 TEST_CASE("compiler handles generated logical guard chains with bounded stack depth") {
