@@ -1405,6 +1405,10 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
     if (source.kind == TypeKind::nil && target.kind == TypeKind::object)
         return "{}";
     if (describe_container_type(target)) {
+        if (source.is_dynamic() && is_explicitly_typed_container(target)) {
+            return "gdpp::runtime::strict_typed_storage<" + cpp_type(target) +
+                   ">(godot::Variant(" + value + "))";
+        }
         return cpp_type(target) + "(godot::Variant(" + value + "))";
     }
     if (target.kind == TypeKind::object && source.kind == TypeKind::object &&
