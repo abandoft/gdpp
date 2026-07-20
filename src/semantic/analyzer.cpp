@@ -4705,6 +4705,13 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
     current_inner_class_ = nullptr;
     current_inner_base_ = nullptr;
     script_tool_ = script.tool;
+    const auto abstract_annotations = static_cast<std::size_t>(std::count_if(
+        script.annotations.begin(), script.annotations.end(),
+        [](const ast::Annotation& annotation) { return annotation.name == "abstract"; }));
+    if (abstract_annotations > 1) {
+        diagnostics_.error("GDS4147", "@abstract can only be used once per script class",
+                           script.span);
+    }
     for (const auto& annotation : script.annotations) {
         if (annotation.name == "icon" && (annotation.arguments.size() != 1 ||
                                           !is_string_literal(*annotation.arguments.front()))) {

@@ -1799,11 +1799,14 @@ TEST_CASE("semantic analysis enforces abstract function declaration shape") {
                                "class_name StaticAbstract\n"
                                "@abstract\n"
                                "static func execute() -> void\n");
+    const auto duplicate_class = compiler.compile(
+        "duplicate_abstract_class.gd", "@abstract @abstract class_name DuplicateClass\n");
 
     REQUIRE(!duplicate.success);
     REQUIRE(!bodyful.success);
     REQUIRE(!bodyless.success);
     REQUIRE(!static_abstract.success);
+    REQUIRE(!duplicate_class.success);
     REQUIRE(std::any_of(duplicate.diagnostics.begin(), duplicate.diagnostics.end(),
                         [](const auto& diagnostic) { return diagnostic.code == "GDS4147"; }));
     REQUIRE(std::any_of(bodyful.diagnostics.begin(), bodyful.diagnostics.end(),
@@ -1811,6 +1814,8 @@ TEST_CASE("semantic analysis enforces abstract function declaration shape") {
     REQUIRE(std::any_of(bodyless.diagnostics.begin(), bodyless.diagnostics.end(),
                         [](const auto& diagnostic) { return diagnostic.code == "GDS4148"; }));
     REQUIRE(std::any_of(static_abstract.diagnostics.begin(), static_abstract.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4147"; }));
+    REQUIRE(std::any_of(duplicate_class.diagnostics.begin(), duplicate_class.diagnostics.end(),
                         [](const auto& diagnostic) { return diagnostic.code == "GDS4147"; }));
 }
 
