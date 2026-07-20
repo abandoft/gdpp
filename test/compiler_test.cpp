@@ -1778,6 +1778,42 @@ TEST_CASE("compiler rejects every implicit instance dependency from static conte
     }
 }
 
+TEST_CASE("semantic analysis enforces abstract function declaration shape") {
+    const gdpp::Compiler compiler;
+    const auto duplicate = compiler.compile(
+        "duplicate_abstract.gd", "@abstract\n"
+                                 "class_name DuplicateAbstract\n"
+                                 "@abstract\n"
+                                 "@abstract\n"
+                                 "func execute()\n");
+    const auto bodyful = compiler.compile(
+        "bodyful_abstract.gd", "@abstract\n"
+                                "class_name BodyfulAbstract\n"
+                                "@abstract\n"
+                                "func execute() -> void:\n"
+                                "    pass\n");
+    const auto bodyless =
+        compiler.compile("bodyless.gd", "func execute() -> void\n");
+    const auto static_abstract = compiler.compile(
+        "static_abstract.gd", "@abstract\n"
+                               "class_name StaticAbstract\n"
+                               "@abstract\n"
+                               "static func execute() -> void\n");
+
+    REQUIRE(!duplicate.success);
+    REQUIRE(!bodyful.success);
+    REQUIRE(!bodyless.success);
+    REQUIRE(!static_abstract.success);
+    REQUIRE(std::any_of(duplicate.diagnostics.begin(), duplicate.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4147"; }));
+    REQUIRE(std::any_of(bodyful.diagnostics.begin(), bodyful.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4148"; }));
+    REQUIRE(std::any_of(bodyless.diagnostics.begin(), bodyless.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4148"; }));
+    REQUIRE(std::any_of(static_abstract.diagnostics.begin(), static_abstract.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4147"; }));
+}
+
 TEST_CASE("compiler resolves versioned builtin value constants") {
     const gdpp::Compiler compiler;
     gdpp::CompileOptions options;

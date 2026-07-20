@@ -3631,13 +3631,35 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
     in_function_ = true;
     current_function_name_ = function.name;
     current_callable_suspends_ = false;
+    const auto abstract_annotations = static_cast<std::size_t>(std::count_if(
+        function.annotations.begin(), function.annotations.end(),
+        [](const ast::Annotation& annotation) { return annotation.name == "abstract"; }));
     for (const auto& annotation : function.annotations) {
-        if (annotation.name == "warning_ignore" || annotation.name == "rpc")
+        if (annotation.name == "warning_ignore" || annotation.name == "rpc" ||
+            annotation.name == "abstract") {
             continue;
+        }
         diagnostics_.error("GDS4112",
                            "function annotation '@" + annotation.name +
                                "' is recognized but its runtime lowering is not implemented",
                            annotation.span);
+    }
+    if (abstract_annotations > 1) {
+        diagnostics_.error("GDS4147", "@abstract can only be used once per function",
+                           function.span);
+    }
+    if (function.is_abstract && function.is_static) {
+        diagnostics_.error("GDS4147", "@abstract cannot be applied to static functions",
+                           function.span);
+    }
+    const bool valid_abstract_contract = abstract_annotations == 1 && !function.is_static;
+    if (valid_abstract_contract && function.has_body) {
+        diagnostics_.error("GDS4148", "an abstract function cannot have a body", function.span);
+    } else if (!valid_abstract_contract && !function.has_body) {
+        diagnostics_.error(
+            "GDS4148",
+            "a function must have a body or be marked with one valid @abstract annotation",
+            function.span);
     }
     if (function.name == "_init" && function.is_static)
         diagnostics_.error("GDS4065", "_init cannot be static", function.span);
@@ -3810,7 +3832,7 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
         validate_override("Godot virtual", api_return, api_parameters,
                           virtual_method->required_arguments, virtual_method->is_static);
     }
-    const auto flow = analyze_statements(function.body);
+    const auto flow = valid_abstract_contract ? FlowResult{} : analyze_statements(function.body);
     if (current_callable_suspends_)
         model_.coroutine_functions_.insert(&function);
     scopes_.pop_back();

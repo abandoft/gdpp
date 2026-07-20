@@ -141,6 +141,27 @@ TEST_CASE("typed IR models abstract methods as non-executable contracts") {
                         [](const auto& diagnostic) { return diagnostic.code == "GDS5039"; }));
 }
 
+TEST_CASE("typed IR preserves parsed abstract classes and method signatures") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module = lower_source("@abstract\n"
+                                     "class_name AbstractWorker\n"
+                                     "@abstract\n"
+                                     "func execute(value: int) -> String\n",
+                                     diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE(module.is_abstract);
+    REQUIRE_EQ(module.functions.size(), std::size_t{1});
+    REQUIRE(module.functions.front().is_abstract);
+    REQUIRE(module.functions.front().body.empty());
+    REQUIRE_EQ(module.functions.front().parameters.size(), std::size_t{1});
+    REQUIRE_EQ(module.functions.front().return_type.kind, gdpp::TypeKind::string);
+
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+    REQUIRE(gdpp::MirLowerer{}.lower(module).functions.empty());
+}
+
 TEST_CASE("typed IR preserves flow-proven non-null object reads") {
     gdpp::DiagnosticBag diagnostics;
     const auto module = lower_source("extends Node\n"
