@@ -64,6 +64,14 @@ add_test(
             -P "${CMAKE_CURRENT_SOURCE_DIR}/addon_descriptor_test.cmake"
 )
 
+add_test(
+    NAME gdpp.sdk.target_registration
+    COMMAND "${CMAKE_COMMAND}"
+            -DGDPP_TEST_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+            -DGDPP_TEST_BINARY_DIR=${PROJECT_BINARY_DIR}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/target_sdk_registration_test.cmake"
+)
+
 if(GDPP_BUILD_EXTENSION)
     add_test(
         NAME gdpp.sdk.profile_contract
