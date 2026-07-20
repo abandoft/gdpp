@@ -45,6 +45,8 @@ func _run() -> void:
     var annotation_contract_class := _native_class_for("annotation_contract_case.gd")
     var static_context_class := _native_class_for("static_context_case.gd")
     var evaluation_order_class := _native_class_for("evaluation_order_case.gd")
+    var abstract_contract_class := _native_class_for("abstract_contract.gd")
+    var abstract_implementation_class := _native_class_for("abstract_implementation.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -66,6 +68,8 @@ func _run() -> void:
         or annotation_contract_class.is_empty()
         or static_context_class.is_empty()
         or evaluation_order_class.is_empty()
+        or abstract_contract_class.is_empty()
+        or abstract_implementation_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
@@ -258,6 +262,44 @@ func _run() -> void:
         return
     native_annotation = null
     script_annotation = null
+    var invalid_abstract_instance: Object = ClassDB.instantiate(abstract_contract_class)
+    if invalid_abstract_instance != null:
+        push_error("ClassDB instantiated an abstract native contract")
+        invalid_abstract_instance.free()
+        quit(1)
+        return
+    var native_abstract_implementation: Object = ClassDB.instantiate(
+        abstract_implementation_class
+    )
+    if (
+        native_abstract_implementation == null
+        or native_abstract_implementation.call("execute", 41) != 42
+    ):
+        push_error("Concrete native abstract-contract implementation is unavailable")
+        quit(1)
+        return
+    var abstract_engine_version := Engine.get_version_info()
+    var supports_gdscript_abstract := (
+        int(abstract_engine_version.get("major", 0)) > 4
+        or (
+            int(abstract_engine_version.get("major", 0)) == 4
+            and int(abstract_engine_version.get("minor", 0)) >= 5
+        )
+    )
+    if supports_gdscript_abstract:
+        var script_abstract_implementation: Object = load(
+            "res://abstract_implementation.gd"
+        ).new()
+        if (
+            script_abstract_implementation == null
+            or script_abstract_implementation.call("execute", 41)
+                != native_abstract_implementation.call("execute", 41)
+        ):
+            push_error("Abstract contract dispatch differs from GDScript")
+            quit(1)
+            return
+        script_abstract_implementation = null
+    native_abstract_implementation = null
     var native_static_context: Object = ClassDB.instantiate(static_context_class)
     var script_static_context: Object = load("res://static_context_case.gd").new()
     if native_static_context == null or script_static_context == null:
