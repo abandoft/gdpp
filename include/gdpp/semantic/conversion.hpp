@@ -26,5 +26,7 @@ enum class ConversionKind {
 // constructors silently coerce every element.
 [[nodiscard]] bool is_typed_storage_compatible(const Type& target,
                                                const Type& source) noexcept;
+[[nodiscard]] bool is_explicit_runtime_constructible(const Type& target,
+                                                     const Type& source) noexcept;
 
 } // namespace gdpp

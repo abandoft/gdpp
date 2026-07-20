@@ -217,4 +217,16 @@ bool is_typed_storage_compatible(const Type& target, const Type& source) noexcep
     return target.kind == source.kind && target.name == source.name;
 }
 
+bool is_explicit_runtime_constructible(const Type& target, const Type& source) noexcept {
+    if (target.is_dynamic() || source.is_dynamic())
+        return true;
+    const auto conversion = classify_conversion(target, source);
+    if (conversion == ConversionKind::incompatible)
+        return false;
+    // Variant::can_convert advertises general stringification, which GDScript's `as` analyzer
+    // accepts. The VM then invokes String's one-argument constructors, whose only source types are
+    // String, StringName and NodePath. Every additional advertised source fails deterministically.
+    return target.kind != TypeKind::string || conversion != ConversionKind::explicit_only;
+}
+
 } // namespace gdpp

@@ -219,6 +219,22 @@ TEST_CASE("typed storage accepts only its exact runtime container signature") {
     REQUIRE(gdpp::is_typed_storage_compatible(untyped_array, floats));
 }
 
+TEST_CASE("explicit runtime construction excludes analyzer-only stringification") {
+    const gdpp::Type string{gdpp::TypeKind::string, "String"};
+    const gdpp::Type string_name{gdpp::TypeKind::string_name, "StringName"};
+    const gdpp::Type node_path{gdpp::TypeKind::builtin, "NodePath"};
+    const gdpp::Type integer{gdpp::TypeKind::integer, "int"};
+    const gdpp::Type array{gdpp::TypeKind::array, "Array"};
+    const gdpp::Type dynamic{gdpp::TypeKind::variant, "Variant"};
+
+    REQUIRE(gdpp::is_explicit_runtime_constructible(string, string_name));
+    REQUIRE(gdpp::is_explicit_runtime_constructible(string, node_path));
+    REQUIRE(!gdpp::is_explicit_runtime_constructible(string, integer));
+    REQUIRE(!gdpp::is_explicit_runtime_constructible(string, array));
+    REQUIRE(gdpp::is_explicit_runtime_constructible(string, dynamic));
+    REQUIRE(gdpp::is_explicit_runtime_constructible(integer, string));
+}
+
 TEST_CASE("dynamic conversion never makes void or null value types assignable") {
     const gdpp::Type variant{gdpp::TypeKind::variant, "Variant"};
     const gdpp::Type integer{gdpp::TypeKind::integer, "int"};
