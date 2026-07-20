@@ -5,6 +5,7 @@
 /.vscode/
 
 /example/.godot/
+/example/*.gd.uid
 /example/addons/gdpp/binary/
 /example/addons/gdpp/sdk/
 /example/addons/gdpp/build/
