@@ -25,6 +25,20 @@ class Object;
 
 namespace gdpp::runtime {
 
+template <typename Target>
+[[nodiscard]] Target explicit_variant_cast(const godot::Variant& value,
+                                           const godot::Variant::Type target_type) {
+    bool compatible = godot::Variant::can_convert(value.get_type(), target_type);
+    if (target_type == godot::Variant::STRING) {
+        compatible = value.get_type() == godot::Variant::STRING ||
+                     value.get_type() == godot::Variant::STRING_NAME ||
+                     value.get_type() == godot::Variant::NODE_PATH;
+    }
+    ERR_FAIL_COND_V_MSG(!compatible, Target{},
+                        "GDScript explicit cast has no compatible runtime constructor.");
+    return static_cast<Target>(value);
+}
+
 // godot-cpp's TypedArray/TypedDictionary converting constructors call assign(), which coerces
 // elements. GDScript typed storage instead requires identical runtime container metadata. Route
 // dynamic boundaries through the strict base-container assignment operators to preserve that
