@@ -112,6 +112,7 @@ ir::ExpressionPtr make_temporary_reference(const std::string& name, const Type& 
     auto reference = std::make_unique<ir::Expression>();
     reference->kind = ir::ExpressionKind::identifier;
     reference->type = type;
+    reference->storage_type = type;
     reference->span = span;
     reference->value = name;
     return reference;
@@ -121,6 +122,7 @@ ir::ExpressionPtr make_boolean_literal(bool value, SourceSpan span) {
     auto literal = std::make_unique<ir::Expression>();
     literal->kind = ir::ExpressionKind::literal;
     literal->type = {TypeKind::boolean, "bool"};
+    literal->storage_type = literal->type;
     literal->span = span;
     literal->value = value ? "true" : "false";
     literal->literal_kind = ir::LiteralKind::boolean;
@@ -132,6 +134,7 @@ ir::ExpressionPtr make_truthiness(ir::ExpressionPtr expression) {
     auto negate = std::make_unique<ir::Expression>();
     negate->kind = ir::ExpressionKind::unary;
     negate->type = {TypeKind::boolean, "bool"};
+    negate->storage_type = negate->type;
     negate->span = span;
     negate->value = "not";
     negate->operands.push_back(std::move(expression));
@@ -139,6 +142,7 @@ ir::ExpressionPtr make_truthiness(ir::ExpressionPtr expression) {
     auto truthy = std::make_unique<ir::Expression>();
     truthy->kind = ir::ExpressionKind::unary;
     truthy->type = {TypeKind::boolean, "bool"};
+    truthy->storage_type = truthy->type;
     truthy->span = span;
     truthy->value = "not";
     truthy->operands.push_back(std::move(negate));
