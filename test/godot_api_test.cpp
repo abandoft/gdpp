@@ -134,9 +134,11 @@ TEST_CASE("Godot 4.7 metadata exposes language utilities globals enums and opera
     REQUIRE(clamp != nullptr);
     REQUIRE_EQ(clamp->required_arguments, std::uint16_t{3});
     REQUIRE_EQ(std::string_view{clamp->return_type}, std::string_view{"float"});
+    REQUIRE(clamp->is_constant);
     REQUIRE(print != nullptr);
     REQUIRE(str != nullptr);
     REQUIRE(maximum != nullptr);
+    REQUIRE(!print->is_constant);
     REQUIRE_EQ(print->required_arguments, std::uint16_t{0});
     REQUIRE_EQ(str->required_arguments, std::uint16_t{0});
     REQUIRE_EQ(maximum->required_arguments, std::uint16_t{2});
