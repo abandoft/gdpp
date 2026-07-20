@@ -155,7 +155,9 @@ TEST_CASE("compiler converts packed arrays to compatible typed Array parameters"
                                          "    consume(values)\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("godot::Array(") != std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "godot::TypedArray<godot::String>(godot::Variant(") !=
+            std::string::npos);
 }
 
 TEST_CASE("semantic analysis validates typed container arguments eagerly") {
@@ -435,8 +437,10 @@ TEST_CASE("compiler preserves annotation-implied exports and Godot object conver
     REQUIRE(
         result.unit.source.find("godot::PropertyInfo(godot::Variant::COLOR, \"untyped_color\"") !=
         std::string::npos);
-    REQUIRE(result.unit.source.find("godot::Color::hex") != std::string::npos);
-    REQUIRE(result.unit.source.find("->get_rid()") != std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<godot::Color>(godot::Variant(") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<godot::RID>(godot::Variant(") !=
+            std::string::npos);
 }
 
 TEST_CASE("compiler generates registered internal classes and native lambda Callables") {
@@ -1496,7 +1500,8 @@ TEST_CASE("compiler preserves explicit typed iterator variables") {
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("_gdpp_array_iterable_") != std::string::npos);
-    REQUIRE(result.unit.source.find("int64_t value = static_cast<int64_t>(_gdpp_array_iterable_") !=
+    REQUIRE(result.unit.source.find(
+                "int64_t value = static_cast<int64_t>(godot::Variant(_gdpp_array_iterable_") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::iter_init") == std::string::npos);
 }
@@ -1702,8 +1707,9 @@ TEST_CASE("compiler preserves typed subscript and builtin component scalar seman
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("_gdpp_subscript_container_") != std::string::npos);
-    REQUIRE(result.unit.source.find("static_cast<int64_t>(values[") != std::string::npos);
-    REQUIRE(result.unit.source.find("static_cast<int64_t>(godot::Variant(values[") ==
+    REQUIRE(result.unit.source.find("static_cast<int64_t>(godot::Variant(values[") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<int64_t>(values[") ==
             std::string::npos);
     REQUIRE(result.unit.source.find("static_cast<int64_t>(_gdpp_subscript_container_") !=
             std::string::npos);
@@ -2040,7 +2046,8 @@ TEST_CASE("compiler applies Godot-compatible numeric and builtin conversions") {
                                          "    return randi_range(bounds.x, bounds.y)\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("godot::Color(godot::String(\"bcbcbc\"))") !=
+    REQUIRE(result.unit.source.find(
+                "static_cast<godot::Color>(godot::Variant(godot::String(\"bcbcbc\")))") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("static_cast<int64_t>") != std::string::npos);
 }
@@ -2311,7 +2318,8 @@ TEST_CASE("compiler resolves inherited engine constants and qualified class enum
     REQUIRE(result.unit.source.find(" = 2000;") != std::string::npos);
     REQUIRE(result.unit.source.find(" = 1007;") != std::string::npos);
     REQUIRE(result.unit.source.find("return (_gdpp_integer_left_") != std::string::npos);
-    REQUIRE(result.unit.source.find("static_cast<int64_t>(0)") != std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<int64_t>(godot::Variant(0))") !=
+            std::string::npos);
 }
 
 TEST_CASE("compiler rejects invalid enum declarations and members") {
@@ -2800,7 +2808,8 @@ TEST_CASE("semantic flow narrows type-tested values in if and while bodies") {
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") != std::string::npos);
     REQUIRE(result.unit.source.find("->get_name()") != std::string::npos);
-    REQUIRE(result.unit.source.find("static_cast<godot::Array>(value)") != std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<godot::Array>(godot::Variant(value))") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find(".size()") != std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
 }
@@ -2860,7 +2869,8 @@ TEST_CASE("semantic flow narrows short-circuit logical operands") {
                          "    return value is Node and value is Node2D and value.position.x > 0\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("static_cast<int64_t>(value)") != std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<int64_t>(godot::Variant(value))") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") != std::string::npos);
     REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node2D>") != std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
@@ -2944,8 +2954,10 @@ TEST_CASE("semantic flow narrows structural match subjects and guarded bindings"
                                           "        _: return \"\"\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("static_cast<godot::Array>(value)") != std::string::npos);
-    REQUIRE(result.unit.source.find("static_cast<godot::Dictionary>(value)") != std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<godot::Array>(godot::Variant(value))") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<godot::Dictionary>(godot::Variant(value))") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") != std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::call_dynamic") == std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
@@ -3284,7 +3296,8 @@ TEST_CASE("builtin unary operators use Variant evaluation when godot-cpp has no 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("godot::Variant::OP_POSITIVE") != std::string::npos);
     REQUIRE(result.unit.source.find("godot::Variant::OP_NEGATE") != std::string::npos);
-    REQUIRE(result.unit.source.find("static_cast<godot::Vector2>(gdpp::runtime::unary(") !=
+    REQUIRE(result.unit.source.find(
+                "static_cast<godot::Vector2>(godot::Variant(gdpp::runtime::unary(") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("return (+value);") != std::string::npos);
 }
@@ -3669,7 +3682,8 @@ TEST_CASE("flow refinement remains bounded across generated logical guard chains
 
     REQUIRE(result.success);
     REQUIRE(result.metrics.ast_expression_count >= comparison_count * 2U);
-    REQUIRE(result.unit.source.find("static_cast<int64_t>(value)") != std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<int64_t>(godot::Variant(value))") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::binary") == std::string::npos);
 }
 

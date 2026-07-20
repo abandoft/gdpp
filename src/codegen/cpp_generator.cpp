@@ -1,4 +1,5 @@
 #include "gdpp/codegen/cpp_generator.hpp"
+#include "gdpp/semantic/conversion.hpp"
 #include "gdpp/semantic/godot_api.hpp"
 
 #include <algorithm>
@@ -1389,6 +1390,8 @@ bool CodeGenerator::managed_constant_reference(const ir::Expression& expression)
 
 std::string CodeGenerator::emit_conversion(const Type& target, const Type& source,
                                            std::string value) const {
+    if (target.kind == TypeKind::void_type)
+        return "(static_cast<void>(" + value + "))";
     if (target.is_dynamic())
         return value;
     const bool target_external = target.kind == TypeKind::object && script_symbols_ &&
@@ -1397,17 +1400,12 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
                                  script_symbols_->find_external(source.name);
     if (target_external)
         return "godot::Variant(" + value + ")";
-    if (source.kind == TypeKind::nil &&
-        (target.kind == TypeKind::object || target.kind == TypeKind::array ||
-         target.kind == TypeKind::dictionary || target.kind == TypeKind::string ||
-         target.kind == TypeKind::string_name))
+    if (target == source)
+        return value;
+    if (source.kind == TypeKind::nil && target.kind == TypeKind::object)
         return "{}";
     if (describe_container_type(target)) {
-        if (target == source)
-            return value;
-        if (source.is_packed_array())
-            value = "godot::Array(" + value + ")";
-        return cpp_type(target) + "(" + value + ")";
+        return cpp_type(target) + "(godot::Variant(" + value + "))";
     }
     if (target.kind == TypeKind::object && source.kind == TypeKind::object &&
         target.name != source.name) {
@@ -1437,46 +1435,6 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
             object_cpp.pop_back();
         return "godot::Object::cast_to<" + object_cpp + ">(" + source_object + ")";
     }
-    if (!source.is_dynamic()) {
-        if (target.kind == TypeKind::builtin && target.name == "Color" &&
-            source.kind == TypeKind::integer) {
-            return "godot::Color::hex(static_cast<uint32_t>(" + value + "))";
-        }
-        if (target.kind == TypeKind::builtin && target.name == "RID" &&
-            source.kind == TypeKind::object && api_.find_method(source.name, "get_rid")) {
-            if (api_.inherits(source.name, "RefCounted")) {
-                return "((" + value + ").is_valid() ? (" + value + ")->get_rid() : godot::RID())";
-            }
-            return "((" + value + ") != nullptr ? (" + value + ")->get_rid() : godot::RID())";
-        }
-        if ((target.kind == TypeKind::integer || target.kind == TypeKind::floating ||
-             target.kind == TypeKind::boolean) &&
-            (source.kind == TypeKind::string || source.kind == TypeKind::string_name)) {
-            return "static_cast<" + cpp_type(target) + ">(godot::Variant(" + value + "))";
-        }
-        if (target.kind == TypeKind::string && source.kind == TypeKind::string_name)
-            return "godot::String(" + value + ")";
-        if (target.kind == TypeKind::string_name && source.kind == TypeKind::string)
-            return "godot::StringName(" + value + ")";
-        if (target.kind == TypeKind::array && source.is_packed_array())
-            return "godot::Array(" + value + ")";
-        if (target.kind == TypeKind::integer && source.kind == TypeKind::boolean)
-            return "static_cast<int64_t>(" + value + ")";
-        if (target.is_numeric() && source.is_numeric() && target.kind != source.kind)
-            return "static_cast<" + cpp_type(target) + ">(" + value + ")";
-        if (target.kind == TypeKind::builtin && target != source) {
-            for (std::size_t occurrence = 0;; ++occurrence) {
-                const auto* constructor = api_.find_constructor(target.name, 1, occurrence);
-                if (!constructor)
-                    break;
-                const auto* argument = api_.argument(*constructor, 0);
-                if (argument && is_assignable(type_from_godot_api(argument->type), source)) {
-                    return cpp_type(target) + "(" + value + ")";
-                }
-            }
-        }
-        return value;
-    }
     if (target.kind == TypeKind::object) {
         const auto target_cpp = cpp_type(target);
         const std::string ref_prefix{"godot::Ref<"};
@@ -1491,7 +1449,15 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
             object_cpp.pop_back();
         return "godot::Object::cast_to<" + object_cpp + ">((" + value + ").get_validated_object())";
     }
-    return "static_cast<" + cpp_type(target) + ">(" + value + ")";
+    const auto conversion = classify_conversion(target, source);
+    if (conversion == ConversionKind::implicit || conversion == ConversionKind::dynamic) {
+        return "static_cast<" + cpp_type(target) + ">(godot::Variant(" + value + "))";
+    }
+    diagnostics_.error("GDS3008",
+                       "unresolved conversion from " + source.display_name() + " to " +
+                           target.display_name() + " reached code generation",
+                       {});
+    return value;
 }
 
 std::string CodeGenerator::emit_parameter_default(const ir::Parameter& parameter) const {
