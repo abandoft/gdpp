@@ -217,6 +217,15 @@ bool is_typed_storage_compatible(const Type& target, const Type& source) noexcep
     return target.kind == source.kind && target.name == source.name;
 }
 
+bool is_runtime_storage_compatible(const Type& target, const Type& source) noexcept {
+    if (!is_typed_storage_compatible(target, source))
+        return false;
+    // RID <- Object is a native binding conversion. A typed GDScript local instead retains the
+    // Object Variant unchanged, which a native RID slot cannot represent without changing it.
+    return !(target.kind == TypeKind::builtin && target.name == "RID" &&
+             source.kind == TypeKind::object);
+}
+
 bool is_explicit_runtime_constructible(const Type& target, const Type& source) noexcept {
     if (target.is_dynamic() || source.is_dynamic())
         return true;

@@ -219,6 +219,17 @@ TEST_CASE("typed storage accepts only its exact runtime container signature") {
     REQUIRE(gdpp::is_typed_storage_compatible(untyped_array, floats));
 }
 
+TEST_CASE("runtime storage separates RID binding compatibility from local representation") {
+    const gdpp::Type rid{gdpp::TypeKind::builtin, "RID"};
+    const gdpp::Type object{gdpp::TypeKind::object, "Object"};
+    const gdpp::Type dynamic{gdpp::TypeKind::variant, "Variant"};
+
+    REQUIRE(gdpp::is_implicitly_convertible(rid, object));
+    REQUIRE(!gdpp::is_runtime_storage_compatible(rid, object));
+    REQUIRE(gdpp::is_runtime_storage_compatible(rid, rid));
+    REQUIRE(gdpp::is_runtime_storage_compatible(rid, dynamic));
+}
+
 TEST_CASE("explicit runtime construction excludes analyzer-only stringification") {
     const gdpp::Type string{gdpp::TypeKind::string, "String"};
     const gdpp::Type string_name{gdpp::TypeKind::string_name, "StringName"};
