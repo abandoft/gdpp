@@ -334,6 +334,8 @@ void SemanticAnalyzer::declare(Symbol symbol) {
                            symbol.declaration);
         return;
     }
+    if (symbol.identity == 0)
+        symbol.identity = next_symbol_identity_++;
     scope.emplace(symbol.name, std::move(symbol));
 }
 

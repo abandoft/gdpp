@@ -2,6 +2,7 @@
 
 #include "gdpp/core/diagnostic.hpp"
 #include "gdpp/frontend/ast.hpp"
+#include "gdpp/semantic/flow.hpp"
 #include "gdpp/semantic/godot_api.hpp"
 #include "gdpp/semantic/intrinsics.hpp"
 #include "gdpp/semantic/iteration.hpp"
@@ -43,20 +44,22 @@ struct Symbol {
     std::optional<std::string> constant_string_value;
     SymbolStorage storage{SymbolStorage::class_member};
     std::optional<std::int64_t> constant_integer_value;
+    FlowSymbolId identity{0};
 
     Symbol() = default;
     Symbol(SymbolKind symbol_kind, std::string symbol_name, Type symbol_type,
            SourceSpan declaration_span, bool symbol_read_only,
            std::optional<std::string> string_value = std::nullopt,
            SymbolStorage symbol_storage = SymbolStorage::class_member,
-           std::optional<std::int64_t> integer_value = std::nullopt)
+           std::optional<std::int64_t> integer_value = std::nullopt,
+           FlowSymbolId symbol_identity = 0)
         : kind(symbol_kind), name(std::move(symbol_name)), type(std::move(symbol_type)),
           declaration(declaration_span), read_only(symbol_read_only),
           constant_string_value(std::move(string_value)),
           storage(symbol_kind == SymbolKind::local || symbol_kind == SymbolKind::parameter
                       ? SymbolStorage::function_local
                       : symbol_storage),
-          constant_integer_value(integer_value) {}
+          constant_integer_value(integer_value), identity(symbol_identity) {}
 };
 
 enum class ApiResolutionKind {
@@ -269,6 +272,7 @@ class SemanticAnalyzer final {
     std::size_t loop_depth_{0};
     std::size_t await_operand_depth_{0};
     const ast::Expression* discarded_expression_{nullptr};
+    FlowSymbolId next_symbol_identity_{1};
 };
 
 } // namespace gdpp
