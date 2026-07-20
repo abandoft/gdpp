@@ -1853,6 +1853,25 @@ TEST_CASE("semantic analysis rejects abstract internal class construction") {
                         [](const auto& diagnostic) { return diagnostic.code == "GDS4111"; }));
 }
 
+TEST_CASE("semantic analysis rejects calls to unimplemented abstract parents") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "abstract_super.gd", "@abstract class Contract:\n"
+                             "    @abstract func execute() -> void\n"
+                             "class Implementation extends Contract:\n"
+                             "    func execute() -> void:\n"
+                             "        super()\n"
+                             "    func invoke_parent() -> void:\n"
+                             "        super.execute()\n");
+
+    REQUIRE(!result.success);
+    REQUIRE_EQ(std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                             [](const auto& diagnostic) {
+                                 return diagnostic.code == "GDS4150";
+                             }),
+               std::ptrdiff_t{2});
+}
+
 TEST_CASE("compiler resolves versioned builtin value constants") {
     const gdpp::Compiler compiler;
     gdpp::CompileOptions options;

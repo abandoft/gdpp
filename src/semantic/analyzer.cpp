@@ -1812,6 +1812,13 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 const auto* method =
                     member ? nullptr : api_.find_method(base_type_, current_function_name_);
                 if (member && member->kind == ScriptMemberKind::function) {
+                    if (member->is_abstract) {
+                        diagnostics_.error(
+                            "GDS4150",
+                            "cannot call abstract parent method '" + current_function_name_ +
+                                "' because it has no implementation",
+                            expression.span);
+                    }
                     if (!instance_context_available_ && !member->is_static)
                         diagnose_static_instance_access("method", current_function_name_,
                                                         expression.span);
@@ -2030,6 +2037,12 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 }
                 if (called_on_super && !member->is_static)
                     diagnose_static_instance_access("method", callee.value(), expression.span);
+                if (called_on_super && member->is_abstract) {
+                    diagnostics_.error("GDS4150",
+                                       "cannot call abstract parent method '" + callee.value() +
+                                           "' because it has no implementation",
+                                       expression.span);
+                }
                 validate_script_call(*member, argument_types, expression, expression.span);
                 result = member->type;
                 mark_coroutine_call(member->is_coroutine);
@@ -2156,6 +2169,12 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 }
                 if (called_on_super && !member->is_static)
                     diagnose_static_instance_access("method", callee.value(), expression.span);
+                if (called_on_super && member->is_abstract) {
+                    diagnostics_.error("GDS4150",
+                                       "cannot call abstract parent method '" + callee.value() +
+                                           "' because it has no implementation",
+                                       expression.span);
+                }
                 validate_script_call(*member, argument_types, expression, expression.span);
                 result = member->type;
                 const bool dynamic_dispatch =
