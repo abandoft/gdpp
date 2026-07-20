@@ -421,6 +421,13 @@ void SemanticAnalyzer::require_assignable(const Type& target, const Type& source
     }
 }
 
+void SemanticAnalyzer::require_truthy_value(const Type& type, const SourceSpan span,
+                                            const std::string& context) {
+    if (type.truthiness() == TruthinessKind::invalid) {
+        diagnostics_.error("GDS4153", context + " cannot use a void expression", span);
+    }
+}
+
 void SemanticAnalyzer::require_expression_assignable(const Type& target,
                                                      const ast::Expression& expression,
                                                      const Type& source, const SourceSpan span,
@@ -924,8 +931,10 @@ Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expressi
         return right;
     }
     if (operation == "and" || operation == "or") {
-        // Logical operators use GDScript truthiness for every value category, including typed
-        // containers, strings and numeric values.
+        require_truthy_value(left, expression.operand(0)->span,
+                             "left operand of '" + operation + "'");
+        require_truthy_value(right, expression.operand(1)->span,
+                             "right operand of '" + operation + "'");
         return {TypeKind::boolean, "bool"};
     }
     if (left.is_dynamic() || right.is_dynamic()) {
@@ -1416,10 +1425,11 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         break;
     case ast::ExpressionKind::unary: {
         const auto operand = analyze_expression(*expression.operand(0));
-        if (operand.is_dynamic()) {
-            result = expression.value() == "not" ? Type{TypeKind::boolean, "bool"} : variant_type;
-        } else if (expression.value() == "not" && operand.kind == TypeKind::object) {
+        if (expression.value() == "not") {
+            require_truthy_value(operand, expression.operand(0)->span, "operand of 'not'");
             result = {TypeKind::boolean, "bool"};
+        } else if (operand.is_dynamic()) {
+            result = variant_type;
         } else {
             const auto operation = expression.value() == "+"   ? "unary+"
                                    : expression.value() == "-" ? "unary-"
@@ -1478,7 +1488,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         result = analyze_binary_tree(expression);
         break;
     case ast::ExpressionKind::conditional: {
-        (void)analyze_expression(*expression.operand(1));
+        const auto condition_type = analyze_expression(*expression.operand(1));
+        require_truthy_value(condition_type, expression.operand(1)->span,
+                             "conditional expression condition");
         const auto refinements = conditional_refinements(*expression.operand(1));
         const auto entry_state = flow_types_;
 
@@ -3221,10 +3233,7 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
     }
     case ast::StatementKind::assert_statement: {
         const auto condition = analyze_expression(*statement.condition());
-        if (condition.kind == TypeKind::void_type) {
-            diagnostics_.error("GDS4002", "assert condition cannot be void",
-                               statement.condition()->span);
-        }
+        require_truthy_value(condition, statement.condition()->span, "assert condition");
         if (statement.expression()) {
             const auto message = analyze_expression(*statement.expression());
             require_assignable({TypeKind::string, "String"}, message, statement.expression()->span,
@@ -3319,7 +3328,8 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         return FlowResult{true, false, false, false};
     }
     case ast::StatementKind::if_statement: {
-        (void)analyze_expression(*statement.condition());
+        const auto condition_type = analyze_expression(*statement.condition());
+        require_truthy_value(condition_type, statement.condition()->span, "if condition");
         const auto refinements = conditional_refinements(*statement.condition());
         const auto entry_state = flow_types_;
 
@@ -3407,8 +3417,7 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
             }
             if (branch.guard) {
                 const auto guard_type = analyze_expression(*branch.guard);
-                require_assignable({TypeKind::boolean, "bool"}, guard_type, branch.guard->span,
-                                   "invalid match guard");
+                require_truthy_value(guard_type, branch.guard->span, "match guard");
                 flow_types_.apply(conditional_refinements(*branch.guard).when_true);
             }
             const auto branch_flow = analyze_statements(branch.body);
@@ -3436,7 +3445,8 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         return flow;
     }
     case ast::StatementKind::while_statement: {
-        (void)analyze_expression(*statement.condition());
+        const auto condition_type = analyze_expression(*statement.condition());
+        require_truthy_value(condition_type, statement.condition()->span, "while condition");
         const auto refinements = conditional_refinements(*statement.condition());
         const auto entry_state = flow_types_;
         flow_types_.apply(refinements.when_true);

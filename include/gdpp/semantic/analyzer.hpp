@@ -243,6 +243,7 @@ class SemanticAnalyzer final {
                                             const ast::ExpressionPtr& initializer);
     void require_assignable(const Type& target, const Type& source, SourceSpan span,
                             const std::string& context);
+    void require_truthy_value(const Type& type, SourceSpan span, const std::string& context);
     void require_expression_assignable(const Type& target, const ast::Expression& expression,
                                        const Type& source, SourceSpan span,
                                        const std::string& context);
