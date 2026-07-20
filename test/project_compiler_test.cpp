@@ -1039,9 +1039,10 @@ TEST_CASE("project compiler hoists a script-local class used as the root base") 
     write_text(root / "renderer.gd", "class_name LocalRootDerived\n"
                                      "extends LocalRootBase\n"
                                      "func answer() -> int:\n    return base_value + 2\n"
-                                     "class LocalRootBase:\n"
+                                     "@abstract class LocalRootBase:\n"
                                      "    extends Node2D\n"
-                                     "    var base_value: int = 40\n");
+                                     "    var base_value: int = 40\n"
+                                     "    @abstract func answer() -> int\n");
     const auto options = project_options(root);
 
     const auto result = gdpp::ProjectCompiler{}.compile(options);
@@ -1055,8 +1056,18 @@ TEST_CASE("project compiler hoists a script-local class used as the root base") 
             std::string::npos);
     REQUIRE(header.find("#include \"\"") == std::string::npos);
     const auto registration = read_text(options.output_directory / "register_types.cpp");
-    REQUIRE(registration.find("GDREGISTER_CLASS(" + inner + ")") <
+    REQUIRE(registration.find("GDREGISTER_ABSTRACT_CLASS(" + inner + ")") <
             registration.find("GDREGISTER_CLASS(" + result.scripts.front().class_name + ")"));
+
+    write_text(root / "renderer.gd", "class_name LocalRootDerived\n"
+                                     "extends LocalRootBase\n"
+                                     "@abstract class LocalRootBase:\n"
+                                     "    extends Node2D\n"
+                                     "    @abstract func answer() -> int\n");
+    const auto invalid = gdpp::ProjectCompiler{}.compile(options);
+    REQUIRE(!invalid.success);
+    REQUIRE(std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto& item) { return item.diagnostic.code == "GDS4149"; }));
 }
 
 TEST_CASE("project compiler rejects unsafe third-party bridge paths transactionally") {

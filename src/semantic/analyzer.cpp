@@ -4178,6 +4178,25 @@ void SemanticAnalyzer::validate_script_abstract_contract(const ast::Script& scri
         }
     }
 
+    if (script.base_type) {
+        const auto* local_base = find_inner_class(*script.base_type);
+        for (auto* base = local_base; base && base->is_abstract; base = inner_base_of(*base)) {
+            for (const auto& member : base->members) {
+                if (member.kind != ScriptMemberKind::function)
+                    continue;
+                if (member.is_abstract && implemented.find(member.name) == implemented.end()) {
+                    diagnostics_.error(
+                        "GDS4149",
+                        "concrete script class must implement inherited abstract method '" +
+                            base->name + "." + member.name + "' or be marked @abstract",
+                        script.span);
+                } else if (!member.is_abstract) {
+                    implemented.insert(member.name);
+                }
+            }
+        }
+    }
+
     if (!script_symbols_ || !current_script_)
         return;
     for (auto* base = script_symbols_->base_of(*current_script_); base && base->is_abstract;
