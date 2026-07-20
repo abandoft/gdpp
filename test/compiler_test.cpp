@@ -349,6 +349,75 @@ TEST_CASE("compiler generates serializable Godot export properties and inspector
         std::string::npos);
 }
 
+TEST_CASE("compiler folds export custom constants before native property generation") {
+    const gdpp::Compiler compiler;
+    const auto result =
+        compiler.compile("custom_export.gd", "extends Resource\n"
+                                             "@export_custom(PROPERTY_HINT_RANGE, \"0,10\", "
+                                             "PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_READ_ONLY)\n"
+                                             "var amount: int = 1\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("static_cast<godot::PropertyHint>(1)") != std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<uint32_t>(268435462)") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::PROPERTY_USAGE_SCRIPT_VARIABLE") != std::string::npos);
+    REQUIRE(result.unit.source.find("PROPERTY_HINT_RANGE") == std::string::npos);
+    REQUIRE(result.unit.source.find("PROPERTY_USAGE_READ_ONLY") == std::string::npos);
+}
+
+TEST_CASE("compiler rejects unresolved export custom constants before codegen") {
+    const gdpp::Compiler compiler;
+    const auto unknown =
+        compiler.compile("unknown_custom_export.gd",
+                         "@export_custom(MISSING_PROPERTY_HINT, \"\", MISSING_PROPERTY_USAGE)\n"
+                         "var amount: int = 1\n");
+    const auto runtime_expression =
+        compiler.compile("runtime_custom_export.gd", "func make_hint() -> int:\n"
+                                                     "    return 0\n"
+                                                     "@export_custom(make_hint(), \"\")\n"
+                                                     "var amount: int = 1\n");
+
+    REQUIRE(!unknown.success);
+    REQUIRE(!runtime_expression.success);
+    REQUIRE(unknown.unit.source.empty());
+    REQUIRE(runtime_expression.unit.source.empty());
+    REQUIRE(std::count_if(unknown.diagnostics.begin(), unknown.diagnostics.end(),
+                          [](const auto& diagnostic) { return diagnostic.code == "GDS4122"; }) ==
+            2);
+    REQUIRE(std::any_of(runtime_expression.diagnostics.begin(),
+                        runtime_expression.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4145"; }));
+}
+
+TEST_CASE("compiler rejects unknown types in every callable and storage position") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "unknown_type_positions.gd",
+        "signal changed(value: MissingSignalType)\n"
+        "var field: MissingFieldType\n"
+        "func inspect(parameter: MissingParameterType) -> MissingReturnType:\n"
+        "    var local: MissingLocalType\n"
+        "    for item: MissingLoopType in []:\n"
+        "        pass\n"
+        "    var callback := func(value: MissingLambdaType) -> MissingLambdaReturnType:\n"
+        "        return value\n"
+        "    return null\n");
+
+    REQUIRE(!result.success);
+    REQUIRE(result.unit.header.empty());
+    REQUIRE(result.unit.source.empty());
+    for (const auto* name :
+         {"MissingSignalType", "MissingFieldType", "MissingParameterType", "MissingReturnType",
+          "MissingLocalType", "MissingLoopType", "MissingLambdaType", "MissingLambdaReturnType"}) {
+        REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                            [name](const auto& diagnostic) {
+                                return diagnostic.code == "GDS4059" &&
+                                       diagnostic.message.find(name) != std::string::npos &&
+                                       diagnostic.span.end.offset > diagnostic.span.begin.offset;
+                            }));
+    }
+}
+
 TEST_CASE("compiler preserves annotation-implied exports and Godot object conversions") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(
