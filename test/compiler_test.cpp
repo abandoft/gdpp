@@ -190,6 +190,53 @@ TEST_CASE("semantic analysis validates typed container arguments eagerly") {
                         [](const auto& diagnostic) { return diagnostic.code == "GDS4139"; }));
 }
 
+TEST_CASE("nullability matches Godot objects Variant and non-null value types") {
+    const gdpp::Compiler compiler;
+    const auto valid = compiler.compile(
+        "nullable_objects.gd", "extends Node\n"
+                               "const EMPTY = null\n"
+                               "var dynamic = null\n"
+                               "var base_object: Object = null\n"
+                               "var child: Node = null\n"
+                               "func values() -> Array:\n"
+                               "    var local_variant: Variant = null\n"
+                               "    var local_node: Node = null\n"
+                               "    return [EMPTY, dynamic, base_object, child, local_variant, "
+                               "local_node]\n");
+    const auto invalid = compiler.compile(
+        "nonnullable_values.gd", "var array: Array = null\n"
+                                  "var typed_array: Array[int] = null\n"
+                                  "var dictionary: Dictionary = null\n"
+                                  "var typed_dictionary: Dictionary[String, int] = null\n"
+                                  "var text: String = null\n"
+                                  "var name: StringName = null\n"
+                                  "var path: NodePath = null\n"
+                                  "var callable: Callable = null\n"
+                                  "var signal_value: Signal = null\n"
+                                  "var vector: Vector2 = null\n"
+                                  "var handle: RID = null\n");
+    const auto inferred = compiler.compile(
+        "null_inference.gd", "var field := null\n"
+                             "func inspect(parameter := null) -> void:\n"
+                             "    var local := null\n");
+
+    REQUIRE(valid.success);
+    REQUIRE(!invalid.success);
+    REQUIRE_EQ(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                             [](const auto& diagnostic) {
+                                 return diagnostic.code == "GDS4002" &&
+                                        diagnostic.message.find("cannot assign null") !=
+                                            std::string::npos;
+                             }),
+               std::ptrdiff_t{11});
+    REQUIRE(!inferred.success);
+    REQUIRE_EQ(std::count_if(inferred.diagnostics.begin(), inferred.diagnostics.end(),
+                             [](const auto& diagnostic) {
+                                 return diagnostic.code == "GDS4154";
+                             }),
+               std::ptrdiff_t{3});
+}
+
 TEST_CASE("compiler preserves typed container metadata in the native ABI") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(
