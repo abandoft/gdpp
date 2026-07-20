@@ -1872,6 +1872,39 @@ TEST_CASE("semantic analysis rejects calls to unimplemented abstract parents") {
                std::ptrdiff_t{2});
 }
 
+TEST_CASE("compiler emits pure virtual C++ for abstract method contracts") {
+    const gdpp::Compiler compiler;
+    const auto root = compiler.compile(
+        "work_contract.gd", "@abstract\n"
+                            "extends RefCounted\n"
+                            "class_name WorkContract\n"
+                            "@abstract\n"
+                            "func execute(value: int) -> String\n");
+    const auto inner = compiler.compile(
+        "inner_contract.gd", "@abstract class Contract:\n"
+                             "    @abstract func execute(value: int) -> String\n"
+                             "class Implementation extends Contract:\n"
+                             "    func execute(value: int) -> String:\n"
+                             "        return str(value)\n");
+
+    REQUIRE(root.success);
+    REQUIRE(root.unit.is_abstract);
+    REQUIRE(root.unit.header.find("virtual godot::String execute(int64_t value) = 0;") !=
+            std::string::npos);
+    REQUIRE(root.unit.source.find("GDPPNative_WorkContract::execute(") == std::string::npos);
+    REQUIRE(root.unit.source.find("&GDPPNative_WorkContract::execute") != std::string::npos);
+
+    REQUIRE(inner.success);
+    REQUIRE(inner.unit.header.find("virtual godot::String execute(int64_t value) = 0;") !=
+            std::string::npos);
+    REQUIRE(inner.unit.header.find("virtual godot::String execute(int64_t value) override;") !=
+            std::string::npos);
+    REQUIRE(inner.unit.source.find("GDPPNative_InnerContract__Contract::execute(") ==
+            std::string::npos);
+    REQUIRE(inner.unit.source.find("GDPPNative_InnerContract__Implementation::execute(") !=
+            std::string::npos);
+}
+
 TEST_CASE("compiler resolves versioned builtin value constants") {
     const gdpp::Compiler compiler;
     gdpp::CompileOptions options;

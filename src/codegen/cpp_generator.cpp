@@ -4597,6 +4597,8 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
         header << ')';
         if (!function.is_static && inner_overrides_method(source_base, function.name))
             header << " override";
+        if (function.is_abstract)
+            header << " = 0";
         header << ";\n";
     }
     header << "};\n\n";
@@ -4990,6 +4992,12 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                                                          function.return_type, std::move(call))
                                      : call)
                    << ";\n}\n\n";
+        }
+        if (function.is_abstract) {
+            in_function_body_ = false;
+            current_coroutine_abi_ = false;
+            current_coroutine_state_.clear();
+            continue;
         }
         source << function_return_type(function) << ' ' << native_name
                << "::" << native_function_name << '(';
@@ -5528,6 +5536,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         header << ')';
         if (overrides_script_method(function))
             header << " override";
+        if (function.is_abstract)
+            header << " = 0";
         header << ";\n";
     }
     if (has_onready_fields && ready == module.functions.end()) {
@@ -5986,6 +5996,12 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                                             std::move(call));
             }
             source << ";\n}\n\n";
+        }
+        if (function.is_abstract) {
+            in_function_body_ = false;
+            current_coroutine_abi_ = false;
+            current_coroutine_state_.clear();
+            continue;
         }
         source << function_return_type(function) << ' ' << unit.class_name
                << "::" << function_native_name(function) << '(';
