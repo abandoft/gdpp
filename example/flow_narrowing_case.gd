@@ -27,9 +27,9 @@ func _conditional(value: Variant) -> String:
 
 func _match_size(value: Variant) -> int:
     match value:
-        []:
+        [_, _, _]:
             return value.size()
-        {}:
+        {"answer": _}:
             return value.size()
         _:
             return -1
