@@ -1857,6 +1857,25 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     if (has_project_errors(result.diagnostics))
         return result;
 
+    // Godot's GDExtension runtime placeholders cannot derive from a non-runtime extension class.
+    // A plain GDScript inheriting a @tool script is only a warning in the interpreter, but emitting
+    // that graph natively would either fail ClassDB registration or execute non-tool code in the
+    // editor. Require the source-level fix instead of silently changing execution mode.
+    for (const auto& input : inputs) {
+        if (!input.script_base || input.script.tool || !inputs[*input.script_base].script.tool) {
+            continue;
+        }
+        result.diagnostics.push_back(
+            {input.path,
+             project_error("PRJ0025",
+                           "non-tool script inherits @tool script '" +
+                               inputs[*input.script_base].script_class_name +
+                               "'; add @tool so the native ClassDB inheritance graph has one "
+                               "editor execution mode")});
+    }
+    if (has_project_errors(result.diagnostics))
+        return result;
+
     std::vector<std::size_t> compile_order;
     std::vector<unsigned char> visit_state(inputs.size(), 0);
     std::vector<std::size_t> inheritance_stack;
