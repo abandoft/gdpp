@@ -44,6 +44,7 @@ func _run() -> void:
     var language_utility_class := _native_class_for("language_utility_case.gd")
     var annotation_contract_class := _native_class_for("annotation_contract_case.gd")
     var static_context_class := _native_class_for("static_context_case.gd")
+    var evaluation_order_class := _native_class_for("evaluation_order_case.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -64,6 +65,7 @@ func _run() -> void:
         or language_utility_class.is_empty()
         or annotation_contract_class.is_empty()
         or static_context_class.is_empty()
+        or evaluation_order_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
@@ -258,6 +260,27 @@ func _run() -> void:
         return
     native_static_context = null
     script_static_context = null
+    var native_evaluation: Object = ClassDB.instantiate(evaluation_order_class)
+    var script_evaluation: Object = load("res://evaluation_order_case.gd").new()
+    if native_evaluation == null or script_evaluation == null:
+        push_error("Evaluation-order differential fixtures are unavailable")
+        quit(1)
+        return
+    var native_evaluation_report: Dictionary = native_evaluation.call("run")
+    var script_evaluation_report: Dictionary = script_evaluation.call("run")
+    var expected_trace: Array = range(1, 20)
+    if (
+        native_evaluation_report != script_evaluation_report
+        or native_evaluation_report.get("trace") != expected_trace
+    ):
+        push_error(
+            "Binary evaluation order differs from GDScript: native=%s script=%s"
+            % [native_evaluation_report, script_evaluation_report]
+        )
+        quit(1)
+        return
+    native_evaluation = null
+    script_evaluation = null
     var native_integers: Object = ClassDB.instantiate(integer_semantics_class)
     var script_integers: Object = load("res://integer_semantics_case.gd").new()
     if native_integers == null or script_integers == null:
