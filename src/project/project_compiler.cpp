@@ -1222,7 +1222,8 @@ std::string generated_registration(const std::vector<CompiledProjectScript>& scr
 }
 
 std::string generated_descriptor(const std::filesystem::path& project_relative_library_directory,
-                                 const std::string& build_id, GodotVersion target_version) {
+                                 const std::string& build_id, GodotVersion target_version,
+                                 const std::vector<CompiledProjectScript>& scripts) {
     const auto root = "res://" + generic_path_to_utf8(project_relative_library_directory) + "/";
     const auto path = [&](NativePlatform platform, std::string_view architecture) {
         return root + native_library_name(NativeBuildProfile::development, platform, architecture,
@@ -1245,6 +1246,15 @@ std::string generated_descriptor(const std::filesystem::path& project_relative_l
            << "linux.editor.arm64 = \"" << path(NativePlatform::linux, "arm64") << "\"\n"
            << "windows.editor.x86_64 = \"" << path(NativePlatform::windows, "x86_64") << "\"\n"
            << "windows.editor.arm64 = \"" << path(NativePlatform::windows, "arm64") << "\"\n";
+    if (std::any_of(scripts.begin(), scripts.end(),
+                    [](const auto& script) { return script.icon_path.has_value(); })) {
+        output << "\n[icons]\n\n";
+        for (const auto& script : scripts) {
+            if (script.icon_path)
+                output << script.class_name << " = " << gdextension_string(*script.icon_path)
+                       << "\n";
+        }
+    }
     return output.str();
 }
 
@@ -2599,7 +2609,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         !cmake_written || !artifact_pruner_written || !class_db_patch_written ||
         !write_file_if_changed(output / "gdpp_project.gdextension",
                                generated_descriptor(relative_library_directory, result.build_id,
-                                                    options.compiler.target_version)) ||
+                                                    options.compiler.target_version,
+                                                    result.scripts)) ||
         !write_file_if_changed(output / "build_id.txt", result.build_id + "\n") ||
         !write_file_if_changed(output / "bridge.lock",
                                write_extension_bridge_lock(bridge_load.bridges)) ||
