@@ -2181,10 +2181,8 @@ TEST_CASE("compiler covers strict and explicit Godot conversion families end to 
         "    var handle: RID = object\n"
         "    var parse_source: String = \"42\"\n"
         "    var parsed: int = parse_source as int\n"
-        "    var serialize_source: Array = [1, 2]\n"
-        "    var serialized: String = serialize_source as String\n"
         "    return [text, restored_path, vector, rect, rotation, transform, packed, "
-        "unpacked, handle, parsed, serialized]\n");
+        "unpacked, handle, parsed]\n");
     const auto invalid = compiler.compile(
         "invalid_casts.gd", "extends Node\n"
                             "func reject() -> void:\n"
@@ -2199,7 +2197,9 @@ TEST_CASE("compiler covers strict and explicit Godot conversion families end to 
             std::string::npos);
     REQUIRE(valid.unit.source.find("static_cast<godot::RID>(godot::Variant(object))") !=
             std::string::npos);
-    REQUIRE(valid.unit.source.find("static_cast<int64_t>(godot::Variant(parse_source))") !=
+    REQUIRE(valid.unit.source.find(
+                "gdpp::runtime::explicit_variant_cast<int64_t>(godot::Variant(parse_source), "
+                "godot::Variant::INT)") !=
             std::string::npos);
     REQUIRE(!invalid.success);
     REQUIRE_EQ(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
@@ -2207,6 +2207,24 @@ TEST_CASE("compiler covers strict and explicit Godot conversion families end to 
                                  return diagnostic.code == "GDS4075";
                              }),
                std::ptrdiff_t{4});
+}
+
+TEST_CASE("compiler rejects analyzer-only explicit casts without runtime constructors") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "runtime_cast_failures.gd",
+        "func reject(integer: int, items: Array, vector: Vector2) -> void:\n"
+        "    var integer_text = integer as String\n"
+        "    var array_text = items as String\n"
+        "    var vector_text = vector as String\n"
+        "    print(integer_text, array_text, vector_text)\n");
+
+    REQUIRE(!result.success);
+    REQUIRE_EQ(std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                             [](const auto& diagnostic) {
+                                 return diagnostic.code == "GDS4156";
+                             }),
+               std::ptrdiff_t{3});
 }
 
 TEST_CASE("compiler applies strict conversion rules to reduced constant casts") {
@@ -2266,6 +2284,24 @@ TEST_CASE("compiler enforces dynamic typed storage through exact Godot metadata"
     REQUIRE(result.unit.source.find(
                 "gdpp::runtime::strict_typed_storage<godot::TypedDictionary<godot::String, "
                 "int64_t>>") != std::string::npos);
+}
+
+TEST_CASE("compiler guards dynamic explicit casts with the runtime source type") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "dynamic_explicit_cast.gd",
+        "func parse(value: Variant) -> int:\n"
+        "    return value as int\n"
+        "func text(value: Variant) -> String:\n"
+        "    return value as String\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::explicit_variant_cast<int64_t>(godot::Variant(value), "
+                "godot::Variant::INT)") != std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::explicit_variant_cast<godot::String>(godot::Variant(value), "
+                "godot::Variant::STRING)") != std::string::npos);
 }
 
 TEST_CASE("compiler infers native Godot virtual signatures and escapes C++ keywords") {
@@ -3556,7 +3592,9 @@ TEST_CASE("expression statements explicitly discard native results") {
                                                        "    Vector2(1, 2)\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("static_cast<void>(static_cast<int64_t>") != std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "static_cast<void>(gdpp::runtime::explicit_variant_cast<int64_t>") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find("static_cast<void>(([&]() -> godot::Vector2") !=
             std::string::npos);
 }
