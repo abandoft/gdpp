@@ -86,6 +86,9 @@ func _run() -> void:
     if (
         not ClassDB.class_call_static(tool_mode_class, &"static_ready")
         or not ClassDB.class_call_static(runtime_mode_class, &"static_ready")
+        or not ClassDB.class_call_static(tool_mode_class, &"runtime_instance_available")
+        or ClassDB.class_call_static(tool_mode_class, &"runtime_static_contract") != [17, 42]
+        or ClassDB.class_call_static(tool_mode_class, &"runtime_static_field_is_null")
     ):
         push_error("Native runtime did not execute both script static initializers")
         quit(1)
@@ -98,7 +101,7 @@ func _run() -> void:
         or not native_tool_mode.call(&"instance_ready")
         or not native_runtime_mode.call(&"instance_ready")
         or int(ClassDB.class_call_static(tool_mode_class, &"constructed_instances")) != 1
-        or int(ClassDB.class_call_static(runtime_mode_class, &"constructed_instances")) != 1
+        or int(ClassDB.class_call_static(runtime_mode_class, &"constructed_instances")) != 2
     ):
         push_error("Native runtime tool-mode execution contract failed")
         native_tool_mode = null
