@@ -1460,6 +1460,13 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
     return value;
 }
 
+std::string CodeGenerator::emit_explicit_conversion(const Type& target, const Type& source,
+                                                    std::string value) const {
+    if (classify_conversion(target, source) != ConversionKind::explicit_only)
+        return emit_conversion(target, source, std::move(value));
+    return "static_cast<" + cpp_type(target) + ">(godot::Variant(" + value + "))";
+}
+
 std::string CodeGenerator::emit_parameter_default(const ir::Parameter& parameter) const {
     if (!parameter.default_value)
         return {};
@@ -2251,8 +2258,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 }
                 return "godot::Object::cast_to<" + target_cpp + ">(" + object + ")";
             }
-            return "static_cast<" + cpp_type(expression.type) + ">(godot::Variant(" +
-                   emitted_value + "))";
+            return emit_explicit_conversion(expression.type, value.type, emitted_value);
         }
         if (operation == "**") {
             return emit_ordered_operands([&](const std::string& left, const std::string& right) {
@@ -2386,8 +2392,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
              expression.type.kind == TypeKind::floating ||
              expression.type.kind == TypeKind::string ||
              expression.type.kind == TypeKind::string_name)) {
-            return emit_conversion(expression.type, expression.operands.at(1)->type,
-                                   emit_expression(*expression.operands.at(1)));
+            return emit_explicit_conversion(expression.type, expression.operands.at(1)->type,
+                                            emit_expression(*expression.operands.at(1)));
         }
         const auto* godot_method =
             callee.resolution == ir::ResolutionKind::godot_method

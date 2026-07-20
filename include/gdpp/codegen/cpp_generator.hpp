@@ -68,6 +68,8 @@ class CodeGenerator final {
     [[nodiscard]] std::string emit_truthy(const ir::Expression& expression) const;
     [[nodiscard]] std::string emit_conversion(const Type& target, const Type& source,
                                               std::string value) const;
+    [[nodiscard]] std::string emit_explicit_conversion(const Type& target, const Type& source,
+                                                       std::string value) const;
     [[nodiscard]] std::string emit_parameter_default(const ir::Parameter& parameter) const;
     [[nodiscard]] std::string parameter_native_type(const ir::Parameter& parameter) const;
     [[nodiscard]] std::string parameter_native_name(const ir::Parameter& parameter) const;
