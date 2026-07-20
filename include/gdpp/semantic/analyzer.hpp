@@ -140,6 +140,8 @@ class SemanticModel final {
     [[nodiscard]] const RpcConfiguration*
     rpc_configuration_of(const ast::FunctionDeclaration& function) const noexcept;
     [[nodiscard]] std::int64_t value_of(const ast::EnumEntry& entry) const;
+    [[nodiscard]] std::optional<std::int64_t>
+    constant_integer_value_of(const ast::Expression& expression) const noexcept;
     [[nodiscard]] const Symbol* symbol_of(const ast::Expression& expression) const noexcept;
     [[nodiscard]] const ApiResolution*
     api_resolution_of(const ast::Expression& expression) const noexcept;
@@ -171,6 +173,7 @@ class SemanticModel final {
     std::unordered_set<const ast::Expression*> coroutine_calls_;
     std::unordered_map<const ast::FunctionDeclaration*, RpcConfiguration> rpc_configurations_;
     std::unordered_map<const ast::EnumEntry*, std::int64_t> enum_values_;
+    std::unordered_map<const ast::Expression*, std::int64_t> constant_integer_values_;
     std::unordered_map<const ast::Expression*, Symbol> referenced_symbols_;
     std::unordered_map<const ast::Expression*, ApiResolution> api_resolutions_;
     std::unordered_set<std::string> referenced_script_paths_;

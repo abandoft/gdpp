@@ -341,6 +341,13 @@ std::int64_t SemanticModel::value_of(const ast::EnumEntry& entry) const {
     return found == enum_values_.end() ? 0 : found->second;
 }
 
+std::optional<std::int64_t>
+SemanticModel::constant_integer_value_of(const ast::Expression& expression) const noexcept {
+    const auto found = constant_integer_values_.find(&expression);
+    return found == constant_integer_values_.end() ? std::nullopt
+                                                   : std::optional<std::int64_t>{found->second};
+}
+
 const Symbol* SemanticModel::symbol_of(const ast::Expression& expression) const noexcept {
     const auto found = referenced_symbols_.find(&expression);
     return found == referenced_symbols_.end() ? nullptr : &found->second;
@@ -2912,6 +2919,18 @@ SemanticAnalyzer::constant_integer_expression(const ast::Expression& expression)
                 constants.insert_or_assign(name, *symbol.constant_integer_value);
         }
     }
+    const auto collect_api_constants = [&](const auto& self,
+                                           const ast::Expression& candidate) -> void {
+        if (candidate.kind() == ast::ExpressionKind::identifier) {
+            if (const auto* constant = api_.find_global_constant(candidate.value()))
+                constants.insert_or_assign(candidate.value(), constant->value);
+            if (const auto* enum_value = api_.find_global_enum_value(candidate.value()))
+                constants.insert_or_assign(candidate.value(), enum_value->value);
+        }
+        for (std::size_t index = 0; index < candidate.operand_count(); ++index)
+            self(self, *candidate.operand(index));
+    };
+    collect_api_constants(collect_api_constants, expression);
     return evaluate_integer_constant(expression, constants);
 }
 
@@ -4413,10 +4432,38 @@ void SemanticAnalyzer::validate_annotations(const ast::VariableDeclaration& vari
             diagnostics_.error("GDS4022", "@export_custom expects 2 or 3 arguments",
                                annotation.span);
         }
+        const auto require_constant_integer = [&](const std::size_t index,
+                                                  const std::string& role) {
+            if (index >= argument_count)
+                return;
+            const auto& argument = *annotation.arguments[index];
+            const auto value = constant_integer_expression(argument);
+            if (value) {
+                model_.constant_integer_values_.insert_or_assign(&argument, *value);
+                return;
+            }
+            const auto diagnose_unknown_identifiers =
+                [&](const auto& self, const ast::Expression& candidate) -> void {
+                if (candidate.kind() == ast::ExpressionKind::identifier &&
+                    !resolve(candidate.value()) && !api_.find_global_constant(candidate.value()) &&
+                    !api_.find_global_enum_value(candidate.value())) {
+                    diagnostics_.error("GDS4122", "unknown identifier '" + candidate.value() + "'",
+                                       candidate.span);
+                }
+                for (std::size_t operand = 0; operand < candidate.operand_count(); ++operand)
+                    self(self, *candidate.operand(operand));
+            };
+            diagnose_unknown_identifiers(diagnose_unknown_identifiers, argument);
+            diagnostics_.error("GDS4145",
+                               "@export_custom " + role + " must be an integer constant expression",
+                               argument.span);
+        };
+        require_constant_integer(0, "property hint");
         if (argument_count >= 2 && !is_string_literal(*annotation.arguments[1])) {
             diagnostics_.error("GDS4023", "@export_custom hint string must be a string literal",
                                annotation.arguments[1]->span);
         }
+        require_constant_integer(2, "property usage flags");
     } else {
         diagnostics_.error("GDS4034", "unsupported annotation '@" + name + "'", annotation.span);
     }
