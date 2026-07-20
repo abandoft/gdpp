@@ -2456,6 +2456,21 @@ TEST_CASE("semantic flow carries the sole fallthrough refinement past guards") {
     REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
 }
 
+TEST_CASE("semantic flow narrows each lazy conditional-expression arm") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "flow_conditional.gd", "extends Node\n"
+                              "func direct(value: Variant) -> String:\n"
+                              "    return value.name if value is Node else \"\"\n"
+                              "func negated(value: Variant) -> String:\n"
+                              "    return \"\" if value is not Node else value.name\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::get_named") == std::string::npos);
+}
+
 TEST_CASE("typed scene nodes retain dynamic script dispatch for unknown members") {
     const gdpp::Compiler compiler;
     const auto result =

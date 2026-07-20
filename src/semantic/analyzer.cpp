@@ -1341,9 +1341,17 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         result = analyze_binary_tree(expression);
         break;
     case ast::ExpressionKind::conditional: {
-        const auto when_true = analyze_expression(*expression.operand(0));
         (void)analyze_expression(*expression.operand(1));
+        const auto refinements = conditional_refinements(*expression.operand(1));
+        const auto entry_state = flow_types_;
+
+        flow_types_.apply(refinements.when_true);
+        const auto when_true = analyze_expression(*expression.operand(0));
+
+        flow_types_ = entry_state;
+        flow_types_.apply(refinements.when_false);
         const auto when_false = analyze_expression(*expression.operand(2));
+        flow_types_ = entry_state;
         if (when_true == when_false) {
             result = when_true;
         } else if (when_true.is_numeric() && when_false.is_numeric()) {
