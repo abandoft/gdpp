@@ -1873,8 +1873,10 @@ std::string CodeGenerator::emit_truthy(const ir::Expression& expression) const {
 }
 
 std::string CodeGenerator::emit_integer_binary(const ir::Expression& expression) const {
-    return emit_integer_operation(expression.value, emit_expression(*expression.operands.at(0)),
-                                  emit_expression(*expression.operands.at(1)), expression.type);
+    auto left = emit_expression(*expression.operands.at(0));
+    auto right = emit_expression(*expression.operands.at(1));
+    return emit_integer_operation(expression.value, std::move(left), std::move(right),
+                                  expression.type);
 }
 
 std::string CodeGenerator::emit_integer_operation(const std::string_view operation,
@@ -2138,21 +2140,33 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         if ((expression.value == "and" || expression.value == "or") &&
             !expression.operands.at(0)->type.is_dynamic() &&
             !expression.operands.at(1)->type.is_dynamic()) {
-            return "(" + emit_truthy(*expression.operands.at(0)) +
-                   (expression.value == "and" ? " && " : " || ") +
-                   emit_truthy(*expression.operands.at(1)) + ")";
+            auto left = emit_truthy(*expression.operands.at(0));
+            auto right = emit_truthy(*expression.operands.at(1));
+            return "(" + std::move(left) + (expression.value == "and" ? " && " : " || ") +
+                   std::move(right) + ")";
         }
+        const auto emit_ordered_operands = [&](const auto& evaluate) {
+            const auto suffix = std::to_string(temporary_counter_++);
+            const auto left_name = "_gdpp_binary_left_" + suffix;
+            const auto right_name = "_gdpp_binary_right_" + suffix;
+            auto left = emit_expression(*expression.operands.at(0));
+            auto right = emit_expression(*expression.operands.at(1));
+            return "([&]() -> " + cpp_type(expression.type) + " { const auto " + left_name + " = " +
+                   std::move(left) + "; const auto " + right_name + " = " + std::move(right) +
+                   "; return " + evaluate(left_name, right_name) + "; }())";
+        };
         auto operation = expression.value;
         if (operation == "and")
             operation = "&&";
         if (operation == "or")
             operation = "||";
         if (operation == "in" || operation == "not in") {
-            const auto membership =
-                "static_cast<bool>(gdpp::runtime::binary(godot::Variant::OP_IN, " +
-                emit_expression(*expression.operands.at(0)) + ", " +
-                emit_expression(*expression.operands.at(1)) + "))";
-            return operation == "not in" ? "!(" + membership + ")" : membership;
+            return emit_ordered_operands([&](const std::string& left, const std::string& right) {
+                const auto membership =
+                    "static_cast<bool>(gdpp::runtime::binary(godot::Variant::OP_IN, " + left +
+                    ", " + right + "))";
+                return operation == "not in" ? "!(" + membership + ")" : membership;
+            });
         }
         if (operation == "is" || operation == "is not") {
             const bool negate = operation == "is not";
@@ -2266,11 +2280,11 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                    emitted_value + "))";
         }
         if (operation == "**") {
-            return "static_cast<" + cpp_type(expression.type) +
-                   ">(gdpp::runtime::binary("
-                   "godot::Variant::OP_POWER, " +
-                   emit_expression(*expression.operands.at(0)) + ", " +
-                   emit_expression(*expression.operands.at(1)) + "))";
+            return emit_ordered_operands([&](const std::string& left, const std::string& right) {
+                return "static_cast<" + cpp_type(expression.type) +
+                       ">(gdpp::runtime::binary(godot::Variant::OP_POWER, " + left + ", " + right +
+                       "))";
+            });
         }
         const auto& left_type = expression.operands.at(0)->type;
         const auto& right_type = expression.operands.at(1)->type;
@@ -2318,27 +2332,31 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 (right_type.is_dynamic() && left_type.kind == TypeKind::integer)) {
                 runtime_function = "gdpp::runtime::binary_integer";
             }
-            const auto dynamic = runtime_function +
-                                 "(godot::Variant::" + variant_operator(expression.value) + ", " +
-                                 emit_expression(*expression.operands.at(0)) + ", " +
-                                 emit_expression(*expression.operands.at(1)) + ")";
-            return expression.type.kind == TypeKind::boolean ? "static_cast<bool>(" + dynamic + ")"
-                                                             : dynamic;
+            return emit_ordered_operands([&](const std::string& left, const std::string& right) {
+                const auto dynamic = runtime_function +
+                                     "(godot::Variant::" + variant_operator(expression.value) +
+                                     ", " + left + ", " + right + ")";
+                return expression.type.kind == TypeKind::boolean
+                           ? "static_cast<bool>(" + dynamic + ")"
+                           : dynamic;
+            });
         }
         if (left_type.kind == TypeKind::builtin || right_type.kind == TypeKind::builtin) {
-            const auto evaluated =
-                "gdpp::runtime::binary(godot::Variant::" + variant_operator(expression.value) +
-                ", " + emit_expression(*expression.operands.at(0)) + ", " +
-                emit_expression(*expression.operands.at(1)) + ")";
-            return emit_conversion(expression.type, {TypeKind::variant, "Variant"}, evaluated);
+            return emit_ordered_operands([&](const std::string& left, const std::string& right) {
+                const auto evaluated =
+                    "gdpp::runtime::binary(godot::Variant::" + variant_operator(expression.value) +
+                    ", " + left + ", " + right + ")";
+                return emit_conversion(expression.type, {TypeKind::variant, "Variant"}, evaluated);
+            });
         }
         const auto integer_like = [](const Type& type) {
             return type.kind == TypeKind::integer || type.kind == TypeKind::enumeration;
         };
         if (integer_like(left_type) && integer_like(right_type))
             return emit_integer_binary(expression);
-        return "(" + emit_expression(*expression.operands.at(0)) + " " + operation + " " +
-               emit_expression(*expression.operands.at(1)) + ")";
+        return emit_ordered_operands([&](const std::string& left, const std::string& right) {
+            return "(" + left + " " + operation + " " + right + ")";
+        });
     }
     case ir::ExpressionKind::conditional: {
         const auto emit_branch = [&](const ir::Expression& branch) {
