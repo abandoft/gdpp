@@ -3094,6 +3094,22 @@ TEST_CASE("compiler handles generated logical guard chains with bounded stack de
             std::string::npos);
 }
 
+TEST_CASE("flow refinement remains bounded across generated logical guard chains") {
+    std::string source{
+        "extends RefCounted\nfunc validate(value: Variant) -> bool:\n    return value is int"};
+    constexpr std::size_t comparison_count = 512;
+    for (std::size_t index = 0; index < comparison_count; ++index)
+        source += " and value >= " + std::to_string(index);
+    source += '\n';
+
+    const auto result = gdpp::Compiler{}.compile("large_flow_chain.gd", source);
+
+    REQUIRE(result.success);
+    REQUIRE(result.metrics.ast_expression_count >= comparison_count * 2U);
+    REQUIRE(result.unit.source.find("static_cast<int64_t>(value)") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::binary") == std::string::npos);
+}
+
 TEST_CASE("compiler analyzes legal arithmetic chains without recursive stack growth") {
     std::string source{"extends RefCounted\nfunc total() -> int:\n    return 1"};
     constexpr std::size_t operand_count = 96;
