@@ -3111,6 +3111,9 @@ TEST_CASE("static constructors are validated and run through the class initializ
     REQUIRE(valid.unit.header.find("static void _gdpp_ensure_static_initialized()") !=
             std::string::npos);
     REQUIRE(valid.unit.source.find("static thread_local bool active = false") != std::string::npos);
+    REQUIRE(valid.unit.source.find("if (gdpp::runtime::is_editor_hint()) return;") !=
+            std::string::npos);
+    REQUIRE(valid.unit.source.find("static thread_local bool editor_value{}") != std::string::npos);
     const auto valid_guard = valid.unit.source.find("::_gdpp_ensure_static_initialized() {");
     REQUIRE(valid_guard != std::string::npos);
     REQUIRE(valid.unit.source.find("    _static_init();", valid_guard) != std::string::npos);
@@ -3126,6 +3129,7 @@ TEST_CASE("static constructors are validated and run through the class initializ
     const auto tool_guard = tool.unit.source.find("::_gdpp_ensure_static_initialized() {");
     REQUIRE(tool_guard != std::string::npos);
     REQUIRE(tool.unit.source.find("    _static_init();", tool_guard) != std::string::npos);
+    REQUIRE(tool.unit.source.find("editor_value") == std::string::npos);
     const auto tool_bind = tool.unit.source.find("::_bind_methods() {");
     const auto tool_bind_end = tool.unit.source.find("}\n\n", tool_bind);
     REQUIRE(tool_bind != std::string::npos);

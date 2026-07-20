@@ -4689,8 +4689,10 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                << "bool& " << native_name << "::_gdpp_static_initialization_active() {\n"
                << "    static thread_local bool active = false;\n"
                << "    return active;\n}\n\n"
-               << "void " << native_name << "::_gdpp_ensure_static_initialized() {\n"
-               << "    auto& state = _gdpp_static_initialization_state();\n"
+               << "void " << native_name << "::_gdpp_ensure_static_initialized() {\n";
+        if (!tool_mode)
+            source << "    if (gdpp::runtime::is_editor_hint()) return;\n";
+        source << "    auto& state = _gdpp_static_initialization_state();\n"
                << "    if (state.load(std::memory_order_acquire) == 2 || "
                   "_gdpp_static_initialization_active()) return;\n"
                << "    std::lock_guard<std::mutex> lock(_gdpp_static_initialization_mutex());\n"
@@ -4745,8 +4747,14 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                    << "*> value{nullptr};\n    return value;\n}\n\n"
                    << "std::mutex& " << native_name << "::_gdpp_static_" << name
                    << "_mutex() {\n    static std::mutex value;\n    return value;\n}\n\n"
-                   << type << "& " << native_name << "::_gdpp_static_" << name << "_storage() {\n"
-                   << "    _gdpp_ensure_static_initialized();\n"
+                   << type << "& " << native_name << "::_gdpp_static_" << name << "_storage() {\n";
+            if (!tool_mode) {
+                source << "    if (gdpp::runtime::is_editor_hint()) {\n"
+                       << "        static thread_local " << type << " editor_value{};\n"
+                       << "        return editor_value;\n"
+                       << "    }\n";
+            }
+            source << "    _gdpp_ensure_static_initialized();\n"
                    << "    auto* value = _gdpp_static_" << name
                    << "_pointer().load(std::memory_order_acquire);\n"
                    << "    if (value) return *value;\n"
@@ -5715,8 +5723,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                << "bool& " << unit.class_name << "::_gdpp_static_initialization_active() {\n"
                << "    static thread_local bool active = false;\n"
                << "    return active;\n}\n\n"
-               << "void " << unit.class_name << "::_gdpp_ensure_static_initialized() {\n"
-               << "    auto& state = _gdpp_static_initialization_state();\n"
+               << "void " << unit.class_name << "::_gdpp_ensure_static_initialized() {\n";
+        if (!module.is_tool)
+            source << "    if (gdpp::runtime::is_editor_hint()) return;\n";
+        source << "    auto& state = _gdpp_static_initialization_state();\n"
                << "    if (state.load(std::memory_order_acquire) == 2 || "
                   "_gdpp_static_initialization_active()) return;\n"
                << "    std::lock_guard<std::mutex> lock(_gdpp_static_initialization_mutex());\n"
@@ -5786,8 +5796,14 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                    << "std::mutex& " << unit.class_name << "::_gdpp_static_" << name
                    << "_mutex() {\n    static std::mutex value;\n    return value;\n}\n\n"
                    << type << "& " << unit.class_name << "::_gdpp_static_" << name
-                   << "_storage() {\n"
-                   << "    _gdpp_ensure_static_initialized();\n"
+                   << "_storage() {\n";
+            if (!module.is_tool) {
+                source << "    if (gdpp::runtime::is_editor_hint()) {\n"
+                       << "        static thread_local " << type << " editor_value{};\n"
+                       << "        return editor_value;\n"
+                       << "    }\n";
+            }
+            source << "    _gdpp_ensure_static_initialized();\n"
                    << "    auto* value = _gdpp_static_" << name
                    << "_pointer().load(std::memory_order_acquire);\n"
                    << "    if (value) return *value;\n"
