@@ -243,6 +243,7 @@ struct Module {
     std::optional<std::string> base_type;
     std::optional<std::string> class_name;
     bool is_abstract{false};
+    bool is_tool{false};
     std::vector<Enum> enums;
     std::vector<Field> fields;
     std::vector<Signal> signals;

@@ -162,6 +162,18 @@ TEST_CASE("typed IR preserves parsed abstract classes and method signatures") {
     REQUIRE(gdpp::MirLowerer{}.lower(module).functions.empty());
 }
 
+TEST_CASE("typed IR preserves script tool execution mode") {
+    gdpp::DiagnosticBag diagnostics;
+    const auto module = lower_source("@tool\n"
+                                     "extends Node\n"
+                                     "func editor_tick() -> void:\n"
+                                     "    pass\n",
+                                     diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE(module.is_tool);
+}
+
 TEST_CASE("typed IR preserves flow-proven non-null object reads") {
     gdpp::DiagnosticBag diagnostics;
     const auto module = lower_source("extends Node\n"

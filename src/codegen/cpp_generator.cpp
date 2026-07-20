@@ -5043,6 +5043,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     const auto base_name = path.stem().string();
     GeneratedUnit unit;
     unit.is_abstract = module.is_abstract;
+    unit.is_tool = module.is_tool;
     match_counter_ = 0;
     temporary_counter_ = 0;
     current_source_path_ = source_path;

@@ -704,6 +704,7 @@ ir::Module IrLowerer::lower(const ast::Script& script) const {
     module.is_abstract = std::any_of(
         script.annotations.begin(), script.annotations.end(),
         [](const ast::Annotation& annotation) { return annotation.name == "abstract"; });
+    module.is_tool = script.tool;
     module.span = script.span;
     module.enums.reserve(script.enums.size());
     for (const auto& declaration : script.enums) {

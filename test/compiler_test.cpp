@@ -1906,6 +1906,16 @@ TEST_CASE("compiler emits pure virtual C++ for abstract method contracts") {
             std::string::npos);
 }
 
+TEST_CASE("compiler preserves tool execution mode for project registration") {
+    const auto result = gdpp::Compiler{}.compile("editor_worker.gd", "@tool\n"
+                                                                     "extends Node\n"
+                                                                     "func refresh() -> void:\n"
+                                                                     "    pass\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.is_tool);
+}
+
 TEST_CASE("compiler preserves engine virtual ABI around abstract contracts") {
     const gdpp::Compiler compiler;
     const auto result =
