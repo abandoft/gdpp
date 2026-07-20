@@ -7,6 +7,7 @@ add_executable(
     integer_semantics_test.cpp
     parser_test.cpp
     flow_test.cpp
+    type_test.cpp
     iteration_test.cpp
     ir_test.cpp
     mir_test.cpp
