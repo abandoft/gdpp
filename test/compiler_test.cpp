@@ -146,7 +146,7 @@ TEST_CASE("compiler applies warning directives and structured await to property 
     REQUIRE(result.unit.source.find("await_signal") != std::string::npos);
 }
 
-TEST_CASE("compiler rejects packed arrays at incompatible Godot typed storage boundaries") {
+TEST_CASE("compiler defers packed array typed storage failures to the runtime boundary") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("packed_array_argument.gd",
                                          "func consume(values: Array[String]) -> void:\n"
@@ -154,9 +154,10 @@ TEST_CASE("compiler rejects packed arrays at incompatible Godot typed storage bo
                                          "func forward(values: PackedStringArray) -> void:\n"
                                          "    consume(values)\n");
 
-    REQUIRE(!result.success);
-    REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
-                        [](const auto& diagnostic) { return diagnostic.code == "GDS4155"; }));
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::strict_typed_storage<godot::TypedArray<godot::String>>") !=
+            std::string::npos);
 }
 
 TEST_CASE("semantic analysis validates typed container arguments eagerly") {
@@ -202,22 +203,22 @@ TEST_CASE("nullability matches Godot objects Variant and non-null value types") 
                                "    var local_node: Node = null\n"
                                "    return [EMPTY, dynamic, base_object, child, local_variant, "
                                "local_node]\n");
-    const auto invalid = compiler.compile(
-        "nonnullable_values.gd", "var array: Array = null\n"
-                                  "var typed_array: Array[int] = null\n"
-                                  "var dictionary: Dictionary = null\n"
-                                  "var typed_dictionary: Dictionary[String, int] = null\n"
-                                  "var text: String = null\n"
-                                  "var name: StringName = null\n"
-                                  "var path: NodePath = null\n"
-                                  "var callable: Callable = null\n"
-                                  "var signal_value: Signal = null\n"
-                                  "var vector: Vector2 = null\n"
-                                  "var handle: RID = null\n");
-    const auto inferred = compiler.compile(
-        "null_inference.gd", "var field := null\n"
-                             "func inspect(parameter := null) -> void:\n"
-                             "    var local := null\n");
+    const auto invalid = compiler.compile("nonnullable_values.gd",
+                                          "var array: Array = null\n"
+                                          "var typed_array: Array[int] = null\n"
+                                          "var dictionary: Dictionary = null\n"
+                                          "var typed_dictionary: Dictionary[String, int] = null\n"
+                                          "var text: String = null\n"
+                                          "var name: StringName = null\n"
+                                          "var path: NodePath = null\n"
+                                          "var callable: Callable = null\n"
+                                          "var signal_value: Signal = null\n"
+                                          "var vector: Vector2 = null\n"
+                                          "var handle: RID = null\n");
+    const auto inferred =
+        compiler.compile("null_inference.gd", "var field := null\n"
+                                              "func inspect(parameter := null) -> void:\n"
+                                              "    var local := null\n");
 
     REQUIRE(valid.success);
     REQUIRE(!invalid.success);
@@ -230,9 +231,7 @@ TEST_CASE("nullability matches Godot objects Variant and non-null value types") 
                std::ptrdiff_t{11});
     REQUIRE(!inferred.success);
     REQUIRE_EQ(std::count_if(inferred.diagnostics.begin(), inferred.diagnostics.end(),
-                             [](const auto& diagnostic) {
-                                 return diagnostic.code == "GDS4154";
-                             }),
+                             [](const auto& diagnostic) { return diagnostic.code == "GDS4154"; }),
                std::ptrdiff_t{3});
 }
 
@@ -1410,19 +1409,19 @@ TEST_CASE("compiler applies zero-value truthiness to every Godot value family") 
         "    if dynamic and [1]:\n"
         "        results.append(true)\n"
         "    return results\n");
-    const auto invalid = compiler.compile(
-        "void_truthiness.gd", "func nothing() -> void:\n"
-                               "    pass\n"
-                               "func reject() -> void:\n"
-                               "    if nothing(): pass\n"
-                               "    while nothing(): break\n"
-                               "    assert(nothing())\n"
-                               "    var selected = 1 if nothing() else 2\n"
-                               "    var logical = nothing() and true\n"
-                               "    var negated = not nothing()\n"
-                               "    match 1:\n"
-                               "        1 when nothing(): pass\n"
-                               "    print(selected, logical, negated)\n");
+    const auto invalid =
+        compiler.compile("void_truthiness.gd", "func nothing() -> void:\n"
+                                               "    pass\n"
+                                               "func reject() -> void:\n"
+                                               "    if nothing(): pass\n"
+                                               "    while nothing(): break\n"
+                                               "    assert(nothing())\n"
+                                               "    var selected = 1 if nothing() else 2\n"
+                                               "    var logical = nothing() and true\n"
+                                               "    var negated = not nothing()\n"
+                                               "    match 1:\n"
+                                               "        1 when nothing(): pass\n"
+                                               "    print(selected, logical, negated)\n");
     const auto booleanize_count = [&]() {
         std::size_t count = 0;
         for (std::size_t position = 0;
@@ -1439,9 +1438,7 @@ TEST_CASE("compiler applies zero-value truthiness to every Godot value family") 
     REQUIRE(valid.unit.source.find("(!(true))") != std::string::npos);
     REQUIRE(!invalid.success);
     REQUIRE_EQ(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
-                             [](const auto& diagnostic) {
-                                 return diagnostic.code == "GDS4153";
-                             }),
+                             [](const auto& diagnostic) { return diagnostic.code == "GDS4153"; }),
                std::ptrdiff_t{7});
 }
 
@@ -1820,8 +1817,7 @@ TEST_CASE("compiler preserves typed subscript and builtin component scalar seman
     REQUIRE(result.unit.source.find("_gdpp_subscript_container_") != std::string::npos);
     REQUIRE(result.unit.source.find("static_cast<int64_t>(godot::Variant(values[") !=
             std::string::npos);
-    REQUIRE(result.unit.source.find("static_cast<int64_t>(values[") ==
-            std::string::npos);
+    REQUIRE(result.unit.source.find("static_cast<int64_t>(values[") == std::string::npos);
     REQUIRE(result.unit.source.find("static_cast<int64_t>(_gdpp_subscript_container_") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("static_cast<double>(vector.x)") != std::string::npos);
@@ -2182,85 +2178,73 @@ TEST_CASE("compiler covers strict and explicit Godot conversion families end to 
         "    var parsed: int = parse_source as int\n"
         "    return [text, restored_path, vector, rect, rotation, transform, packed, "
         "unpacked, parsed]\n");
-    const auto invalid = compiler.compile(
-        "invalid_casts.gd", "extends Node\n"
-                            "func reject() -> void:\n"
-                            "    var vector = \"not a vector\" as Vector2\n"
-                            "    var text = Node.new() as String\n"
-                            "    var dictionary = [] as Dictionary\n"
-                            "    var nonnullable = null as String\n"
-                            "    print(vector, text, dictionary, nonnullable)\n");
+    const auto invalid =
+        compiler.compile("invalid_casts.gd", "extends Node\n"
+                                             "func reject() -> void:\n"
+                                             "    var vector = \"not a vector\" as Vector2\n"
+                                             "    var text = Node.new() as String\n"
+                                             "    var dictionary = [] as Dictionary\n"
+                                             "    var nonnullable = null as String\n"
+                                             "    print(vector, text, dictionary, nonnullable)\n");
 
     REQUIRE(valid.success);
     REQUIRE(valid.unit.source.find("static_cast<godot::String>(godot::Variant(path))") !=
             std::string::npos);
     REQUIRE(valid.unit.source.find(
                 "gdpp::runtime::explicit_variant_cast<int64_t>(godot::Variant(parse_source), "
-                "godot::Variant::INT)") !=
-            std::string::npos);
+                "godot::Variant::INT)") != std::string::npos);
     REQUIRE(!invalid.success);
     REQUIRE_EQ(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
-                             [](const auto& diagnostic) {
-                                 return diagnostic.code == "GDS4075";
-                             }),
+                             [](const auto& diagnostic) { return diagnostic.code == "GDS4075"; }),
                std::ptrdiff_t{4});
 }
 
 TEST_CASE("compiler rejects analyzer-only explicit casts without runtime constructors") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "runtime_cast_failures.gd",
-        "func reject(integer: int, items: Array, vector: Vector2) -> void:\n"
-        "    var integer_text = integer as String\n"
-        "    var array_text = items as String\n"
-        "    var vector_text = vector as String\n"
-        "    print(integer_text, array_text, vector_text)\n");
+    const auto result =
+        compiler.compile("runtime_cast_failures.gd",
+                         "func reject(integer: int, items: Array, vector: Vector2) -> void:\n"
+                         "    var integer_text = integer as String\n"
+                         "    var array_text = items as String\n"
+                         "    var vector_text = vector as String\n"
+                         "    print(integer_text, array_text, vector_text)\n");
 
     REQUIRE(!result.success);
     REQUIRE_EQ(std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
-                             [](const auto& diagnostic) {
-                                 return diagnostic.code == "GDS4156";
-                             }),
+                             [](const auto& diagnostic) { return diagnostic.code == "GDS4156"; }),
                std::ptrdiff_t{3});
 }
 
 TEST_CASE("compiler rejects Object values retained behind typed RID locals") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "rid_storage.gd",
-        "func reject(value: Object) -> RID:\n"
-        "    var handle: RID = value\n"
-        "    return value\n");
+    const auto result = compiler.compile("rid_storage.gd", "func reject(value: Object) -> RID:\n"
+                                                           "    var handle: RID = value\n"
+                                                           "    return value\n");
 
     REQUIRE(!result.success);
     REQUIRE_EQ(std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
-                             [](const auto& diagnostic) {
-                                 return diagnostic.code == "GDS4157";
-                             }),
+                             [](const auto& diagnostic) { return diagnostic.code == "GDS4157"; }),
                std::ptrdiff_t{2});
 }
 
 TEST_CASE("compiler applies strict conversion rules to reduced constant casts") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "constant_casts.gd",
-        "const SCRIPT_TEXT: Variant = \"42\"\n"
-        "func reject() -> void:\n"
-        "    const local_text: Variant = \"24\"\n"
-        "    var literal = \"42\" as int\n"
-        "    var script_named = SCRIPT_TEXT as int\n"
-        "    var local_named = local_text as int\n"
-        "    print(literal, script_named, local_named)\n");
+    const auto result =
+        compiler.compile("constant_casts.gd", "const SCRIPT_TEXT: Variant = \"42\"\n"
+                                              "func reject() -> void:\n"
+                                              "    const local_text: Variant = \"24\"\n"
+                                              "    var literal = \"42\" as int\n"
+                                              "    var script_named = SCRIPT_TEXT as int\n"
+                                              "    var local_named = local_text as int\n"
+                                              "    print(literal, script_named, local_named)\n");
 
     REQUIRE(!result.success);
     REQUIRE_EQ(std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
-                             [](const auto& diagnostic) {
-                                 return diagnostic.code == "GDS4075";
-                             }),
+                             [](const auto& diagnostic) { return diagnostic.code == "GDS4075"; }),
                std::ptrdiff_t{3});
 }
 
-TEST_CASE("compiler diagnoses every statically doomed typed container storage path") {
+TEST_CASE("compiler preserves Godot runtime typed storage failure boundaries") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(
         "typed_storage_failures.gd",
@@ -2273,22 +2257,23 @@ TEST_CASE("compiler diagnoses every statically doomed typed container storage pa
         "    var inferred := integers as Array[float]\n"
         "    print(from_plain, from_packed, from_dictionary, from_cast, inferred)\n");
 
-    REQUIRE(!result.success);
-    REQUIRE_EQ(std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
-                             [](const auto& diagnostic) {
-                                 return diagnostic.code == "GDS4155";
-                             }),
-               std::ptrdiff_t{5});
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::strict_typed_storage<godot::TypedArray<int64_t>>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::strict_typed_storage<godot::TypedDictionary<godot::String, "
+                "int64_t>>") != std::string::npos);
 }
 
 TEST_CASE("compiler enforces dynamic typed storage through exact Godot metadata") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "dynamic_typed_storage.gd",
-        "func restore_array(value: Variant) -> Array[int]:\n"
-        "    return value\n"
-        "func restore_dictionary(value: Variant) -> Dictionary[String, int]:\n"
-        "    return value\n");
+    const auto result =
+        compiler.compile("dynamic_typed_storage.gd",
+                         "func restore_array(value: Variant) -> Array[int]:\n"
+                         "    return value\n"
+                         "func restore_dictionary(value: Variant) -> Dictionary[String, int]:\n"
+                         "    return value\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find(
@@ -2301,12 +2286,11 @@ TEST_CASE("compiler enforces dynamic typed storage through exact Godot metadata"
 
 TEST_CASE("compiler guards dynamic explicit casts with the runtime source type") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "dynamic_explicit_cast.gd",
-        "func parse(value: Variant) -> int:\n"
-        "    return value as int\n"
-        "func text(value: Variant) -> String:\n"
-        "    return value as String\n");
+    const auto result =
+        compiler.compile("dynamic_explicit_cast.gd", "func parse(value: Variant) -> int:\n"
+                                                     "    return value as int\n"
+                                                     "func text(value: Variant) -> String:\n"
+                                                     "    return value as String\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find(
