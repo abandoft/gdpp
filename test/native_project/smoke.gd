@@ -47,6 +47,8 @@ func _run() -> void:
     var evaluation_order_class := _native_class_for("evaluation_order_case.gd")
     var abstract_contract_class := _native_class_for("abstract_contract.gd")
     var abstract_implementation_class := _native_class_for("abstract_implementation.gd")
+    var tool_mode_class := _native_class_for("tool_mode_case.gd")
+    var runtime_mode_class := _native_class_for("runtime_mode_case.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -70,10 +72,41 @@ func _run() -> void:
         or evaluation_order_class.is_empty()
         or abstract_contract_class.is_empty()
         or abstract_implementation_class.is_empty()
+        or tool_mode_class.is_empty()
+        or runtime_mode_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
         return
+
+    if Engine.is_editor_hint():
+        push_error("Native runtime smoke unexpectedly started in editor mode")
+        quit(1)
+        return
+    if (
+        not ClassDB.class_call_static(tool_mode_class, &"static_ready")
+        or not ClassDB.class_call_static(runtime_mode_class, &"static_ready")
+    ):
+        push_error("Native runtime did not execute both script static initializers")
+        quit(1)
+        return
+    var native_tool_mode: Object = ClassDB.instantiate(tool_mode_class)
+    var native_runtime_mode: Object = ClassDB.instantiate(runtime_mode_class)
+    if (
+        native_tool_mode == null
+        or native_runtime_mode == null
+        or not native_tool_mode.call(&"instance_ready")
+        or not native_runtime_mode.call(&"instance_ready")
+        or int(ClassDB.class_call_static(tool_mode_class, &"constructed_instances")) != 1
+        or int(ClassDB.class_call_static(runtime_mode_class, &"constructed_instances")) != 1
+    ):
+        push_error("Native runtime tool-mode execution contract failed")
+        native_tool_mode = null
+        native_runtime_mode = null
+        quit(1)
+        return
+    native_tool_mode = null
+    native_runtime_mode = null
 
     var native_iteration: Object = ClassDB.instantiate(iteration_class)
     var script_iteration: Object = load("res://iteration_case.gd").new()
