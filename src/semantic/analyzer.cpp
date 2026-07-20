@@ -55,6 +55,12 @@ bool is_string_literal(const ast::Expression& expression) {
            expression.literal_kind() == ast::LiteralKind::string;
 }
 
+bool is_shared_constant_type(const Type& type) {
+    return type.kind == TypeKind::object || type.kind == TypeKind::script_resource ||
+           type.kind == TypeKind::array || type.kind == TypeKind::dictionary ||
+           type.is_packed_array();
+}
+
 bool has_property_annotation(const ast::VariableDeclaration& variable) {
     return std::any_of(variable.annotations.begin(), variable.annotations.end(),
                        [](const ast::Annotation& annotation) {
@@ -289,6 +295,13 @@ Type SemanticModel::type_of(const ast::MatchPattern& pattern) const {
 Type SemanticModel::type_of(const ast::Parameter& parameter) const {
     const auto found = parameter_types_.find(&parameter);
     return found == parameter_types_.end() ? unknown_type : found->second;
+}
+
+DefaultArgumentEvaluation SemanticModel::default_argument_evaluation_of(
+    const ast::Parameter& parameter) const noexcept {
+    const auto found = default_argument_evaluations_.find(&parameter);
+    return found == default_argument_evaluations_.end() ? DefaultArgumentEvaluation::absent
+                                                        : found->second;
 }
 
 Type SemanticModel::return_type_of(const ast::FunctionDeclaration& function) const {
@@ -2713,7 +2726,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
     return result;
 }
 
-bool SemanticAnalyzer::is_constant_match_expression(const ast::Expression& expression) const {
+bool SemanticAnalyzer::is_constant_expression(const ast::Expression& expression) const {
     switch (expression.kind()) {
     case ast::ExpressionKind::literal:
         return true;
@@ -2730,28 +2743,74 @@ bool SemanticAnalyzer::is_constant_match_expression(const ast::Expression& expre
     }
     case ast::ExpressionKind::member: {
         const auto* resolution = model_.api_resolution_of(expression);
-        return resolution && (resolution->kind == ApiResolutionKind::enum_member ||
-                              resolution->kind == ApiResolutionKind::script_constant ||
-                              resolution->kind == ApiResolutionKind::builtin_constant ||
-                              resolution->kind == ApiResolutionKind::global_constant ||
-                              resolution->kind == ApiResolutionKind::global_enum_value);
+        if (resolution && (resolution->kind == ApiResolutionKind::enum_member ||
+                           resolution->kind == ApiResolutionKind::script_constant ||
+                           resolution->kind == ApiResolutionKind::builtin_constant ||
+                           resolution->kind == ApiResolutionKind::global_constant ||
+                           resolution->kind == ApiResolutionKind::global_enum_value)) {
+            return true;
+        }
+        // Godot reduces named access on a constant value (for example Vector2(1, 2).x).
+        return expression.operand_count() == 1 &&
+               is_constant_expression(*expression.operand(0));
     }
     case ast::ExpressionKind::unary:
         return expression.operand_count() == 1 &&
-               is_constant_match_expression(*expression.operand(0));
+               is_constant_expression(*expression.operand(0));
     case ast::ExpressionKind::await_expression:
         return false;
     case ast::ExpressionKind::binary:
+        if (expression.operand_count() != 2)
+            return false;
+        // Godot deliberately does not fold binary operators over shared Variant values because
+        // doing so would expose one mutable reference as a compile-time default.
+        if (is_shared_constant_type(model_.type_of(*expression.operand(0))) ||
+            is_shared_constant_type(model_.type_of(*expression.operand(1)))) {
+            return false;
+        }
+        return is_constant_expression(*expression.operand(0)) &&
+               is_constant_expression(*expression.operand(1));
     case ast::ExpressionKind::conditional:
-    case ast::ExpressionKind::array_literal:
-    case ast::ExpressionKind::dictionary_literal:
         for (std::size_t index = 0; index < expression.operand_count(); ++index) {
-            if (!is_constant_match_expression(*expression.operand(index)))
+            if (!is_constant_expression(*expression.operand(index)))
                 return false;
         }
         return true;
-    case ast::ExpressionKind::call:
+    case ast::ExpressionKind::call: {
+        if (expression.operand_count() == 0)
+            return false;
+        for (std::size_t index = 1; index < expression.operand_count(); ++index) {
+            if (!is_constant_expression(*expression.operand(index)))
+                return false;
+        }
+        const auto& callee = *expression.operand(0);
+        const auto* resolution = model_.api_resolution_of(callee);
+        if (!resolution)
+            return false;
+        if (resolution->kind == ApiResolutionKind::constructor)
+            return !is_shared_constant_type(resolution->type);
+        if (resolution->kind == ApiResolutionKind::utility_function) {
+            const auto* function = api_.find_utility_function(resolution->owner);
+            return function && function->is_constant;
+        }
+        if (resolution->kind == ApiResolutionKind::intrinsic) {
+            return resolution->intrinsic == IntrinsicKind::length ||
+                   resolution->intrinsic == IntrinsicKind::preload;
+        }
+        return false;
+    }
     case ast::ExpressionKind::subscript:
+        if (expression.operand_count() == 0)
+            return false;
+        for (std::size_t index = 0; index < expression.operand_count(); ++index) {
+            if (!is_constant_expression(*expression.operand(index)))
+                return false;
+        }
+        return true;
+    // Array and Dictionary literals are intentionally call-time defaults. Godot constructs a
+    // fresh mutable container for every omitted argument instead of sharing a folded instance.
+    case ast::ExpressionKind::array_literal:
+    case ast::ExpressionKind::dictionary_literal:
     case ast::ExpressionKind::node_reference:
     case ast::ExpressionKind::lambda:
         return false;
@@ -2804,7 +2863,7 @@ bool SemanticAnalyzer::is_match_value_pattern(const ast::Expression& expression)
         if (base->kind() == ast::ExpressionKind::identifier)
             return true;
     }
-    return is_constant_match_expression(expression);
+    return is_constant_expression(expression);
 }
 
 void SemanticAnalyzer::analyze_match_pattern(const ast::MatchPattern& pattern,
@@ -2904,7 +2963,7 @@ void SemanticAnalyzer::analyze_match_pattern(const ast::MatchPattern& pattern,
                 continue;
             }
             (void)analyze_expression(*pattern.keys[index]);
-            if (!is_constant_match_expression(*pattern.keys[index])) {
+            if (!is_constant_expression(*pattern.keys[index])) {
                 diagnostics_.error("GDS4045",
                                    "dictionary match keys must be compile-time constants",
                                    pattern.keys[index]->span);
@@ -3503,6 +3562,12 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
                           : virtual_argument ? type_from_godot_api(virtual_argument->type)
                                              : variant_type;
         model_.parameter_types_[&parameter] = type;
+        if (parameter.default_value) {
+            model_.default_argument_evaluations_.insert_or_assign(
+                &parameter, is_constant_expression(*parameter.default_value)
+                                ? DefaultArgumentEvaluation::compile_time_constant
+                                : DefaultArgumentEvaluation::call_time);
+        }
         declare({SymbolKind::parameter, parameter.name, type, parameter.span, false});
         if (analyzed_default)
             require_expression_assignable(type, *parameter.default_value, *analyzed_default,
@@ -3647,6 +3712,12 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
                           : parameter.infer_type && analyzed_default ? *analyzed_default
                                                                      : variant_type;
         model_.parameter_types_[&parameter] = type;
+        if (parameter.default_value) {
+            model_.default_argument_evaluations_.insert_or_assign(
+                &parameter, is_constant_expression(*parameter.default_value)
+                                ? DefaultArgumentEvaluation::compile_time_constant
+                                : DefaultArgumentEvaluation::call_time);
+        }
         declare({SymbolKind::parameter, parameter.name, type, parameter.span, false});
         if (analyzed_default)
             require_expression_assignable(type, *parameter.default_value, *analyzed_default,

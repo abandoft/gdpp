@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gdpp/core/source.hpp"
+#include "gdpp/semantic/default_argument.hpp"
 #include "gdpp/semantic/intrinsics.hpp"
 #include "gdpp/semantic/iteration.hpp"
 #include "gdpp/semantic/rpc.hpp"
@@ -155,6 +156,7 @@ struct Parameter {
     std::string name;
     Type type;
     ExpressionPtr default_value;
+    DefaultArgumentEvaluation default_evaluation{DefaultArgumentEvaluation::absent};
     SourceSpan span{};
 };
 

@@ -2,6 +2,7 @@
 
 #include "gdpp/core/diagnostic.hpp"
 #include "gdpp/frontend/ast.hpp"
+#include "gdpp/semantic/default_argument.hpp"
 #include "gdpp/semantic/flow.hpp"
 #include "gdpp/semantic/godot_api.hpp"
 #include "gdpp/semantic/intrinsics.hpp"
@@ -128,6 +129,8 @@ class SemanticModel final {
     [[nodiscard]] IterationPlan iteration_plan_of(const ast::Statement& statement) const;
     [[nodiscard]] Type type_of(const ast::MatchPattern& pattern) const;
     [[nodiscard]] Type type_of(const ast::Parameter& parameter) const;
+    [[nodiscard]] DefaultArgumentEvaluation
+    default_argument_evaluation_of(const ast::Parameter& parameter) const noexcept;
     [[nodiscard]] Type return_type_of(const ast::FunctionDeclaration& function) const;
     [[nodiscard]] Type return_type_of(const ast::LambdaExpression& function) const;
     [[nodiscard]] bool is_coroutine(const ast::FunctionDeclaration& function) const noexcept;
@@ -158,6 +161,8 @@ class SemanticModel final {
     std::unordered_map<const ast::Statement*, IterationPlan> iteration_plans_;
     std::unordered_map<const ast::MatchPattern*, Type> match_pattern_types_;
     std::unordered_map<const ast::Parameter*, Type> parameter_types_;
+    std::unordered_map<const ast::Parameter*, DefaultArgumentEvaluation>
+        default_argument_evaluations_;
     std::unordered_map<const ast::FunctionDeclaration*, Type> function_return_types_;
     std::unordered_map<const ast::LambdaExpression*, Type> lambda_return_types_;
     std::unordered_set<const ast::LambdaExpression*> owner_bound_lambdas_;
@@ -212,7 +217,7 @@ class SemanticAnalyzer final {
                                                          const Type& target) const;
     [[nodiscard]] Type resolve_binary_expression(const ast::Expression& expression,
                                                  const Type& left, const Type& right);
-    [[nodiscard]] bool is_constant_match_expression(const ast::Expression& expression) const;
+    [[nodiscard]] bool is_constant_expression(const ast::Expression& expression) const;
     [[nodiscard]] std::optional<std::string>
     constant_string_expression(const ast::Expression& expression) const;
     [[nodiscard]] std::optional<std::int64_t>

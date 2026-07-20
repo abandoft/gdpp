@@ -531,6 +531,7 @@ ir::Parameter IrLowerer::lower_parameter(const ast::Parameter& parameter) const 
     ir::Parameter lowered;
     lowered.name = parameter.name;
     lowered.type = semantic_.type_of(parameter);
+    lowered.default_evaluation = semantic_.default_argument_evaluation_of(parameter);
     if (parameter.default_value)
         lowered.default_value = lower_expression(*parameter.default_value);
     lowered.span = parameter.span;
@@ -829,6 +830,24 @@ ir::Module IrLowerer::lower(const ast::Script& script) const {
     return module;
 }
 
+bool IrVerifier::verify_parameter(const ir::Parameter& parameter) {
+    bool valid = true;
+    const bool has_default = parameter.default_value != nullptr;
+    const bool has_evaluation =
+        parameter.default_evaluation != DefaultArgumentEvaluation::absent;
+    if (has_default != has_evaluation) {
+        diagnostics_.error(
+            "GDS5038",
+            has_default ? "default argument IR is missing its evaluation contract"
+                        : "parameter without a default carries an evaluation contract",
+            parameter.span);
+        valid = false;
+    }
+    if (parameter.default_value)
+        valid = verify_expression(*parameter.default_value) && valid;
+    return valid;
+}
+
 bool IrVerifier::verify_expression(const ir::Expression& expression) {
     std::size_t minimum = 0;
     std::optional<std::size_t> exact;
@@ -891,8 +910,7 @@ bool IrVerifier::verify_expression(const ir::Expression& expression) {
                                        parameter.span);
                     valid = false;
                 }
-                if (parameter.default_value && !verify_expression(*parameter.default_value))
-                    valid = false;
+                valid = verify_parameter(parameter) && valid;
             }
             for (const auto& statement : expression.lambda->body) {
                 if (!verify_statement(statement))
@@ -1239,8 +1257,7 @@ bool IrVerifier::verify_class(const ir::Class& declaration) {
             valid = false;
         }
         for (const auto& parameter : function.parameters) {
-            if (parameter.default_value)
-                valid = verify_expression(*parameter.default_value) && valid;
+            valid = verify_parameter(parameter) && valid;
         }
         for (const auto& statement : function.body)
             valid = verify_statement(statement) && valid;
@@ -1316,9 +1333,7 @@ bool IrVerifier::verify(const ir::Module& module) {
             valid = false;
         }
         for (const auto& parameter : signal.parameters) {
-            if (parameter.default_value && !verify_expression(*parameter.default_value)) {
-                valid = false;
-            }
+            valid = verify_parameter(parameter) && valid;
         }
     }
     for (const auto& function : module.functions) {
@@ -1327,9 +1342,7 @@ bool IrVerifier::verify(const ir::Module& module) {
             valid = false;
         }
         for (const auto& parameter : function.parameters) {
-            if (parameter.default_value && !verify_expression(*parameter.default_value)) {
-                valid = false;
-            }
+            valid = verify_parameter(parameter) && valid;
         }
         for (const auto& statement : function.body) {
             if (!verify_statement(statement))
