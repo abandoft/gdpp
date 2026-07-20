@@ -50,6 +50,7 @@ class LanguageFeatureRegistry final {
   public:
     [[nodiscard]] static const LanguageFeatureRegistry& latest() noexcept;
     [[nodiscard]] const AnnotationFeature* find_annotation(std::string_view name) const noexcept;
+    [[nodiscard]] bool is_warning_name(std::string_view name) const noexcept;
 
   private:
     LanguageFeatureRegistry() = default;
