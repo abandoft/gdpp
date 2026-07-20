@@ -62,6 +62,7 @@ enum class ResolutionKind {
     script_callable,
     script_static_callable,
     script_static_field,
+    script_runtime_static_field,
     script_free,
     enum_member,
     script_property,

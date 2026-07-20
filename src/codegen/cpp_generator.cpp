@@ -2913,6 +2913,11 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             return expression.resolved_owner;
         if (expression.resolution == ir::ResolutionKind::builtin_constant)
             return builtin_constant_expression(expression.resolved_owner);
+        if (expression.resolution == ir::ResolutionKind::script_runtime_static_field) {
+            const auto access = expression.resolved_owner + "::" + expression.getter + "()";
+            return "(gdpp::runtime::is_editor_hint() ? godot::Variant() : godot::Variant(" +
+                   access + "))";
+        }
         const auto object = expression.operands.at(0)->resolution == ir::ResolutionKind::script_type
                                 ? expression.operands.at(0)->resolved_owner
                                 : emit_expression(*expression.operands.at(0));
@@ -3958,6 +3963,21 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
             : target.type.is_dynamic() || statement.expression->type.is_dynamic()
                 ? Type{TypeKind::variant, "Variant"}
                 : target.type;
+        if (target.resolution == ir::ResolutionKind::script_runtime_static_field) {
+            const auto* owner = script_symbols_
+                                    ? script_symbols_->find_native_class(target.resolved_owner)
+                                    : nullptr;
+            const auto* member =
+                owner ? script_symbols_->find_member(*owner, target.value) : nullptr;
+            if (!member || member->kind != ScriptMemberKind::field || !member->is_static) {
+                diagnostics_.error("GDS3013", "runtime static field metadata is unavailable",
+                                   target.span);
+                return prefix + "/* unavailable runtime static field */;\n";
+            }
+            value = emit_conversion(member->type, assigned_source_type, std::move(value));
+            return prefix + "if (!gdpp::runtime::is_editor_hint()) " + target.resolved_owner +
+                   "::" + target.setter + "(" + value + ");\n";
+        }
         value = emit_conversion(target.type, assigned_source_type, std::move(value));
         if (target.resolution == ir::ResolutionKind::godot_property && target.direct_access &&
             target.kind == ir::ExpressionKind::member) {

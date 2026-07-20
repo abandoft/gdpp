@@ -2683,12 +2683,16 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 result = unknown_type;
                 break;
             }
-            result = member->type;
+            const bool runtime_static_field = current_script_ && current_script_->is_tool &&
+                                              !script_owner->is_tool && accessed_on_type &&
+                                              member->is_static;
+            result = runtime_static_field ? variant_type : member->type;
             model_.api_resolutions_.emplace(
                 &expression,
-                ApiResolution{ApiResolutionKind::script_property, script_owner->native_class_name,
-                              "_gdpp_get_" + expression.value(), "_gdpp_set_" + expression.value(),
-                              result, 0, 0, false, false});
+                ApiResolution{runtime_static_field ? ApiResolutionKind::script_runtime_static_field
+                                                   : ApiResolutionKind::script_property,
+                              script_owner->native_class_name, "_gdpp_get_" + expression.value(),
+                              "_gdpp_set_" + expression.value(), result, 0, 0, false, false});
             break;
         }
         if (const auto* external_owner = object_type.kind == TypeKind::object && script_symbols_
@@ -3172,6 +3176,7 @@ bool SemanticAnalyzer::is_assignment_target(const ast::Expression& expression) c
         return false;
     return resolution->kind == ApiResolutionKind::property ||
            resolution->kind == ApiResolutionKind::script_property ||
+           resolution->kind == ApiResolutionKind::script_runtime_static_field ||
            resolution->kind == ApiResolutionKind::dynamic_property ||
            resolution->kind == ApiResolutionKind::script_static_field;
 }

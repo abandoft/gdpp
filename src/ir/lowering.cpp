@@ -474,6 +474,8 @@ ir::ExpressionPtr IrLowerer::lower_expression(const ast::Expression& expression)
             lowered->resolution = ir::ResolutionKind::script_static_callable;
         else if (resolution->kind == ApiResolutionKind::script_static_field)
             lowered->resolution = ir::ResolutionKind::script_static_field;
+        else if (resolution->kind == ApiResolutionKind::script_runtime_static_field)
+            lowered->resolution = ir::ResolutionKind::script_runtime_static_field;
         else if (resolution->kind == ApiResolutionKind::script_free)
             lowered->resolution = ir::ResolutionKind::script_free;
         else if (resolution->kind == ApiResolutionKind::enum_member)
