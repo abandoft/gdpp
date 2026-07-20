@@ -42,6 +42,7 @@ func _run() -> void:
     var virtual_signature_class := _native_class_for("virtual_signature_case.gd")
     var default_argument_class := _native_class_for("default_argument_case.gd")
     var language_utility_class := _native_class_for("language_utility_case.gd")
+    var annotation_contract_class := _native_class_for("annotation_contract_case.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -60,6 +61,7 @@ func _run() -> void:
         or virtual_signature_class.is_empty()
         or default_argument_class.is_empty()
         or language_utility_class.is_empty()
+        or annotation_contract_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
@@ -220,6 +222,23 @@ func _run() -> void:
         return
     native_utilities = null
     script_utilities = null
+    var native_annotation: Object = ClassDB.instantiate(annotation_contract_class)
+    var script_annotation: Object = load("res://annotation_contract_case.gd").new()
+    if native_annotation == null or script_annotation == null:
+        push_error("Annotation-contract differential fixtures are unavailable")
+        quit(1)
+        return
+    var native_annotation_report: Dictionary = native_annotation.call("run")
+    var script_annotation_report: Dictionary = script_annotation.call("run")
+    if native_annotation_report != script_annotation_report:
+        push_error(
+            "Annotation constants differ from GDScript: native=%s script=%s"
+            % [native_annotation_report, script_annotation_report]
+        )
+        quit(1)
+        return
+    native_annotation = null
+    script_annotation = null
     var native_integers: Object = ClassDB.instantiate(integer_semantics_class)
     var script_integers: Object = load("res://integer_semantics_case.gd").new()
     if native_integers == null or script_integers == null:
