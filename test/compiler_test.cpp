@@ -2180,8 +2180,10 @@ TEST_CASE("compiler covers strict and explicit Godot conversion families end to 
         "    var packed: PackedInt64Array = values\n"
         "    var unpacked: Array = strings\n"
         "    var handle: RID = object\n"
-        "    var parsed: int = \"42\" as int\n"
-        "    var serialized: String = [1, 2] as String\n"
+        "    var parse_source: String = \"42\"\n"
+        "    var parsed: int = parse_source as int\n"
+        "    var serialize_source: Array = [1, 2]\n"
+        "    var serialized: String = serialize_source as String\n"
         "    return [text, restored_path, vector, rect, rotation, transform, packed, "
         "unpacked, handle, parsed, serialized]\n");
     const auto invalid = compiler.compile(
@@ -2198,7 +2200,7 @@ TEST_CASE("compiler covers strict and explicit Godot conversion families end to 
             std::string::npos);
     REQUIRE(valid.unit.source.find("static_cast<godot::RID>(godot::Variant(object))") !=
             std::string::npos);
-    REQUIRE(valid.unit.source.find("static_cast<int64_t>(godot::Variant(godot::String(\"42\")))") !=
+    REQUIRE(valid.unit.source.find("static_cast<int64_t>(godot::Variant(parse_source))") !=
             std::string::npos);
     REQUIRE(!invalid.success);
     REQUIRE_EQ(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
@@ -2206,6 +2208,26 @@ TEST_CASE("compiler covers strict and explicit Godot conversion families end to 
                                  return diagnostic.code == "GDS4075";
                              }),
                std::ptrdiff_t{4});
+}
+
+TEST_CASE("compiler applies strict conversion rules to reduced constant casts") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "constant_casts.gd",
+        "const SCRIPT_TEXT: Variant = \"42\"\n"
+        "func reject() -> void:\n"
+        "    const local_text: Variant = \"24\"\n"
+        "    var literal = \"42\" as int\n"
+        "    var script_named = SCRIPT_TEXT as int\n"
+        "    var local_named = local_text as int\n"
+        "    print(literal, script_named, local_named)\n");
+
+    REQUIRE(!result.success);
+    REQUIRE_EQ(std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
+                             [](const auto& diagnostic) {
+                                 return diagnostic.code == "GDS4075";
+                             }),
+               std::ptrdiff_t{3});
 }
 
 TEST_CASE("compiler infers native Godot virtual signatures and escapes C++ keywords") {
