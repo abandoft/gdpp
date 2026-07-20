@@ -750,8 +750,17 @@ ir::Module IrLowerer::lower(const ast::Script& script) const {
                 continue;
             ir::PropertyAnnotation property;
             property.name = annotation.name;
-            for (const auto& argument : annotation.arguments) {
+            for (std::size_t index = 0; index < annotation.arguments.size(); ++index) {
+                const auto& argument = annotation.arguments[index];
                 ir::PropertyArgument lowered;
+                if (annotation.name == "export_custom" && (index == 0 || index == 2)) {
+                    if (const auto value = semantic_.constant_integer_value_of(*argument)) {
+                        lowered.kind = ir::PropertyArgumentKind::number;
+                        lowered.value = std::to_string(*value);
+                        property.arguments.push_back(std::move(lowered));
+                        continue;
+                    }
+                }
                 const ast::Expression* value = argument.get();
                 std::string prefix;
                 if (const auto* unary = value->get_if<ast::UnaryExpression>();
