@@ -1075,6 +1075,79 @@ std::string CodeGenerator::cpp_type(const Type& type) const {
     }
 }
 
+std::string CodeGenerator::api_native_type(std::string_view api_type,
+                                           const std::string_view native_meta) const {
+    const auto comma = api_type.find(',');
+    if (comma != std::string_view::npos)
+        api_type = api_type.substr(0, comma);
+    while (!api_type.empty() && api_type.front() == '-')
+        api_type.remove_prefix(1);
+    if (api_type.find('*') != std::string_view::npos) {
+        std::string raw{api_type};
+        const auto base_begin = raw.rfind("const ", 0) == 0 ? std::size_t{6} : std::size_t{0};
+        const auto pointer = raw.find('*', base_begin);
+        auto base_end = pointer;
+        while (base_end > base_begin && raw[base_end - 1] == ' ')
+            --base_end;
+        const auto base = raw.substr(base_begin, base_end - base_begin);
+        const bool primitive = base == "void" || base == "float" || base == "double" ||
+                               base == "int8_t" || base == "int16_t" || base == "int32_t" ||
+                               base == "int64_t" || base == "uint8_t" || base == "uint16_t" ||
+                               base == "uint32_t" || base == "uint64_t";
+        return raw.substr(0, base_begin) + (primitive ? "" : "godot::") + base +
+               raw.substr(base_end);
+    }
+    const bool bitfield = api_type.rfind("bitfield::", 0) == 0;
+    const bool enumeration = api_type.rfind("enum::", 0) == 0;
+    if (bitfield || enumeration) {
+        api_type.remove_prefix(bitfield ? std::string_view{"bitfield::"}.size()
+                                        : std::string_view{"enum::"}.size());
+        std::string qualified{api_type};
+        std::replace(qualified.begin(), qualified.end(), '.', ':');
+        for (std::size_t position = 0;
+             (position = qualified.find(':', position)) != std::string::npos; position += 2) {
+            if (position + 1 >= qualified.size() || qualified[position + 1] != ':')
+                qualified.insert(position, 1, ':');
+        }
+        const auto native = "godot::" + qualified;
+        return bitfield ? "godot::BitField<" + native + ">" : native;
+    }
+    if (native_meta == "real_t")
+        return "godot::real_t";
+    if (native_meta == "float" || native_meta == "double")
+        return std::string{native_meta};
+    if (native_meta == "int8" || native_meta == "int16" || native_meta == "int32" ||
+        native_meta == "int64" || native_meta == "uint8" || native_meta == "uint16" ||
+        native_meta == "uint32" || native_meta == "uint64") {
+        return std::string{native_meta} + "_t";
+    }
+    return cpp_type(type_from_godot_api(api_type));
+}
+
+std::string CodeGenerator::virtual_parameter_type(const GodotMethodRecord& method,
+                                                  const std::size_t index) const {
+    const auto* argument = api_.argument(method, index);
+    if (!argument)
+        return "godot::Variant";
+    auto result = api_native_type(argument->type, argument->meta);
+    if (std::string_view{argument->type}.find('*') != std::string_view::npos)
+        return result;
+    const auto type = type_from_godot_api(argument->type);
+    const bool ref_counted =
+        type.kind == TypeKind::object && api_.inherits(type.name, "RefCounted");
+    const bool builtin_reference =
+        type.kind == TypeKind::string || type.kind == TypeKind::string_name ||
+        type.kind == TypeKind::array || type.kind == TypeKind::dictionary ||
+        type.kind == TypeKind::variant || type.kind == TypeKind::builtin;
+    if (ref_counted || builtin_reference)
+        result = "const " + result + "&";
+    return result;
+}
+
+std::string CodeGenerator::virtual_return_type(const GodotMethodRecord& method) const {
+    return api_native_type(method.return_type, method.return_meta);
+}
+
 std::string CodeGenerator::native_property_info(const Type& type,
                                                 const std::string_view name) const {
     if (describe_container_type(type)) {
@@ -1976,6 +2049,12 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             expression.resolution == ir::ResolutionKind::global_enum_value ||
             expression.resolution == ir::ResolutionKind::global_enum_type)
             return expression.resolved_owner;
+        if (local_functions_.find(expression.value) != local_functions_.end()) {
+            const auto* engine_method =
+                api_.find_method(current_godot_base_type_, expression.value);
+            if (engine_method && engine_method->is_virtual)
+                return "_gdpp_virtual_impl_" + sanitize_identifier(expression.value);
+        }
         if (current_script_ && local_functions_.find(expression.value) != local_functions_.end()) {
             const auto member =
                 std::find_if(current_script_->members.begin(), current_script_->members.end(),
@@ -4307,6 +4386,7 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
     const auto previous_function_parameters = local_function_parameters_;
     const auto previous_functions = local_functions_;
     const auto previous_native_class_name = current_native_class_name_;
+    const auto previous_godot_base_type = current_godot_base_type_;
     local_function_parameters_.clear();
     local_functions_.clear();
     current_native_class_name_ = native_name;
@@ -4326,6 +4406,7 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
     const auto base_cpp =
         native_inner_base.empty() ? "godot::" + declaration.base_type : native_inner_base;
     const auto godot_base = inner_godot_base_type(source_name);
+    current_godot_base_type_ = godot_base;
     const auto engine_virtual_for = [&](const ir::Function& function) {
         const auto* method =
             function.is_static ? nullptr : api_.find_method(godot_base, function.name);
@@ -4444,8 +4525,25 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
                << cpp_type(field.type) << ' ' << setter_parameter << ");\n";
     }
     for (const auto& function : declaration.functions) {
+        if (const auto* method = engine_virtual_for(function)) {
+            header << "    virtual " << virtual_return_type(*method) << ' '
+                   << sanitize_identifier(function.name) << '(';
+            for (std::size_t index = 0; index < method->maximum_arguments; ++index) {
+                if (index != 0)
+                    header << ", ";
+                header << virtual_parameter_type(*method, index) << " _gdpp_engine_argument_"
+                       << index;
+            }
+            header << ')';
+            if (method->is_const)
+                header << " const";
+            header << " override;\n";
+        }
         header << "    " << (function.is_static ? "static " : "virtual ")
-               << function_return_type(function) << ' ' << sanitize_identifier(function.name)
+               << function_return_type(function) << ' '
+               << (engine_virtual_for(function)
+                       ? "_gdpp_virtual_impl_" + sanitize_identifier(function.name)
+                       : sanitize_identifier(function.name))
                << '(';
         for (std::size_t index = 0; index < function.parameters.size(); ++index) {
             if (index != 0)
@@ -4456,29 +4554,15 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
                 header << " = " << emit_parameter_default(parameter);
         }
         header << ')';
-        if (const auto* method = engine_virtual_for(function); method && method->is_const)
-            header << " const";
-        if (engine_virtual_for(function) ||
-            (!function.is_static && inner_overrides_method(source_base, function.name)))
+        if (!function.is_static && inner_overrides_method(source_base, function.name))
             header << " override";
         header << ";\n";
-        if (const auto* method = engine_virtual_for(function); method && method->is_const) {
-            header << "    " << cpp_type(function.return_type) << " _gdpp_mutable_"
-                   << sanitize_identifier(function.name) << '(';
-            for (std::size_t index = 0; index < function.parameters.size(); ++index) {
-                if (index != 0)
-                    header << ", ";
-                const auto& parameter = function.parameters[index];
-                header << parameter_native_type(parameter) << ' '
-                       << parameter_native_name(parameter);
-            }
-            header << ");\n";
-        }
     }
     header << "};\n\n";
     local_function_parameters_ = previous_function_parameters;
     local_functions_ = previous_functions;
     current_native_class_name_ = previous_native_class_name;
+    current_godot_base_type_ = previous_godot_base_type;
     current_inner_script_ = previous_inner_script;
 }
 
@@ -4490,6 +4574,7 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
     const auto previous_function_parameters = local_function_parameters_;
     const auto previous_functions = local_functions_;
     const auto previous_native_class_name = current_native_class_name_;
+    const auto previous_godot_base_type = current_godot_base_type_;
     local_function_parameters_.clear();
     local_functions_.clear();
     current_native_class_name_ = native_name;
@@ -4503,6 +4588,7 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                                 ? script_symbols_->find_inner(*current_script_, source_name)
                                 : nullptr;
     const auto godot_base = inner_godot_base_type(source_name);
+    current_godot_base_type_ = godot_base;
     const auto engine_virtual_for = [&](const ir::Function& function) {
         const auto* method =
             function.is_static ? nullptr : api_.find_method(godot_base, function.name);
@@ -4818,8 +4904,54 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         current_coroutine_state_ = current_coroutine_abi_ ? "_gdpp_coroutine_state" : "";
         in_function_body_ = true;
         const auto* engine_virtual = engine_virtual_for(function);
+        const auto native_function_name =
+            engine_virtual ? "_gdpp_virtual_impl_" + sanitize_identifier(function.name)
+                           : sanitize_identifier(function.name);
+        if (engine_virtual) {
+            source << virtual_return_type(*engine_virtual) << ' ' << native_name
+                   << "::" << sanitize_identifier(function.name) << '(';
+            for (std::size_t index = 0; index < engine_virtual->maximum_arguments; ++index) {
+                if (index != 0)
+                    source << ", ";
+                source << virtual_parameter_type(*engine_virtual, index)
+                       << " _gdpp_engine_argument_" << index;
+            }
+            source << ')';
+            if (engine_virtual->is_const)
+                source << " const";
+            source << " {\n    ";
+            const bool returns_value = !std::string_view{engine_virtual->return_type}.empty() &&
+                                       std::string_view{engine_virtual->return_type} != "void";
+            if (returns_value)
+                source << "return ";
+            std::string call =
+                engine_virtual->is_const ? "const_cast<" + native_name + "*>(this)->" : "this->";
+            call += native_function_name + "(";
+            for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+                if (index != 0)
+                    call += ", ";
+                const auto& parameter = function.parameters[index];
+                if (index >= engine_virtual->maximum_arguments) {
+                    call += "gdpp::runtime::default_argument()";
+                    continue;
+                }
+                const auto argument_name = "_gdpp_engine_argument_" + std::to_string(index);
+                if (parameter.default_value) {
+                    call += "godot::Variant(" + argument_name + ")";
+                } else if (const auto* argument = api_.argument(*engine_virtual, index)) {
+                    call += emit_conversion(parameter.type, type_from_godot_api(argument->type),
+                                            argument_name);
+                }
+            }
+            call += ")";
+            source << (returns_value ? emit_api_argument(engine_virtual->return_type,
+                                                         engine_virtual->return_meta,
+                                                         function.return_type, std::move(call))
+                                     : call)
+                   << ";\n}\n\n";
+        }
         source << function_return_type(function) << ' ' << native_name
-               << "::" << sanitize_identifier(function.name) << '(';
+               << "::" << native_function_name << '(';
         for (std::size_t index = 0; index < function.parameters.size(); ++index) {
             if (index != 0)
                 source << ", ";
@@ -4827,29 +4959,6 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
             source << parameter_native_type(parameter) << ' ' << parameter_native_name(parameter);
         }
         source << ')';
-        if (engine_virtual && engine_virtual->is_const) {
-            source << " const {\n    ";
-            if (function.return_type.kind != TypeKind::void_type)
-                source << "return ";
-            source << "const_cast<" << native_name << "*>(this)->_gdpp_mutable_"
-                   << sanitize_identifier(function.name) << '(';
-            for (std::size_t index = 0; index < function.parameters.size(); ++index) {
-                if (index != 0)
-                    source << ", ";
-                source << parameter_native_name(function.parameters[index]);
-            }
-            source << ");\n}\n\n"
-                   << cpp_type(function.return_type) << ' ' << native_name << "::_gdpp_mutable_"
-                   << sanitize_identifier(function.name) << '(';
-            for (std::size_t index = 0; index < function.parameters.size(); ++index) {
-                if (index != 0)
-                    source << ", ";
-                const auto& parameter = function.parameters[index];
-                source << parameter_native_type(parameter) << ' '
-                       << parameter_native_name(parameter);
-            }
-            source << ')';
-        }
         source << " {\n" << emit_parameter_default_initializers(function.parameters, 1);
         if (current_coroutine_abi_) {
             source << "    const auto " << current_coroutine_state_
@@ -4868,6 +4977,7 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
     local_function_parameters_ = previous_function_parameters;
     local_functions_ = previous_functions;
     current_native_class_name_ = previous_native_class_name;
+    current_godot_base_type_ = previous_godot_base_type;
     current_inner_script_ = previous_inner_script;
 }
 
@@ -5103,6 +5213,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         });
     };
     const auto function_native_name = [&](const ir::Function& function) {
+        if (virtual_method_for(function))
+            return "_gdpp_virtual_impl_" + sanitize_identifier(function.name);
         if (!current_script_ || function.is_static)
             return sanitize_identifier(function.name);
         const auto member =
@@ -5117,21 +5229,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     };
     const auto function_parameter_type = [&](const ir::Function& function,
                                              const std::size_t index) {
-        const auto& type = function.parameters[index].type;
-        auto result = cpp_type(type);
-        if (!virtual_method_for(function))
-            return result;
-        const bool ref_counted_object =
-            type.kind == TypeKind::object &&
-            (api_.inherits(type.name, "RefCounted") || !inner_cpp_type(type.name).empty());
-        const bool builtin_reference =
-            type.kind == TypeKind::string || type.kind == TypeKind::string_name ||
-            type.kind == TypeKind::array || type.kind == TypeKind::dictionary ||
-            type.kind == TypeKind::variant || type.kind == TypeKind::builtin;
-        if (ref_counted_object || builtin_reference)
-            return "const " + result + "&";
-        return result;
+        return cpp_type(function.parameters[index].type);
     };
+
+    current_godot_base_type_ = godot_base_type;
 
     std::ostringstream header;
     const auto native_types = collect_native_types(module, api_, script_symbols_);
@@ -5353,6 +5454,20 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         header << '\n';
     }
     for (const auto& function : module.functions) {
+        if (const auto* method = virtual_method_for(function)) {
+            header << "    virtual " << virtual_return_type(*method) << ' '
+                   << sanitize_identifier(function.name) << '(';
+            for (std::size_t index = 0; index < method->maximum_arguments; ++index) {
+                if (index != 0)
+                    header << ", ";
+                header << virtual_parameter_type(*method, index) << " _gdpp_engine_argument_"
+                       << index;
+            }
+            header << ')';
+            if (method->is_const)
+                header << " const";
+            header << " override;\n";
+        }
         header << "    ";
         if (function.is_static)
             header << "static ";
@@ -5370,23 +5485,9 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                 header << " = " << emit_parameter_default(parameter);
         }
         header << ')';
-        if (const auto* method = virtual_method_for(function); method && method->is_const)
-            header << " const";
-        if (virtual_method_for(function) || overrides_script_method(function))
+        if (overrides_script_method(function))
             header << " override";
         header << ";\n";
-        if (const auto* method = virtual_method_for(function); method && method->is_const) {
-            header << "    " << cpp_type(function.return_type) << " _gdpp_mutable_"
-                   << sanitize_identifier(function.name) << '(';
-            for (std::size_t index = 0; index < function.parameters.size(); ++index) {
-                if (index != 0)
-                    header << ", ";
-                const auto& parameter = function.parameters[index];
-                header << function_parameter_type(function, index) << ' '
-                       << sanitize_identifier(parameter.name);
-            }
-            header << ");\n";
-        }
     }
     if (has_onready_fields && ready == module.functions.end()) {
         header << "    virtual void _ready()";
@@ -5795,6 +5896,56 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         current_coroutine_state_ = current_coroutine_abi_ ? "_gdpp_coroutine_state" : "";
         in_function_body_ = true;
         const auto* engine_virtual = virtual_method_for(function);
+        if (engine_virtual) {
+            source << virtual_return_type(*engine_virtual) << ' ' << unit.class_name
+                   << "::" << sanitize_identifier(function.name) << '(';
+            for (std::size_t index = 0; index < engine_virtual->maximum_arguments; ++index) {
+                if (index != 0)
+                    source << ", ";
+                source << virtual_parameter_type(*engine_virtual, index)
+                       << " _gdpp_engine_argument_" << index;
+            }
+            source << ')';
+            if (engine_virtual->is_const)
+                source << " const";
+            source << " {\n    ";
+            if (std::string_view{engine_virtual->return_type}.empty() ||
+                std::string_view{engine_virtual->return_type} == "void") {
+                source << "";
+            } else {
+                source << "return ";
+            }
+            std::string call = engine_virtual->is_const
+                                   ? "const_cast<" + unit.class_name + "*>(this)->"
+                                   : "this->";
+            call += function_native_name(function) + "(";
+            for (std::size_t index = 0; index < function.parameters.size(); ++index) {
+                if (index != 0)
+                    call += ", ";
+                const auto& parameter = function.parameters[index];
+                if (index >= engine_virtual->maximum_arguments) {
+                    call += "gdpp::runtime::default_argument()";
+                    continue;
+                }
+                const auto argument_name = "_gdpp_engine_argument_" + std::to_string(index);
+                if (parameter.default_value) {
+                    call += "godot::Variant(" + argument_name + ")";
+                } else if (const auto* argument = api_.argument(*engine_virtual, index)) {
+                    call += emit_conversion(parameter.type, type_from_godot_api(argument->type),
+                                            argument_name);
+                }
+            }
+            call += ")";
+            if (std::string_view{engine_virtual->return_type}.empty() ||
+                std::string_view{engine_virtual->return_type} == "void") {
+                source << call;
+            } else {
+                source << emit_api_argument(engine_virtual->return_type,
+                                            engine_virtual->return_meta, function.return_type,
+                                            std::move(call));
+            }
+            source << ";\n}\n\n";
+        }
         source << function_return_type(function) << ' ' << unit.class_name
                << "::" << function_native_name(function) << '(';
         for (std::size_t index = 0; index < function.parameters.size(); ++index) {
@@ -5806,29 +5957,6 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                    << ' ' << parameter_native_name(parameter);
         }
         source << ')';
-        if (engine_virtual && engine_virtual->is_const) {
-            source << " const {\n    ";
-            if (function.return_type.kind != TypeKind::void_type)
-                source << "return ";
-            source << "const_cast<" << unit.class_name << "*>(this)->_gdpp_mutable_"
-                   << sanitize_identifier(function.name) << '(';
-            for (std::size_t index = 0; index < function.parameters.size(); ++index) {
-                if (index != 0)
-                    source << ", ";
-                source << sanitize_identifier(function.parameters[index].name);
-            }
-            source << ");\n}\n\n"
-                   << cpp_type(function.return_type) << ' ' << unit.class_name << "::_gdpp_mutable_"
-                   << sanitize_identifier(function.name) << '(';
-            for (std::size_t index = 0; index < function.parameters.size(); ++index) {
-                if (index != 0)
-                    source << ", ";
-                const auto& parameter = function.parameters[index];
-                source << function_parameter_type(function, index) << ' '
-                       << sanitize_identifier(parameter.name);
-            }
-            source << ')';
-        }
         source << " {\n";
         source << emit_parameter_default_initializers(function.parameters, 1);
         if (current_coroutine_abi_) {

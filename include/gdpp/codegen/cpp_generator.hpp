@@ -127,6 +127,11 @@ class CodeGenerator final {
     [[nodiscard]] std::string lift_async_loop_locals(const ir::Statement& statement,
                                                      std::size_t indent) const;
     [[nodiscard]] std::string cpp_type(const Type& type) const;
+    [[nodiscard]] std::string api_native_type(std::string_view api_type,
+                                              std::string_view native_meta) const;
+    [[nodiscard]] std::string virtual_parameter_type(const GodotMethodRecord& method,
+                                                     std::size_t index) const;
+    [[nodiscard]] std::string virtual_return_type(const GodotMethodRecord& method) const;
     [[nodiscard]] std::string native_property_info(const Type& type, std::string_view name) const;
     [[nodiscard]] Type container_argument_type(std::string_view type_name) const;
     [[nodiscard]] std::string container_cpp_argument(std::string_view type_name) const;
@@ -175,6 +180,7 @@ class CodeGenerator final {
     mutable std::unordered_set<std::string> ambiguous_local_names_;
     mutable std::unordered_map<std::string, std::string> local_expression_overrides_;
     mutable std::string current_native_class_name_;
+    mutable std::string current_godot_base_type_;
     mutable std::size_t match_counter_{0};
     mutable std::size_t temporary_counter_{0};
 };
