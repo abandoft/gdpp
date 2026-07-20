@@ -6,6 +6,7 @@
 - Enforced invariant typed-container storage with exact runtime element, key, value, object-class, and script metadata instead of relying on godot-cpp converting constructors.
 - Added stable diagnostics for impossible constant casts, typed-container storage violations, deterministic runtime cast failures, and values such as Object-backed RID expressions that native GDExtension storage cannot preserve.
 - Expanded generated-code compilation and real Godot 4.7.1 GDScript/AOT differential coverage for all truthiness categories, built-in conversions, packed arrays, typed-container metadata recovery, String conversion divergence, and RID storage behavior.
+- Kept nested warning-control scopes distinct and normalized the analyzer to the pinned formatter, preserving warning-as-error builds across Clang, GCC, and MSVC release gates.
 - Advanced the native runtime ABI to 5 for the new guarded conversion and typed-storage contract.
 
 ## 1.5.0
