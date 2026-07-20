@@ -427,6 +427,21 @@ ast::Annotation Parser::parse_annotation() {
                                annotation.span);
         }
     }
+    if (annotation.name == "warning_ignore" || annotation.name == "warning_ignore_start" ||
+        annotation.name == "warning_ignore_restore") {
+        const auto& registry = LanguageFeatureRegistry::latest();
+        for (const auto& argument : annotation.arguments) {
+            if (argument->kind() != ast::ExpressionKind::literal ||
+                argument->literal_kind() != ast::LiteralKind::string) {
+                diagnostics_.error("GDS2016", "warning directives expect string literals",
+                                   argument->span);
+            } else if (!registry.is_warning_name(argument->value())) {
+                diagnostics_.error("GDS2034",
+                                   "unknown GDScript warning '" + argument->value() + "'",
+                                   argument->span);
+            }
+        }
+    }
     return annotation;
 }
 
@@ -1017,22 +1032,16 @@ ast::Statement Parser::parse_statement() {
             diagnostics_.error("GDS2015",
                                "unsupported statement annotation '@" + annotation.name + "'",
                                annotation.span);
-        } else if (annotation.arguments.empty() ||
-                   std::any_of(annotation.arguments.begin(), annotation.arguments.end(),
-                               [](const auto& argument) {
-                                   return argument->kind() != ast::ExpressionKind::literal ||
-                                          argument->literal_kind() != ast::LiteralKind::string;
-                               })) {
-            diagnostics_.error("GDS2016", "warning directives expect one or more string literals",
-                               annotation.span);
         }
         consume(TokenKind::newline, "expected a newline after statement annotation");
         if (warning_range)
             apply_warning_directive(annotation);
         skip_newlines();
         if (check(TokenKind::dedent) || at_end()) {
-            diagnostics_.error("GDS2017", "statement annotation is not followed by a statement",
-                               annotation.span);
+            if (!warning_range) {
+                diagnostics_.error("GDS2017", "statement annotation is not followed by a statement",
+                                   annotation.span);
+            }
             return ast::Statement{ast::PassStatement{}, annotation.span};
         }
         auto statement = parse_statement();
