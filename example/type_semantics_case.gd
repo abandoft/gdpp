@@ -53,6 +53,8 @@ func conversion_trace(
     rect_i: Rect2i,
     basis: Basis,
     projection: Projection,
+    typed_values: Array[int],
+    typed_dictionary: Dictionary[String, int],
 ) -> Dictionary:
     var text: String = ^"root/child"
     var name: StringName = text
@@ -63,13 +65,17 @@ func conversion_trace(
     var transform: Transform3D = projection
     var packed: PackedInt64Array = values
     var unpacked: Array = strings
-    var typed: Array[int] = PackedInt64Array([3, 4])
+    var typed: Array[int] = [3, 4]
     var color: Color = 0xff8040ff
-    var handle: RID = texture
+    var handle: RID = texture.get_rid()
     var enabled: bool = 2
     var truncated: int = 2.75
-    var parsed: int = "42" as int
-    var serialized: String = [1, 2] as String
+    var parse_source: String = "42"
+    var parsed: int = parse_source as int
+    var dynamic_values: Variant = typed_values
+    var restored_values: Array[int] = dynamic_values
+    var dynamic_dictionary: Variant = typed_dictionary
+    var restored_dictionary: Dictionary[String, int] = dynamic_dictionary
     return {
         "text": text,
         "name": name,
@@ -86,5 +92,6 @@ func conversion_trace(
         "enabled": enabled,
         "truncated": truncated,
         "parsed": parsed,
-        "serialized": serialized,
+        "restored_values": restored_values,
+        "restored_dictionary": restored_dictionary,
     }
