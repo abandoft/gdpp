@@ -390,6 +390,39 @@ TEST_CASE("parser validates warning annotations without changing statements") {
     REQUIRE_EQ(script.functions.front().body.front().kind(), gdpp::ast::StatementKind::variable);
 }
 
+TEST_CASE("parser validates the complete warning directive namespace") {
+    const gdpp::SourceFile valid{"warning_names.gd",
+                                 "func inspect() -> void:\n"
+                                 "    @warning_ignore(\"unassigned_variable\", "
+                                 "\"function_used_as_property\")\n"
+                                 "    pass\n"
+                                 "    @warning_ignore_start(\"redundant_await\")\n"
+                                 "    await 42\n"
+                                 "    @warning_ignore_restore(\"redundant_await\")\n"};
+    gdpp::DiagnosticBag valid_diagnostics;
+    const auto valid_tokens = gdpp::Lexer{valid, valid_diagnostics}.scan();
+    const auto valid_script = gdpp::Parser{valid_tokens, valid_diagnostics}.parse_script();
+
+    REQUIRE(!valid_diagnostics.has_errors());
+    REQUIRE_EQ(valid_script.functions.front().body.size(), std::size_t{3});
+
+    const gdpp::SourceFile invalid{"invalid_warning_names.gd",
+                                   "@warning_ignore(\"not_a_godot_warning\")\n"
+                                   "func invalid() -> void:\n"
+                                   "    pass\n"
+                                   "func non_literal() -> void:\n"
+                                   "    @warning_ignore(unreachable_code)\n"
+                                   "    pass\n"};
+    gdpp::DiagnosticBag invalid_diagnostics;
+    const auto invalid_tokens = gdpp::Lexer{invalid, invalid_diagnostics}.scan();
+    (void)gdpp::Parser{invalid_tokens, invalid_diagnostics}.parse_script();
+
+    REQUIRE(std::any_of(invalid_diagnostics.items().begin(), invalid_diagnostics.items().end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS2034"; }));
+    REQUIRE(std::any_of(invalid_diagnostics.items().begin(), invalid_diagnostics.items().end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS2016"; }));
+}
+
 TEST_CASE("parser builds named and anonymous enum declarations") {
     const gdpp::SourceFile source{"enums.gd",
                                   "enum State { IDLE, WALK = 4, RUN = WALK * 2, }\n"
