@@ -152,6 +152,52 @@ TEST_CASE("project compiler incrementally generates a unified native extension")
     REQUIRE_EQ(fourth.scripts.size(), std::size_t{1});
 }
 
+TEST_CASE("project compiler publishes normalized extension class icons") {
+    const auto root = fixture_root("project-icons");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "icons/type.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n");
+    write_text(root / "actors/enemy.gd", "@icon(\"../icons/type.svg\")\n"
+                                         "class_name IconEnemy\n"
+                                         "extends Node\n");
+    write_text(root / "global_icon.gd", "@icon(\"res://icons/type.svg\")\n"
+                                        "class_name GlobalIcon\n"
+                                        "extends Resource\n");
+    const auto options = project_options(root);
+    const gdpp::ProjectCompiler compiler;
+    const auto first = compiler.compile(options);
+
+    REQUIRE(first.success);
+    const auto enemy_class = native_class_for(first, "enemy.gd");
+    const auto global_class = native_class_for(first, "global_icon.gd");
+    const auto descriptor = read_text(first.extension_descriptor);
+    REQUIRE(descriptor.find("[icons]\n\n") != std::string::npos);
+    REQUIRE(descriptor.find(enemy_class + " = \"res://icons/type.svg\"") != std::string::npos);
+    REQUIRE(descriptor.find(global_class + " = \"res://icons/type.svg\"") != std::string::npos);
+    REQUIRE(std::all_of(first.scripts.begin(), first.scripts.end(), [](const auto& script) {
+        return script.icon_path == std::optional<std::string>{"res://icons/type.svg"};
+    }));
+
+    const auto cached = compiler.compile(options);
+    REQUIRE(cached.success);
+    REQUIRE_EQ(cached.cache_hit_count, std::size_t{2});
+    REQUIRE_EQ(read_text(cached.extension_descriptor), descriptor);
+}
+
+TEST_CASE("project compiler rejects icon paths outside project resources") {
+    const auto root = fixture_root("project-invalid-icons");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "invalid.gd", "@icon(\"../outside.svg\")\n"
+                                    "class_name InvalidIcon\n"
+                                    "extends Node\n");
+    const auto result = gdpp::ProjectCompiler{}.compile(project_options(root));
+
+    REQUIRE(!result.success);
+    REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                        [](const auto& item) { return item.diagnostic.code == "PRJ0027"; }));
+}
+
 TEST_CASE("project compiler ignores cross-platform filesystem metadata") {
     const auto root = fixture_root("project-platform-metadata");
     std::error_code error;
