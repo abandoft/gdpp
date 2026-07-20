@@ -485,8 +485,11 @@ void Parser::apply_active_warning_ignores(ast::Statement& statement) const {
     }
 }
 
-std::vector<ast::Parameter> Parser::parse_parameters() {
+std::vector<ast::Parameter> Parser::parse_parameters(const std::string_view owner,
+                                                     const bool allow_defaults) {
     std::vector<ast::Parameter> parameters;
+    std::unordered_map<std::string, SourceSpan> declared_names;
+    bool optional_parameter_seen = false;
     consume(TokenKind::left_paren, "expected '('");
     while (!check(TokenKind::right_paren) && !at_end()) {
         const auto begin = current().span;
@@ -501,7 +504,29 @@ std::vector<ast::Parameter> Parser::parse_parameters() {
                 parameter.default_value = parse_expression();
         }
         parameter.span = joined(begin, previous().span);
-        parameters.push_back(std::move(parameter));
+        const bool has_default = parameter.default_value != nullptr;
+        bool accepted = true;
+        if (has_default && !allow_defaults) {
+            diagnostics_.error("GDS2033", std::string{owner} +
+                                               " parameters cannot have a default value",
+                               parameter.span);
+        } else if (!has_default && optional_parameter_seen) {
+            diagnostics_.error("GDS2034",
+                               "mandatory parameters cannot follow optional parameters in a " +
+                                   std::string{owner},
+                               parameter.span);
+            accepted = false;
+        }
+        if (!declared_names.emplace(parameter.name, parameter.span).second) {
+            diagnostics_.error("GDS2035", "parameter '" + parameter.name +
+                                               "' was already declared for this " +
+                                               std::string{owner},
+                               parameter.span);
+            accepted = false;
+        }
+        optional_parameter_seen = optional_parameter_seen || has_default;
+        if (accepted)
+            parameters.push_back(std::move(parameter));
         if (!match(TokenKind::comma) || check(TokenKind::right_paren)) {
             break;
         }
@@ -573,7 +598,7 @@ ast::SignalDeclaration Parser::parse_signal(std::vector<ast::Annotation> annotat
     declaration.annotations = std::move(annotations);
     declaration.name = consume(TokenKind::identifier, "expected a signal name").lexeme;
     if (check(TokenKind::left_paren)) {
-        declaration.parameters = parse_parameters();
+        declaration.parameters = parse_parameters("signal", false);
     }
     declaration.span = joined(begin, previous().span);
     if (!check(TokenKind::newline)) {
@@ -621,7 +646,7 @@ ast::FunctionDeclaration Parser::parse_function(bool is_static,
     function.is_static = is_static;
     function.annotations = std::move(annotations);
     function.name = consume(TokenKind::identifier, "expected a function name").lexeme;
-    function.parameters = parse_parameters();
+    function.parameters = parse_parameters("function");
     if (match(TokenKind::arrow)) {
         function.return_type = parse_type_name("expected a return type after '->'");
     }
@@ -1205,7 +1230,7 @@ ast::ExpressionPtr Parser::parse_lambda(SourceSpan begin) {
         tokens_[position_ + 1].kind == TokenKind::left_paren) {
         lambda.name = advance().lexeme;
     }
-    lambda.parameters = parse_parameters();
+    lambda.parameters = parse_parameters("lambda");
     if (match(TokenKind::arrow))
         lambda.return_type = parse_type_name("expected a lambda return type");
     consume(TokenKind::colon, "expected ':' after lambda signature");

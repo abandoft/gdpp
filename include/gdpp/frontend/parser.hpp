@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -53,7 +54,8 @@ class Parser final {
     [[nodiscard]] std::optional<std::string> parse_type_annotation();
     [[nodiscard]] ast::Annotation parse_annotation();
     void apply_warning_directive(const ast::Annotation& annotation);
-    [[nodiscard]] std::vector<ast::Parameter> parse_parameters();
+    [[nodiscard]] std::vector<ast::Parameter>
+    parse_parameters(std::string_view owner, bool allow_defaults = true);
     [[nodiscard]] ast::VariableDeclaration parse_variable(bool is_constant,
                                                           std::vector<ast::Annotation> annotations);
     void parse_property_accessors(ast::VariableDeclaration& declaration);
