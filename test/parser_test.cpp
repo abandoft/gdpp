@@ -94,10 +94,11 @@ TEST_CASE("parser leaves bodyless function validity to semantic analysis") {
 }
 
 TEST_CASE("parser disambiguates inline abstract class annotations from the script") {
-    const gdpp::SourceFile source{"inline_abstract.gd", "@abstract class Contract:\n"
-                                                         "    @abstract func execute()\n"
-                                                         "class EmptyImplementation extends Contract:\n"
-                                                         "    pass\n"};
+    const gdpp::SourceFile source{"inline_abstract.gd",
+                                  "@abstract class Contract:\n"
+                                  "    @abstract func execute()\n"
+                                  "class EmptyImplementation extends Contract:\n"
+                                  "    pass\n"};
     gdpp::DiagnosticBag diagnostics;
     const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
     const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();

@@ -1780,25 +1780,23 @@ TEST_CASE("compiler rejects every implicit instance dependency from static conte
 
 TEST_CASE("semantic analysis enforces abstract function declaration shape") {
     const gdpp::Compiler compiler;
-    const auto duplicate = compiler.compile(
-        "duplicate_abstract.gd", "@abstract\n"
-                                 "class_name DuplicateAbstract\n"
-                                 "@abstract\n"
-                                 "@abstract\n"
-                                 "func execute()\n");
-    const auto bodyful = compiler.compile(
-        "bodyful_abstract.gd", "@abstract\n"
-                                "class_name BodyfulAbstract\n"
-                                "@abstract\n"
-                                "func execute() -> void:\n"
-                                "    pass\n");
-    const auto bodyless =
-        compiler.compile("bodyless.gd", "func execute() -> void\n");
-    const auto static_abstract = compiler.compile(
-        "static_abstract.gd", "@abstract\n"
-                               "class_name StaticAbstract\n"
-                               "@abstract\n"
-                               "static func execute() -> void\n");
+    const auto duplicate =
+        compiler.compile("duplicate_abstract.gd", "@abstract\n"
+                                                  "class_name DuplicateAbstract\n"
+                                                  "@abstract\n"
+                                                  "@abstract\n"
+                                                  "func execute()\n");
+    const auto bodyful = compiler.compile("bodyful_abstract.gd", "@abstract\n"
+                                                                 "class_name BodyfulAbstract\n"
+                                                                 "@abstract\n"
+                                                                 "func execute() -> void:\n"
+                                                                 "    pass\n");
+    const auto bodyless = compiler.compile("bodyless.gd", "func execute() -> void\n");
+    const auto static_abstract =
+        compiler.compile("static_abstract.gd", "@abstract\n"
+                                               "class_name StaticAbstract\n"
+                                               "@abstract\n"
+                                               "static func execute() -> void\n");
     const auto duplicate_class = compiler.compile(
         "duplicate_abstract_class.gd", "@abstract @abstract class_name DuplicateClass\n");
 
@@ -1821,20 +1819,19 @@ TEST_CASE("semantic analysis enforces abstract function declaration shape") {
 
 TEST_CASE("semantic analysis closes internal abstract class obligations") {
     const gdpp::Compiler compiler;
-    const auto valid = compiler.compile(
-        "abstract_inner.gd", "@abstract class Contract:\n"
-                             "    @abstract func execute(value: int) -> String\n"
-                             "class Implementation extends Contract:\n"
-                             "    func execute(value: int) -> String:\n"
-                             "        return str(value)\n");
-    const auto direct = compiler.compile(
-        "concrete_abstract.gd", "class InvalidContract:\n"
-                                "    @abstract func execute()\n");
-    const auto inherited = compiler.compile(
-        "missing_implementation.gd", "@abstract class Contract:\n"
-                                     "    @abstract func execute()\n"
-                                     "class Missing extends Contract:\n"
-                                     "    pass\n");
+    const auto valid =
+        compiler.compile("abstract_inner.gd", "@abstract class Contract:\n"
+                                              "    @abstract func execute(value: int) -> String\n"
+                                              "class Implementation extends Contract:\n"
+                                              "    func execute(value: int) -> String:\n"
+                                              "        return str(value)\n");
+    const auto direct = compiler.compile("concrete_abstract.gd", "class InvalidContract:\n"
+                                                                 "    @abstract func execute()\n");
+    const auto inherited =
+        compiler.compile("missing_implementation.gd", "@abstract class Contract:\n"
+                                                      "    @abstract func execute()\n"
+                                                      "class Missing extends Contract:\n"
+                                                      "    pass\n");
 
     REQUIRE(valid.success);
     REQUIRE(!direct.success);
@@ -1847,11 +1844,11 @@ TEST_CASE("semantic analysis closes internal abstract class obligations") {
 
 TEST_CASE("semantic analysis rejects abstract internal class construction") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "construct_abstract.gd", "@abstract class Contract:\n"
-                                 "    pass\n"
-                                 "func create() -> void:\n"
-                                 "    var invalid := Contract.new()\n");
+    const auto result =
+        compiler.compile("construct_abstract.gd", "@abstract class Contract:\n"
+                                                  "    pass\n"
+                                                  "func create() -> void:\n"
+                                                  "    var invalid := Contract.new()\n");
 
     REQUIRE(!result.success);
     REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
@@ -1860,37 +1857,34 @@ TEST_CASE("semantic analysis rejects abstract internal class construction") {
 
 TEST_CASE("semantic analysis rejects calls to unimplemented abstract parents") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "abstract_super.gd", "@abstract class Contract:\n"
-                             "    @abstract func execute() -> void\n"
-                             "class Implementation extends Contract:\n"
-                             "    func execute() -> void:\n"
-                             "        super()\n"
-                             "    func invoke_parent() -> void:\n"
-                             "        super.execute()\n");
+    const auto result =
+        compiler.compile("abstract_super.gd", "@abstract class Contract:\n"
+                                              "    @abstract func execute() -> void\n"
+                                              "class Implementation extends Contract:\n"
+                                              "    func execute() -> void:\n"
+                                              "        super()\n"
+                                              "    func invoke_parent() -> void:\n"
+                                              "        super.execute()\n");
 
     REQUIRE(!result.success);
     REQUIRE_EQ(std::count_if(result.diagnostics.begin(), result.diagnostics.end(),
-                             [](const auto& diagnostic) {
-                                 return diagnostic.code == "GDS4150";
-                             }),
+                             [](const auto& diagnostic) { return diagnostic.code == "GDS4150"; }),
                std::ptrdiff_t{2});
 }
 
 TEST_CASE("compiler emits pure virtual C++ for abstract method contracts") {
     const gdpp::Compiler compiler;
-    const auto root = compiler.compile(
-        "work_contract.gd", "@abstract\n"
-                            "extends RefCounted\n"
-                            "class_name WorkContract\n"
-                            "@abstract\n"
-                            "func execute(value: int) -> String\n");
-    const auto inner = compiler.compile(
-        "inner_contract.gd", "@abstract class Contract:\n"
-                             "    @abstract func execute(value: int) -> String\n"
-                             "class Implementation extends Contract:\n"
-                             "    func execute(value: int) -> String:\n"
-                             "        return str(value)\n");
+    const auto root = compiler.compile("work_contract.gd", "@abstract\n"
+                                                           "extends RefCounted\n"
+                                                           "class_name WorkContract\n"
+                                                           "@abstract\n"
+                                                           "func execute(value: int) -> String\n");
+    const auto inner =
+        compiler.compile("inner_contract.gd", "@abstract class Contract:\n"
+                                              "    @abstract func execute(value: int) -> String\n"
+                                              "class Implementation extends Contract:\n"
+                                              "    func execute(value: int) -> String:\n"
+                                              "        return str(value)\n");
 
     REQUIRE(root.success);
     REQUIRE(root.unit.is_abstract);
@@ -1914,21 +1908,20 @@ TEST_CASE("compiler emits pure virtual C++ for abstract method contracts") {
 
 TEST_CASE("compiler preserves engine virtual ABI around abstract contracts") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "abstract_process.gd", "@abstract\n"
-                               "extends Node\n"
-                               "class_name AbstractProcess\n"
-                               "@abstract\n"
-                               "func _process(delta: float) -> void\n");
+    const auto result =
+        compiler.compile("abstract_process.gd", "@abstract\n"
+                                                "extends Node\n"
+                                                "class_name AbstractProcess\n"
+                                                "@abstract\n"
+                                                "func _process(delta: float) -> void\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.header.find("virtual void _process(double _gdpp_engine_argument_0) "
                                     "override;") != std::string::npos);
-    REQUIRE(result.unit.header.find(
-                "virtual void _gdpp_virtual_impl__process(double delta) = 0;") !=
-            std::string::npos);
-    REQUIRE(result.unit.source.find("GDPPNative_AbstractProcess::_process(") !=
-            std::string::npos);
+    REQUIRE(
+        result.unit.header.find("virtual void _gdpp_virtual_impl__process(double delta) = 0;") !=
+        std::string::npos);
+    REQUIRE(result.unit.source.find("GDPPNative_AbstractProcess::_process(") != std::string::npos);
     REQUIRE(result.unit.source.find("GDPPNative_AbstractProcess::_gdpp_virtual_impl__process(") ==
             std::string::npos);
 }

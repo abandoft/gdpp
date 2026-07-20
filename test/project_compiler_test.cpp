@@ -637,17 +637,16 @@ TEST_CASE("project compiler accepts variance-safe script override contracts") {
                "extends Node\nclass_name VarianceBase\n"
                "func transform(value: Node, policy: Variant, limit: int = 1) -> Node:\n"
                "    return value\n");
-    write_text(root / "child.gd",
-               "extends VarianceBase\nclass_name VarianceChild\n"
-               "func transform(value: Object, policy: Variant, limit: int = 1, "
-               "context = null) -> Node2D:\n"
-               "    return null\n");
+    write_text(root / "child.gd", "extends VarianceBase\nclass_name VarianceChild\n"
+                                  "func transform(value: Object, policy: Variant, limit: int = 1, "
+                                  "context = null) -> Node2D:\n"
+                                  "    return null\n");
 
     const auto result = gdpp::ProjectCompiler{}.compile(project_options(root));
 
     REQUIRE(result.success);
-    const auto header = read_text(project_options(root).output_directory /
-                                  "generated/variance_child.gd.hpp");
+    const auto header =
+        read_text(project_options(root).output_directory / "generated/variance_child.gd.hpp");
     REQUIRE(header.find("_gdpp_native_override_transform") != std::string::npos);
 }
 
@@ -655,12 +654,11 @@ TEST_CASE("project compiler rejects incompatible script override contracts") {
     const auto root = fixture_root("project-invalid-overrides");
     std::error_code error;
     std::filesystem::remove_all(root, error);
-    write_text(root / "base.gd",
-               "extends Node\nclass_name InvalidOverrideBase\n"
-               "func arity(value: int, optional: int = 1) -> int: return value\n"
-               "func input(value: Node) -> void: pass\n"
-               "func output() -> Node2D: return null\n"
-               "func qualifier(value: int) -> int: return value\n");
+    write_text(root / "base.gd", "extends Node\nclass_name InvalidOverrideBase\n"
+                                 "func arity(value: int, optional: int = 1) -> int: return value\n"
+                                 "func input(value: Node) -> void: pass\n"
+                                 "func output() -> Node2D: return null\n"
+                                 "func qualifier(value: int) -> int: return value\n");
     write_text(root / "child.gd",
                "extends InvalidOverrideBase\nclass_name InvalidOverrideChild\n"
                "func arity(value: int, optional: int, required: int) -> int: return value\n"
@@ -1898,16 +1896,14 @@ TEST_CASE("project compiler enforces cross-script abstract method obligations") 
     const auto valid = compiler.compile(options);
 
     REQUIRE(valid.success);
-    REQUIRE_EQ(std::count_if(valid.scripts.begin(), valid.scripts.end(), [](const auto& script) {
-                   return script.is_abstract;
-               }),
+    REQUIRE_EQ(std::count_if(valid.scripts.begin(), valid.scripts.end(),
+                             [](const auto& script) { return script.is_abstract; }),
                std::ptrdiff_t{2});
     const auto registration = read_text(options.output_directory / "register_types.cpp");
     REQUIRE(registration.find("GDREGISTER_ABSTRACT_CLASS(GDPPNative_InnerContracts_") !=
             std::string::npos);
     REQUIRE(registration.find("__Contract);") != std::string::npos);
-    REQUIRE(registration.find("GDREGISTER_CLASS(GDPPNative_InnerContracts_") !=
-            std::string::npos);
+    REQUIRE(registration.find("GDREGISTER_CLASS(GDPPNative_InnerContracts_") != std::string::npos);
     REQUIRE(registration.find("__Implementation);") != std::string::npos);
 
     write_text(root / "missing.gd", "extends DeferredWork\n"

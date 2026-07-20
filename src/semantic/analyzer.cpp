@@ -1813,11 +1813,11 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     member ? nullptr : api_.find_method(base_type_, current_function_name_);
                 if (member && member->kind == ScriptMemberKind::function) {
                     if (member->is_abstract) {
-                        diagnostics_.error(
-                            "GDS4150",
-                            "cannot call abstract parent method '" + current_function_name_ +
-                                "' because it has no implementation",
-                            expression.span);
+                        diagnostics_.error("GDS4150",
+                                           "cannot call abstract parent method '" +
+                                               current_function_name_ +
+                                               "' because it has no implementation",
+                                           expression.span);
                     }
                     if (!instance_context_available_ && !member->is_static)
                         diagnose_static_instance_access("method", current_function_name_,
@@ -4168,11 +4168,10 @@ void SemanticAnalyzer::validate_script_abstract_contract(const ast::Script& scri
     std::unordered_set<std::string> implemented;
     for (const auto& function : script.functions) {
         if (function.is_abstract && !function.is_static) {
-            diagnostics_.error(
-                "GDS4149",
-                "concrete script class declares abstract method '" + function.name +
-                    "'; mark the class @abstract or implement the method",
-                function.span);
+            diagnostics_.error("GDS4149",
+                               "concrete script class declares abstract method '" + function.name +
+                                   "'; mark the class @abstract or implement the method",
+                               function.span);
         } else {
             implemented.insert(function.name);
         }
@@ -4217,43 +4216,37 @@ void SemanticAnalyzer::validate_script_abstract_contract(const ast::Script& scri
     }
 }
 
-void SemanticAnalyzer::validate_inner_abstract_contract(
-    const ast::ClassDeclaration& declaration) {
-    const bool class_is_abstract = std::count_if(
-                                       declaration.annotations.begin(),
-                                       declaration.annotations.end(),
-                                       [](const ast::Annotation& annotation) {
-                                           return annotation.name == "abstract";
-                                       }) == 1;
+void SemanticAnalyzer::validate_inner_abstract_contract(const ast::ClassDeclaration& declaration) {
+    const bool class_is_abstract =
+        std::count_if(
+            declaration.annotations.begin(), declaration.annotations.end(),
+            [](const ast::Annotation& annotation) { return annotation.name == "abstract"; }) == 1;
     if (class_is_abstract)
         return;
 
     std::unordered_set<std::string> implemented;
     for (const auto& function : declaration.functions) {
         if (function.is_abstract && !function.is_static) {
-            diagnostics_.error(
-                "GDS4149",
-                "concrete internal class '" + declaration.name +
-                    "' declares abstract method '" + function.name +
-                    "'; mark the class @abstract or implement the method",
-                function.span);
+            diagnostics_.error("GDS4149",
+                               "concrete internal class '" + declaration.name +
+                                   "' declares abstract method '" + function.name +
+                                   "'; mark the class @abstract or implement the method",
+                               function.span);
         } else {
             implemented.insert(function.name);
         }
     }
 
-    for (auto* base = current_inner_base_; base && base->is_abstract;
-         base = inner_base_of(*base)) {
+    for (auto* base = current_inner_base_; base && base->is_abstract; base = inner_base_of(*base)) {
         for (const auto& member : base->members) {
             if (member.kind != ScriptMemberKind::function)
                 continue;
             if (member.is_abstract && implemented.find(member.name) == implemented.end()) {
-                diagnostics_.error(
-                    "GDS4149",
-                    "concrete internal class '" + declaration.name +
-                        "' must implement inherited abstract method '" + base->name + "." +
-                        member.name + "' or be marked @abstract",
-                    declaration.span);
+                diagnostics_.error("GDS4149",
+                                   "concrete internal class '" + declaration.name +
+                                       "' must implement inherited abstract method '" + base->name +
+                                       "." + member.name + "' or be marked @abstract",
+                                   declaration.span);
             } else if (!member.is_abstract) {
                 implemented.insert(member.name);
             }

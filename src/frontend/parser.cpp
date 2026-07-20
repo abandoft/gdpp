@@ -507,8 +507,8 @@ std::vector<ast::Parameter> Parser::parse_parameters(const std::string_view owne
         const bool has_default = parameter.default_value != nullptr;
         bool accepted = true;
         if (has_default && !allow_defaults) {
-            diagnostics_.error("GDS2033", std::string{owner} +
-                                               " parameters cannot have a default value",
+            diagnostics_.error("GDS2033",
+                               std::string{owner} + " parameters cannot have a default value",
                                parameter.span);
         } else if (!has_default && optional_parameter_seen) {
             diagnostics_.error("GDS2034",
@@ -518,9 +518,9 @@ std::vector<ast::Parameter> Parser::parse_parameters(const std::string_view owne
             accepted = false;
         }
         if (!declared_names.emplace(parameter.name, parameter.span).second) {
-            diagnostics_.error("GDS2035", "parameter '" + parameter.name +
-                                               "' was already declared for this " +
-                                               std::string{owner},
+            diagnostics_.error("GDS2035",
+                               "parameter '" + parameter.name + "' was already declared for this " +
+                                   std::string{owner},
                                parameter.span);
             accepted = false;
         }
@@ -1388,8 +1388,7 @@ ast::Script Parser::parse_script() {
                  has_annotation_target(feature->targets, AnnotationTarget::inner_class));
             const bool inline_declaration_annotation =
                 can_target_declaration && !check(TokenKind::newline);
-            if (is_script_annotation && !script_header_closed &&
-                !inline_declaration_annotation) {
+            if (is_script_annotation && !script_header_closed && !inline_declaration_annotation) {
                 if (!script_annotation_names.insert(annotation.name).second) {
                     diagnostics_.error("GDS2028",
                                        "script annotation '@" + annotation.name +

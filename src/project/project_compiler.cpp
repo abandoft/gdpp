@@ -1045,10 +1045,9 @@ std::string generated_registration(const std::vector<CompiledProjectScript>& scr
         for (const auto& inner_class_name : script.inner_class_names) {
             const bool is_abstract =
                 std::find(script.abstract_inner_class_names.begin(),
-                          script.abstract_inner_class_names.end(), inner_class_name) !=
-                script.abstract_inner_class_names.end();
-            output << "    "
-                   << (is_abstract ? "GDREGISTER_ABSTRACT_CLASS(" : "GDREGISTER_CLASS(")
+                          script.abstract_inner_class_names.end(),
+                          inner_class_name) != script.abstract_inner_class_names.end();
+            output << "    " << (is_abstract ? "GDREGISTER_ABSTRACT_CLASS(" : "GDREGISTER_CLASS(")
                    << inner_class_name << ");\n";
         }
         output << "    "
@@ -1446,8 +1445,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             member.has_explicit_type = function.name == "_init" || function.return_type.has_value();
             for (const auto& parameter : function.parameters) {
                 member.parameters.push_back(signature_type(
-                    parameter.type,
-                    parameter.infer_type ? parameter.default_value.get() : nullptr, target_api));
+                    parameter.type, parameter.infer_type ? parameter.default_value.get() : nullptr,
+                    target_api));
                 member.explicit_parameter_types.push_back(parameter.type.has_value() ||
                                                           parameter.infer_type);
                 member.default_parameters.push_back(parameter.default_value != nullptr);
@@ -2262,8 +2261,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         const auto expected_class_name =
             "GDPPNative_" + input.native_class_stem + "_" + input.public_abi_hash.substr(0, 16);
         for (const auto& inner : input.inner_classes) {
-            const auto native_name =
-                expected_class_name + "__" + native_inner_suffix(inner.name);
+            const auto native_name = expected_class_name + "__" + native_inner_suffix(inner.name);
             script.inner_class_names.push_back(native_name);
             if (inner.is_abstract)
                 script.abstract_inner_class_names.push_back(native_name);
