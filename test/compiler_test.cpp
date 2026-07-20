@@ -1381,6 +1381,69 @@ TEST_CASE("compiler applies truthiness to typed containers with short circuiting
             std::string::npos);
 }
 
+TEST_CASE("compiler applies zero-value truthiness to every Godot value family") {
+    const gdpp::Compiler compiler;
+    const auto valid = compiler.compile(
+        "truthiness_matrix.gd",
+        "func evaluate(node: Node, callback: Callable, event: Signal, dynamic: Variant) -> "
+        "Array[bool]:\n"
+        "    var results: Array[bool] = []\n"
+        "    results.append(not null)\n"
+        "    results.append(not 0)\n"
+        "    results.append(not 0.0)\n"
+        "    results.append(not \"\")\n"
+        "    results.append(not StringName())\n"
+        "    results.append(not NodePath())\n"
+        "    results.append(not Vector2())\n"
+        "    results.append(not Rect2())\n"
+        "    results.append(not Transform2D())\n"
+        "    results.append(not Color())\n"
+        "    results.append(not RID())\n"
+        "    results.append(not callback)\n"
+        "    results.append(not event)\n"
+        "    results.append(not {})\n"
+        "    results.append(not [])\n"
+        "    results.append(not PackedByteArray())\n"
+        "    results.append(not node)\n"
+        "    match 1:\n"
+        "        1 when \"enabled\": results.append(true)\n"
+        "    if dynamic and [1]:\n"
+        "        results.append(true)\n"
+        "    return results\n");
+    const auto invalid = compiler.compile(
+        "void_truthiness.gd", "func nothing() -> void:\n"
+                               "    pass\n"
+                               "func reject() -> void:\n"
+                               "    if nothing(): pass\n"
+                               "    while nothing(): break\n"
+                               "    assert(nothing())\n"
+                               "    var selected = 1 if nothing() else 2\n"
+                               "    var logical = nothing() and true\n"
+                               "    var negated = not nothing()\n"
+                               "    match 1:\n"
+                               "        1 when nothing(): pass\n"
+                               "    print(selected, logical, negated)\n");
+    const auto booleanize_count = [&]() {
+        std::size_t count = 0;
+        for (std::size_t position = 0;
+             (position = valid.unit.source.find(".booleanize()", position)) != std::string::npos;
+             position += std::string_view{".booleanize()"}.size()) {
+            ++count;
+        }
+        return count;
+    };
+
+    REQUIRE(valid.success);
+    REQUIRE(booleanize_count() >= std::size_t{14});
+    REQUIRE(valid.unit.source.find("(node != nullptr)") != std::string::npos);
+    REQUIRE(!invalid.success);
+    REQUIRE_EQ(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                             [](const auto& diagnostic) {
+                                 return diagnostic.code == "GDS4153";
+                             }),
+               std::ptrdiff_t{7});
+}
+
 TEST_CASE("compiler infers exported PackedScene resources from preload paths") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(
