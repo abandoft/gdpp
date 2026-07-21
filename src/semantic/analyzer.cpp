@@ -877,8 +877,25 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
             return {TypeKind::enumeration, current_script_->script_name + "." + enumeration->name};
         }
     }
-    if (const auto inner_enum = find_inner_enum(name); inner_enum.enumeration)
-        return {TypeKind::enumeration, inner_enum.owner->name + "." + inner_enum.enumeration->name};
+    if (current_inner_class_ && name.find('.') == std::string::npos) {
+        const auto enumeration = std::find_if(
+            current_inner_class_->enums.begin(), current_inner_class_->enums.end(),
+            [&](const ScriptEnumSymbol& candidate) { return candidate.name == name; });
+        if (enumeration != current_inner_class_->enums.end()) {
+            const auto owner = current_inner_class_->native_class_name.empty()
+                                   ? current_inner_class_->name
+                                   : current_inner_class_->native_class_name;
+            return {TypeKind::enumeration, owner + "::" + enumeration->name};
+        }
+    }
+    if (const auto inner_enum = find_inner_enum(name); inner_enum.enumeration) {
+        const auto owner = inner_enum.owner->native_class_name.empty()
+                               ? inner_enum.owner->name
+                               : inner_enum.owner->native_class_name;
+        return {TypeKind::enumeration,
+                owner + (inner_enum.owner->native_class_name.empty() ? "." : "::") +
+                    inner_enum.enumeration->name};
+    }
     if (const auto external_enum = find_external_enum(script_symbols_, name);
         external_enum.enumeration) {
         model_.referenced_extension_abis_.insert(external_enum.owner->provider_abi);
@@ -1399,7 +1416,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 project_enum.enumeration) {
                 model_.api_resolutions_.emplace(
                     &expression, ApiResolution{ApiResolutionKind::script_enum_type,
-                                               project_enum.owner->native_class_name +
+                                               project_enum.native_owner +
                                                    "::" + project_enum.enumeration->name,
                                                "", "", result, 0, 0, false, true});
             } else if (const auto external_enum =
@@ -2384,9 +2401,40 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             if (object_type.kind == TypeKind::script_resource) {
                 const auto* target =
                     script_symbols_ ? script_symbols_->find_path(object_type.name) : nullptr;
-                if (!target || callee.value() != "new") {
-                    diagnostics_.error("GDS4062", "script resources only expose new() in AOT code",
+                if (!target) {
+                    diagnostics_.error("GDS4062", "script resource metadata is unavailable",
                                        expression.span);
+                    break;
+                }
+                record_script_dependency(target);
+                if (callee.value() != "new") {
+                    const auto* member = script_symbols_->find_member(*target, callee.value());
+                    if (!member || member->kind != ScriptMemberKind::function) {
+                        diagnostics_.error("GDS4055",
+                                           "script resource '" + target->script_name +
+                                               "' has no method '" + callee.value() + "'",
+                                           expression.span);
+                        result = unknown_type;
+                        break;
+                    }
+                    if (!member->is_static) {
+                        diagnostics_.error("GDS4056",
+                                           "instance method '" + callee.value() +
+                                               "' cannot be called on a script resource",
+                                           expression.span);
+                        result = unknown_type;
+                        break;
+                    }
+                    validate_script_call(*member, argument_types, expression, expression.span);
+                    result = member->type;
+                    mark_coroutine_call(member->is_coroutine);
+                    model_.api_resolutions_.emplace(
+                        &callee,
+                        ApiResolution{ApiResolutionKind::script_static_callable,
+                                      target->native_class_name, "", "", result,
+                                      static_cast<std::uint16_t>(member->required_arguments),
+                                      static_cast<std::uint16_t>(member->parameters.size()),
+                                      member->is_vararg, true});
                     break;
                 }
                 if (target->is_abstract) {
@@ -2436,9 +2484,13 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                             "internal class new() received arguments but target has no _init",
                             expression.span);
                     }
-                    result = {TypeKind::object, inner->name};
+                    const auto& inner_identity = inner->native_class_name.empty()
+                                                     ? inner->name
+                                                     : inner->native_class_name;
+                    result = {TypeKind::object, inner_identity};
                     model_.api_resolutions_.emplace(
-                        &callee, ApiResolution{ApiResolutionKind::inner_constructor, inner->name,
+                        &callee, ApiResolution{ApiResolutionKind::inner_constructor,
+                                               inner_identity,
                                                "", "", result, 0, 0, false, true});
                     break;
                 }
@@ -2888,7 +2940,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     result = object_type;
                     model_.api_resolutions_.emplace(
                         &expression, ApiResolution{ApiResolutionKind::enum_member,
-                                                   project_enum.owner->native_class_name +
+                                                   project_enum.native_owner +
                                                        "::" + project_enum.enumeration->name,
                                                    "", "", result, 0, 0, false, true});
                 }
@@ -2910,6 +2962,86 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                                           "", "", result, 0, 0, false, false});
             break;
         }
+        if (object_type.kind == TypeKind::script_resource) {
+            const auto* target =
+                script_symbols_ ? script_symbols_->find_path(object_type.name) : nullptr;
+            if (!target) {
+                diagnostics_.error("GDS4062", "script resource metadata is unavailable",
+                                   expression.span);
+                result = unknown_type;
+                break;
+            }
+            record_script_dependency(target);
+            if (const auto* inner = script_symbols_->find_inner(*target, expression.value())) {
+                result = {TypeKind::object, inner->native_class_name};
+                model_.api_resolutions_.emplace(
+                    &expression,
+                    ApiResolution{ApiResolutionKind::inner_type_reference,
+                                  inner->native_class_name, "", "", result, 0, 0, false, true});
+                break;
+            }
+            if (const auto* enumeration =
+                    script_symbols_->find_enum(*target, expression.value())) {
+                result = {TypeKind::enumeration,
+                          target->native_class_name + "::" + enumeration->name};
+                model_.api_resolutions_.emplace(
+                    &expression,
+                    ApiResolution{ApiResolutionKind::script_enum_type, result.name, "", "", result,
+                                  0, 0, false, true});
+                break;
+            }
+            const auto* member = script_symbols_->find_member(*target, expression.value());
+            if (!member) {
+                diagnostics_.error("GDS4055",
+                                   "script resource '" + target->script_name +
+                                       "' has no member '" + expression.value() + "'",
+                                   expression.span);
+                result = unknown_type;
+                break;
+            }
+            if (member->kind == ScriptMemberKind::constant) {
+                result = member->type;
+                model_.api_resolutions_.emplace(
+                    &expression,
+                    ApiResolution{ApiResolutionKind::script_constant,
+                                  target->native_class_name, "", "", result, 0, 0, false, true});
+                break;
+            }
+            if (member->kind == ScriptMemberKind::enum_value) {
+                result = member->type;
+                model_.api_resolutions_.emplace(
+                    &expression,
+                    ApiResolution{ApiResolutionKind::enum_member, target->native_class_name, "", "",
+                                  result, 0, 0, false, true});
+                break;
+            }
+            if (member->kind == ScriptMemberKind::field && member->is_static) {
+                const bool runtime_static_field =
+                    current_script_ && current_script_->is_tool && !target->is_tool;
+                result = runtime_static_field ? variant_type : member->type;
+                model_.api_resolutions_.emplace(
+                    &expression,
+                    ApiResolution{runtime_static_field
+                                      ? ApiResolutionKind::script_runtime_static_field
+                                      : ApiResolutionKind::script_property,
+                                  target->native_class_name,
+                                  "_gdpp_get_" + expression.value(),
+                                  "_gdpp_set_" + expression.value(), result, 0, 0, false, true});
+                break;
+            }
+            if (member->kind == ScriptMemberKind::function && member->is_static) {
+                diagnostics_.error("GDS4096",
+                                   "static script methods cannot be used as Callable values",
+                                   expression.span);
+            } else {
+                diagnostics_.error("GDS4058",
+                                   "instance member '" + expression.value() +
+                                       "' cannot be accessed on a script resource",
+                                   expression.span);
+            }
+            result = unknown_type;
+            break;
+        }
         if (const auto* inner = object_type.kind == TypeKind::object
                                     ? find_inner_class(object_type.name)
                                     : nullptr) {
@@ -2921,15 +3053,21 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 expression.operand(0)->value() == "self";
             if (accessed_on_type || accessed_on_self) {
                 if (const auto* nested = find_nested_inner_class(*inner, expression.value())) {
-                    result = {TypeKind::object, nested->name};
+                    const auto& nested_identity = nested->native_class_name.empty()
+                                                      ? nested->name
+                                                      : nested->native_class_name;
+                    result = {TypeKind::object, nested_identity};
                     model_.api_resolutions_.emplace(
                         &expression,
-                        ApiResolution{ApiResolutionKind::inner_type_reference, nested->name, "", "",
-                                      result, 0, 0, false, true});
+                        ApiResolution{ApiResolutionKind::inner_type_reference, nested_identity, "",
+                                      "", result, 0, 0, false, true});
                     break;
                 }
                 if (const auto enumeration =
-                        find_inner_enum(inner->name + "." + expression.value());
+                        find_inner_enum((inner->native_class_name.empty()
+                                             ? inner->name
+                                             : inner->native_class_name) +
+                                        "." + expression.value());
                     enumeration.enumeration) {
                     auto native_owner = enumeration.owner->native_class_name;
                     if (native_owner.empty() && script_symbols_ && current_script_) {
@@ -2939,7 +3077,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         }
                     }
                     result = {TypeKind::enumeration,
-                              enumeration.owner->name + "." + enumeration.enumeration->name};
+                              native_owner.empty()
+                                  ? enumeration.owner->name + "." + enumeration.enumeration->name
+                                  : native_owner + "::" + enumeration.enumeration->name};
                     model_.api_resolutions_.emplace(
                         &expression,
                         ApiResolution{ApiResolutionKind::script_enum_type,
@@ -5565,6 +5705,8 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
             auto found = local_inner_classes_.find(qualified);
             if (found == local_inner_classes_.end())
                 continue;
+            const auto* saved_inner = current_inner_class_;
+            current_inner_class_ = &found->second;
             for (const auto& variable : declaration.variables) {
                 found->second.members.push_back(
                     {variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field,
@@ -5616,6 +5758,7 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
                 }
                 found->second.members.push_back(std::move(member));
             }
+            current_inner_class_ = saved_inner;
             self(self, declaration.classes, qualified);
         }
     };
