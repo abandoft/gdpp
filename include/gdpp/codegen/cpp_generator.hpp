@@ -200,6 +200,7 @@ class CodeGenerator final {
     mutable std::unordered_set<std::string> container_enum_types_;
     mutable std::unordered_map<std::string, std::vector<Type>> local_function_parameters_;
     mutable std::unordered_map<std::string, const ir::Function*> local_functions_;
+    mutable std::unordered_map<std::string, const ir::Function*> constructor_functions_;
     mutable std::unordered_map<std::string, Type> current_local_types_;
     mutable std::unordered_set<std::string> ambiguous_local_names_;
     mutable std::unordered_map<std::string, std::string> local_expression_overrides_;

@@ -74,6 +74,27 @@ TEST_CASE("compiler lowers instance and static rest methods through the vararg A
     REQUIRE(result.unit.source.find("_gdpp_call_rest_") != std::string::npos);
 }
 
+TEST_CASE("variadic initializers preserve default construction and pack new arguments") {
+    const auto result = gdpp::Compiler{}.compile(
+        "rest_constructor.gd", "class Payload:\n"
+                               "    var total: int\n"
+                               "    func _init(base: int = 1, ...values: Array) -> void:\n"
+                               "        total = base + values.size()\n"
+                               "func build() -> Payload:\n"
+                               "    return Payload.new(4, 5, 6)\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("GDPPNative_RestConstructor__Payload();") != std::string::npos);
+    REQUIRE(result.unit.header.find(
+                "GDPPNative_RestConstructor__Payload(godot::Variant _gdpp_argument_base, "
+                "godot::Array values)") != std::string::npos);
+    REQUIRE(result.unit.source.find("_init(gdpp::runtime::default_argument(), godot::Array())") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_call_rest_") != std::string::npos);
+    REQUIRE(result.unit.source.find("InternalClassResource<GDPPNative_RestConstructor__Payload>") !=
+            std::string::npos);
+}
+
 TEST_CASE("semantic analysis enforces rest parameter type contracts across targets") {
     gdpp::CompileOptions modern;
     modern.target_version = gdpp::GodotVersion::v4_6;

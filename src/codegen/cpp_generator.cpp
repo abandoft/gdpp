@@ -2693,6 +2693,19 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                     }
                 }
             }
+            if (!script_method && callee.resolution == ir::ResolutionKind::script_constructor) {
+                if (const auto* script_owner =
+                        script_symbols_->find_native_class(callee.resolved_owner)) {
+                    script_method = script_symbols_->find_member(*script_owner, "_init");
+                }
+            }
+            if (!script_method && callee.resolution == ir::ResolutionKind::inner_constructor &&
+                current_script_) {
+                if (const auto* inner_owner =
+                        script_symbols_->find_inner(*current_script_, callee.resolved_owner)) {
+                    script_method = script_symbols_->find_inner_member(*inner_owner, "_init");
+                }
+            }
         }
         const auto script_native_name =
             script_method && script_method_owner
@@ -2700,6 +2713,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 : sanitize_identifier(callee.value);
         const std::vector<Type>* local_parameters = nullptr;
         const ir::Function* local_function = nullptr;
+        const ir::Function* constructor_function = nullptr;
         if (!script_method &&
             (callee.kind == ir::ExpressionKind::identifier ||
              (callee.kind == ir::ExpressionKind::member && !callee.operands.empty() &&
@@ -2717,12 +2731,23 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 }
             }
         }
-        const bool direct_vararg = (script_method && script_method->is_vararg) ||
-                                   (local_function && local_function->rest_parameter.has_value());
+        if (callee.resolution == ir::ResolutionKind::script_constructor ||
+            callee.resolution == ir::ResolutionKind::inner_constructor) {
+            if (const auto found = constructor_functions_.find(callee.resolved_owner);
+                found != constructor_functions_.end()) {
+                constructor_function = found->second;
+            }
+        }
+        const bool direct_vararg =
+            (script_method && script_method->is_vararg) ||
+            (local_function && local_function->rest_parameter.has_value()) ||
+            (constructor_function && constructor_function->rest_parameter.has_value());
         const auto vararg_positional_count =
             script_method && script_method->is_vararg          ? script_method->parameters.size()
             : local_function && local_function->rest_parameter ? local_function->parameters.size()
-                                                               : std::size_t{0};
+            : constructor_function && constructor_function->rest_parameter
+                ? constructor_function->parameters.size()
+                : std::size_t{0};
         const auto emit_call_argument = [&](std::size_t operand_index,
                                             std::string value) -> std::string {
             if (godot_constructor) {
@@ -2745,6 +2770,11 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             }
             if (local_parameters && operand_index - 1 < local_parameters->size()) {
                 return emit_conversion((*local_parameters)[operand_index - 1],
+                                       expression.operands[operand_index]->type, std::move(value));
+            }
+            if (constructor_function &&
+                operand_index - 1 < constructor_function->parameters.size()) {
+                return emit_conversion(constructor_function->parameters[operand_index - 1].type,
                                        expression.operands[operand_index]->type, std::move(value));
             }
             return value;
@@ -4850,9 +4880,10 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
         const auto required =
             std::count_if(initializer->parameters.begin(), initializer->parameters.end(),
                           [](const auto& parameter) { return !parameter.default_value; });
-        if (required != 0)
+        if (required != 0 || initializer->rest_parameter)
             header << "    " << native_name
-                   << (has_instance_initializers || has_static_initialization || has_native_rpc
+                   << (has_instance_initializers || has_static_initialization || has_native_rpc ||
+                               (initializer->rest_parameter && required == 0)
                            ? "();\n"
                            : "() = default;\n");
         header << "    " << native_name << '(';
@@ -4861,8 +4892,13 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
                 header << ", ";
             const auto& parameter = initializer->parameters[index];
             header << parameter_native_type(parameter) << ' ' << parameter_native_name(parameter);
-            if (parameter.default_value)
+            if (parameter.default_value && !initializer->rest_parameter)
                 header << " = " << emit_parameter_default(parameter);
+        }
+        if (initializer->rest_parameter) {
+            if (!initializer->parameters.empty())
+                header << ", ";
+            header << "godot::Array " << sanitize_identifier(initializer->rest_parameter->name);
         }
         header << ");\n";
     } else if (has_instance_initializers || has_static_initialization || has_native_rpc) {
@@ -5163,13 +5199,16 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
             ? std::ptrdiff_t{0}
             : std::count_if(initializer->parameters.begin(), initializer->parameters.end(),
                             [](const auto& parameter) { return !parameter.default_value; });
-    if ((has_instance_initializers || has_static_initialization || has_native_rpc) &&
-        (initializer == declaration.functions.end() || required != 0)) {
+    const bool default_calls_initializer =
+        initializer != declaration.functions.end() && initializer->rest_parameter && required == 0;
+    if (((has_instance_initializers || has_static_initialization || has_native_rpc) &&
+         (initializer == declaration.functions.end() || required != 0)) ||
+        default_calls_initializer) {
         in_function_body_ = true;
         source << native_name << "::" << native_name << "() {\n";
         if (has_static_initialization)
             source << "    _gdpp_ensure_static_initialized();\n";
-        if (needs_editor_hint)
+        if (needs_editor_hint || (default_calls_initializer && !tool_mode))
             source << "    const bool gdpp_editor_hint = gdpp::runtime::is_editor_hint();\n";
         if (std::any_of(declaration.fields.begin(), declaration.fields.end(), cached_preload_field))
             source << (tool_mode ? "    _gdpp_preload_resources();\n"
@@ -5177,6 +5216,19 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         emit_instance_initializers();
         if (has_native_rpc)
             emit_rpc_configurations(source, declaration.functions, 1);
+        if (default_calls_initializer) {
+            if (!tool_mode)
+                source << "    if (gdpp_editor_hint) return;\n";
+            source << "    _init(";
+            for (std::size_t index = 0; index < initializer->parameters.size(); ++index) {
+                if (index != 0)
+                    source << ", ";
+                source << "gdpp::runtime::default_argument()";
+            }
+            if (!initializer->parameters.empty())
+                source << ", ";
+            source << "godot::Array());\n";
+        }
         source << "}\n\n";
         in_function_body_ = false;
     }
@@ -5188,6 +5240,11 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                 source << ", ";
             const auto& parameter = initializer->parameters[index];
             source << parameter_native_type(parameter) << ' ' << parameter_native_name(parameter);
+        }
+        if (initializer->rest_parameter) {
+            if (!initializer->parameters.empty())
+                source << ", ";
+            source << "godot::Array " << sanitize_identifier(initializer->rest_parameter->name);
         }
         source << ") {\n";
         if (has_static_initialization)
@@ -5207,6 +5264,11 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
             if (index != 0)
                 source << ", ";
             source << parameter_native_name(initializer->parameters[index]);
+        }
+        if (initializer->rest_parameter) {
+            if (!initializer->parameters.empty())
+                source << ", ";
+            source << sanitize_identifier(initializer->rest_parameter->name);
         }
         source << ");\n";
         source << "}\n\n";
@@ -5536,11 +5598,18 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     container_enum_types_.clear();
     local_function_parameters_.clear();
     local_functions_.clear();
+    constructor_functions_.clear();
     for (const auto& function : module.functions) {
         local_functions_.emplace(function.name, &function);
         auto& parameters = local_function_parameters_[function.name];
         for (const auto& parameter : function.parameters)
             parameters.push_back(parameter.type);
+    }
+    if (const auto initializer =
+            std::find_if(module.functions.begin(), module.functions.end(),
+                         [](const auto& function) { return function.name == "_init"; });
+        initializer != module.functions.end()) {
+        constructor_functions_.emplace(unit.class_name, &*initializer);
     }
     for (const auto& enumeration : module.enums) {
         if (!enumeration.name.empty())
@@ -5605,6 +5674,13 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
             }
         }
         inner_native_names_.emplace(qualified, native_name);
+        if (const auto initializer =
+                std::find_if(declaration->functions.begin(), declaration->functions.end(),
+                             [](const auto& function) { return function.name == "_init"; });
+            initializer != declaration->functions.end()) {
+            constructor_functions_.emplace(qualified, &*initializer);
+            constructor_functions_.emplace(native_name, &*initializer);
+        }
         if (!api_.find_class(declaration->base_type)) {
             const auto resolved = resolve_inner_base(qualified, declaration->base_type);
             if (!resolved.empty())
@@ -5958,10 +6034,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         const auto required =
             std::count_if(initializer->parameters.begin(), initializer->parameters.end(),
                           [](const ir::Parameter& parameter) { return !parameter.default_value; });
-        if (required != 0)
+        if (required != 0 || initializer->rest_parameter)
             header << "    " << unit.class_name
                    << (has_instance_initializers || has_static_initialization || is_autoload ||
-                               has_native_rpc
+                               has_native_rpc || (initializer->rest_parameter && required == 0)
                            ? "();\n"
                            : "() = default;\n");
         header << "    " << unit.class_name << '(';
@@ -5970,8 +6046,13 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                 header << ", ";
             const auto& parameter = initializer->parameters[index];
             header << parameter_native_type(parameter) << ' ' << parameter_native_name(parameter);
-            if (parameter.default_value)
+            if (parameter.default_value && !initializer->rest_parameter)
                 header << " = " << emit_parameter_default(parameter);
+        }
+        if (initializer->rest_parameter) {
+            if (!initializer->parameters.empty())
+                header << ", ";
+            header << "godot::Array " << sanitize_identifier(initializer->rest_parameter->name);
         }
         header << ");\n\n";
     } else if (has_instance_initializers || has_static_initialization || is_autoload ||
@@ -6316,6 +6397,9 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
               return !field.is_constant && !field.is_static && !field.onready &&
                      field.initializer && !editor_safe_initializer(*field.initializer);
           })));
+    const bool default_calls_initializer = !attached_script &&
+                                           initializer != module.functions.end() &&
+                                           initializer->rest_parameter && required == 0;
     const auto emit_autoload_registration = [&]() {
         if (is_autoload) {
             source << "    if (!gdpp_editor_hint) gdpp::runtime::register_autoload("
@@ -6357,14 +6441,15 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                    << "::dispatch_notification(what, false);\n";
         source << "}\n\n";
         in_function_body_ = false;
-    } else if ((has_instance_initializers || has_static_initialization || is_autoload ||
-                has_native_rpc) &&
-               (initializer == module.functions.end() || required != 0)) {
+    } else if (((has_instance_initializers || has_static_initialization || is_autoload ||
+                 has_native_rpc) &&
+                (initializer == module.functions.end() || required != 0)) ||
+               default_calls_initializer) {
         in_function_body_ = true;
         source << unit.class_name << "::" << unit.class_name << "() {\n";
         if (has_static_initialization)
             source << "    _gdpp_ensure_static_initialized();\n";
-        if (needs_editor_hint)
+        if (needs_editor_hint || (default_calls_initializer && !module.is_tool))
             source << "    const bool gdpp_editor_hint = gdpp::runtime::is_editor_hint();\n";
         emit_autoload_registration();
         if (std::any_of(module.fields.begin(), module.fields.end(), cached_preload_field))
@@ -6373,6 +6458,19 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         emit_instance_initializers();
         if (has_native_rpc)
             emit_rpc_configurations(source, module.functions, 1);
+        if (default_calls_initializer) {
+            if (!module.is_tool)
+                source << "    if (gdpp_editor_hint) return;\n";
+            source << "    _init(";
+            for (std::size_t index = 0; index < initializer->parameters.size(); ++index) {
+                if (index != 0)
+                    source << ", ";
+                source << "gdpp::runtime::default_argument()";
+            }
+            if (!initializer->parameters.empty())
+                source << ", ";
+            source << "godot::Array());\n";
+        }
         source << "}\n\n";
         in_function_body_ = false;
     }
@@ -6384,6 +6482,11 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                 source << ", ";
             const auto& parameter = initializer->parameters[index];
             source << parameter_native_type(parameter) << ' ' << parameter_native_name(parameter);
+        }
+        if (initializer->rest_parameter) {
+            if (!initializer->parameters.empty())
+                source << ", ";
+            source << "godot::Array " << sanitize_identifier(initializer->rest_parameter->name);
         }
         source << ") {\n";
         if (has_static_initialization)
@@ -6404,6 +6507,11 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
             if (index != 0)
                 source << ", ";
             source << parameter_native_name(initializer->parameters[index]);
+        }
+        if (initializer->rest_parameter) {
+            if (!initializer->parameters.empty())
+                source << ", ";
+            source << sanitize_identifier(initializer->rest_parameter->name);
         }
         source << ");\n";
         source << "}\n\n";
