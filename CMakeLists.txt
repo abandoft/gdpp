@@ -9,7 +9,7 @@ endif()
 
 project(
     gdpp
-    VERSION 1.7.0
+    VERSION 1.7.1
     DESCRIPTION "Ahead-of-time compiler for GDScript"
     LANGUAGES CXX
 )
