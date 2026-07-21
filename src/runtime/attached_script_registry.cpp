@@ -1,4 +1,5 @@
 #include "gdpp/runtime/attached_script.hpp"
+#include "gdpp/runtime/variant_ops.hpp"
 
 #include <godot_cpp/core/error_macros.hpp>
 
@@ -10,6 +11,46 @@
 #include <utility>
 
 namespace gdpp::runtime {
+
+AttachedScriptDescriptor&
+AttachedScriptDescriptor::operator=(const AttachedScriptDescriptor& other) {
+    if (this == &other)
+        return *this;
+    source_path = other.source_path;
+    global_name = other.global_name;
+    native_base_type = other.native_base_type;
+    base_script_path = other.base_script_path;
+    behavior_class = other.behavior_class;
+    factory = other.factory;
+    properties = other.properties;
+    methods = other.methods;
+    signals = other.signals;
+    assign_dictionary(constants, other.constants);
+    rpc_config = other.rpc_config;
+    tool = other.tool;
+    abstract = other.abstract;
+    return *this;
+}
+
+AttachedScriptDescriptor& AttachedScriptDescriptor::operator=(AttachedScriptDescriptor&& other) {
+    if (this == &other)
+        return *this;
+    source_path = std::move(other.source_path);
+    global_name = std::move(other.global_name);
+    native_base_type = std::move(other.native_base_type);
+    base_script_path = std::move(other.base_script_path);
+    behavior_class = std::move(other.behavior_class);
+    factory = other.factory;
+    properties = std::move(other.properties);
+    methods = std::move(other.methods);
+    signals = std::move(other.signals);
+    assign_dictionary(constants, other.constants);
+    rpc_config = std::move(other.rpc_config);
+    tool = other.tool;
+    abstract = other.abstract;
+    return *this;
+}
+
 namespace {
 
 std::mutex& registry_mutex() {

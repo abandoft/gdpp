@@ -59,6 +59,12 @@ struct AttachedScriptProperty {
 };
 
 struct AttachedScriptDescriptor {
+    AttachedScriptDescriptor() = default;
+    AttachedScriptDescriptor(const AttachedScriptDescriptor&) = default;
+    AttachedScriptDescriptor(AttachedScriptDescriptor&&) = default;
+    AttachedScriptDescriptor& operator=(const AttachedScriptDescriptor& other);
+    AttachedScriptDescriptor& operator=(AttachedScriptDescriptor&& other);
+
     godot::String source_path;
     godot::StringName global_name;
     godot::StringName native_base_type;
