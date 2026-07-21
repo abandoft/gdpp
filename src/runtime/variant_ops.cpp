@@ -324,6 +324,12 @@ void compound_assign_integer(godot::Variant& target, const godot::Variant::Opera
     target = binary_integer(operation, target, value);
 }
 
+void assign_dictionary(godot::Dictionary& target, const godot::Dictionary& value) {
+    if (&target == &value)
+        return;
+    target = value;
+}
+
 godot::Variant unary(godot::Variant::Operator operation, const godot::Variant& operand) {
     if (operand.get_type() == godot::Variant::INT) {
         const auto value = static_cast<std::int64_t>(operand);

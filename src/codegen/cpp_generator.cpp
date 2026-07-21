@@ -1899,6 +1899,15 @@ std::string CodeGenerator::emit_subscript_store(const Type& container, std::stri
     return value;
 }
 
+std::string CodeGenerator::emit_storage_assignment(const Type& target_type, std::string target,
+                                                   std::string value) const {
+    if (target_type.kind == TypeKind::dictionary) {
+        return "gdpp::runtime::assign_dictionary(" + std::move(target) + ", " + std::move(value) +
+               ")";
+    }
+    return std::move(target) + " = " + std::move(value);
+}
+
 std::string CodeGenerator::emit_direct_builtin_member(std::string_view owner, std::string object,
                                                       std::string_view member) const {
     const auto component_index = [](std::string_view name) -> int {
@@ -4591,7 +4600,9 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                 return prefix + object + connector + target.setter + "(" + index + value + ");\n";
             }
         }
-        return prefix + emit_expression(target) + " = " + value + ";\n";
+        return prefix +
+               emit_storage_assignment(target.type, emit_expression(target), std::move(value)) +
+               ";\n";
     }
     case ir::StatementKind::if_statement: {
         std::string result = prefix + "if (" + emit_truthy(*statement.condition) + ") {\n";
@@ -5225,6 +5236,7 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
             continue;
         }
         const auto type = cpp_type(field.type);
+        const auto storage = "_gdpp_constant_" + name + "_storage()";
         source << type << "& " << native_name << "::_gdpp_constant_" << name
                << "_storage() {\n    static " << type << " value{};\n    return value;\n}\n\n"
                << "bool& " << native_name << "::_gdpp_constant_" << name
@@ -5235,9 +5247,10 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                << (has_static_initialization ? "    _gdpp_ensure_static_initialized();\n" : "")
                << "    std::lock_guard<std::mutex> lock(_gdpp_constant_" << name << "_mutex());\n"
                << "    if (!_gdpp_constant_" << name << "_ready()) {\n"
-               << "        _gdpp_constant_" << name << "_storage() = "
-               << emit_conversion(field.type, field.initializer->type,
-                                  emit_expression(*field.initializer))
+               << "        "
+               << emit_storage_assignment(field.type, storage,
+                                          emit_conversion(field.type, field.initializer->type,
+                                                          emit_expression(*field.initializer)))
                << ";\n"
                << "        _gdpp_constant_" << name << "_ready() = true;\n"
                << "    }\n"
@@ -5271,9 +5284,11 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                    << "        _gdpp_static_" << name
                    << "_pointer().store(value, std::memory_order_release);\n";
             if (field.initializer && !field.onready) {
-                source << "        *value = "
-                       << emit_conversion(field.type, field.initializer->type,
-                                          emit_expression(*field.initializer))
+                source << "        "
+                       << emit_storage_assignment(
+                              field.type, "*value",
+                              emit_conversion(field.type, field.initializer->type,
+                                              emit_expression(*field.initializer)))
                        << ";\n";
             }
             source << "    }\n"
@@ -5290,15 +5305,17 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                 const bool editor_safe = editor_safe_initializer(*field.initializer);
                 if (!editor_safe && !tool_mode)
                     source << "    if (!gdpp_editor_hint) {\n";
-                source << (editor_safe || tool_mode ? "    " : "        ")
-                       << sanitize_identifier(field.name) << " = ";
+                std::string value;
                 if (contains_preload(*field.initializer)) {
-                    source << "_gdpp_preloaded_" << sanitize_identifier(field.name) << "()";
+                    value = "_gdpp_preloaded_" + sanitize_identifier(field.name) + "()";
                 } else {
-                    source << emit_conversion(field.type, field.initializer->type,
-                                              emit_expression(*field.initializer));
+                    value = emit_conversion(field.type, field.initializer->type,
+                                            emit_expression(*field.initializer));
                 }
-                source << ";\n";
+                source << (editor_safe || tool_mode ? "    " : "        ")
+                       << emit_storage_assignment(field.type, sanitize_identifier(field.name),
+                                                  std::move(value))
+                       << ";\n";
                 if (!editor_safe && !tool_mode)
                     source << "    }\n";
             }
@@ -5413,15 +5430,17 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
     for (const auto& field : declaration.fields) {
         if (!cached_preload_field(field))
             continue;
-        source << (has_cached_preloads ? "        " : "    ");
+        const auto prefix = has_cached_preloads ? "        " : "    ";
+        std::string target;
         if (!field.is_static)
-            source << "_gdpp_preloaded_";
-        source << sanitize_identifier(field.name);
+            target = "_gdpp_preloaded_";
+        target += sanitize_identifier(field.name);
         if (!field.is_static)
-            source << "()";
-        source << " = "
-               << emit_conversion(field.type, field.initializer->type,
-                                  emit_expression(*field.initializer))
+            target += "()";
+        source << prefix
+               << emit_storage_assignment(field.type, std::move(target),
+                                          emit_conversion(field.type, field.initializer->type,
+                                                          emit_expression(*field.initializer)))
                << ";\n";
     }
     if (has_cached_preloads)
@@ -5436,8 +5455,11 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                    << "        std::lock_guard<std::mutex> lock(_gdpp_constant_" << name
                    << "_mutex());\n"
                    << "        if (_gdpp_constant_" << name << "_ready()) {\n"
-                   << "            " << storage << " = std::remove_reference_t<decltype(" << storage
-                   << ")>{};\n"
+                   << "            "
+                   << emit_storage_assignment(field.type, storage,
+                                              "std::remove_reference_t<decltype(" + storage +
+                                                  ")>{}")
+                   << ";\n"
                    << "            _gdpp_constant_" << name << "_ready() = false;\n"
                    << "        }\n"
                    << "    }\n";
@@ -5451,8 +5473,10 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         if (field.is_static)
             source << "    _gdpp_static_" << sanitize_identifier(field.name) << "_release();\n";
         else
-            source << "    " << target << " = std::remove_reference_t<decltype(" << target
-                   << ")>{};\n";
+            source << "    "
+                   << emit_storage_assignment(field.type, target,
+                                              "std::remove_reference_t<decltype(" + target + ")>{}")
+                   << ";\n";
     }
     if (has_static_initialization) {
         source << "    _gdpp_static_initialization_state().store(0, "
@@ -5556,8 +5580,11 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
             source << emit_statements(field.setter->body, 1, 0,
                                       {{field.setter->parameter, field.type}});
         } else {
-            source << "    " << (field.is_static ? "_gdpp_static_" + name + "_storage()" : name)
-                   << " = value;\n";
+            source << "    "
+                   << emit_storage_assignment(
+                          field.type,
+                          field.is_static ? "_gdpp_static_" + name + "_storage()" : name, "value")
+                   << ";\n";
         }
         source << "}\n\n";
         in_function_body_ = false;
@@ -6445,6 +6472,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
             continue;
         }
         const auto type = cpp_type(variable.type);
+        const auto storage = "_gdpp_constant_" + name + "_storage()";
         source << type << "& " << unit.class_name << "::_gdpp_constant_" << name
                << "_storage() {\n    static " << type << " value{};\n    return value;\n}\n\n"
                << "bool& " << unit.class_name << "::_gdpp_constant_" << name
@@ -6455,14 +6483,16 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                << (has_static_initialization ? "    _gdpp_ensure_static_initialized();\n" : "")
                << "    std::lock_guard<std::mutex> lock(_gdpp_constant_" << name << "_mutex());\n"
                << "    if (!_gdpp_constant_" << name << "_ready()) {\n"
-               << "        _gdpp_constant_" << name << "_storage() = ";
+               << "        ";
+        std::string constant_value;
         if (variable.initializer && !variable.onready) {
-            source << emit_conversion(variable.type, variable.initializer->type,
-                                      emit_expression(*variable.initializer));
+            constant_value = emit_conversion(variable.type, variable.initializer->type,
+                                             emit_expression(*variable.initializer));
         } else {
-            source << "{}";
+            constant_value = "{}";
         }
-        source << ";\n"
+        source << emit_storage_assignment(variable.type, storage, std::move(constant_value))
+               << ";\n"
                << "        _gdpp_constant_" << name << "_ready() = true;\n"
                << "    }\n"
                << "    return _gdpp_constant_" << name << "_storage();\n}\n\n";
@@ -6499,9 +6529,11 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                    << "        _gdpp_static_" << name
                    << "_pointer().store(value, std::memory_order_release);\n";
             if (variable.initializer && !variable.onready) {
-                source << "        *value = "
-                       << emit_conversion(variable.type, variable.initializer->type,
-                                          emit_expression(*variable.initializer))
+                source << "        "
+                       << emit_storage_assignment(
+                              variable.type, "*value",
+                              emit_conversion(variable.type, variable.initializer->type,
+                                              emit_expression(*variable.initializer)))
                        << ";\n";
             }
             source << "    }\n"
@@ -6523,15 +6555,17 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                 const bool editor_safe = editor_safe_initializer(*variable.initializer);
                 if (!editor_safe && !module.is_tool)
                     source << "    if (!gdpp_editor_hint) {\n";
-                source << (editor_safe || module.is_tool ? "    " : "        ")
-                       << sanitize_identifier(variable.name) << " = ";
+                std::string value;
                 if (contains_preload(*variable.initializer)) {
-                    source << "_gdpp_preloaded_" << sanitize_identifier(variable.name) << "()";
+                    value = "_gdpp_preloaded_" + sanitize_identifier(variable.name) + "()";
                 } else {
-                    source << emit_conversion(variable.type, variable.initializer->type,
-                                              emit_expression(*variable.initializer));
+                    value = emit_conversion(variable.type, variable.initializer->type,
+                                            emit_expression(*variable.initializer));
                 }
-                source << ";\n";
+                source << (editor_safe || module.is_tool ? "    " : "        ")
+                       << emit_storage_assignment(variable.type, sanitize_identifier(variable.name),
+                                                  std::move(value))
+                       << ";\n";
                 if (!editor_safe && !module.is_tool)
                     source << "    }\n";
             }
@@ -6688,15 +6722,17 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     for (const auto& variable : module.fields) {
         if (!cached_preload_field(variable))
             continue;
-        source << (has_cached_preloads ? "        " : "    ");
+        const auto prefix = has_cached_preloads ? "        " : "    ";
+        std::string target;
         if (!variable.is_static)
-            source << "_gdpp_preloaded_";
-        source << sanitize_identifier(variable.name);
+            target = "_gdpp_preloaded_";
+        target += sanitize_identifier(variable.name);
         if (!variable.is_static)
-            source << "()";
-        source << " = "
-               << emit_conversion(variable.type, variable.initializer->type,
-                                  emit_expression(*variable.initializer))
+            target += "()";
+        source << prefix
+               << emit_storage_assignment(variable.type, std::move(target),
+                                          emit_conversion(variable.type, variable.initializer->type,
+                                                          emit_expression(*variable.initializer)))
                << ";\n";
     }
     if (has_cached_preloads)
@@ -6711,8 +6747,11 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                    << "        std::lock_guard<std::mutex> lock(_gdpp_constant_" << name
                    << "_mutex());\n"
                    << "        if (_gdpp_constant_" << name << "_ready()) {\n"
-                   << "            " << storage << " = std::remove_reference_t<decltype(" << storage
-                   << ")>{};\n"
+                   << "            "
+                   << emit_storage_assignment(variable.type, storage,
+                                              "std::remove_reference_t<decltype(" + storage +
+                                                  ")>{}")
+                   << ";\n"
                    << "            _gdpp_constant_" << name << "_ready() = false;\n"
                    << "        }\n"
                    << "    }\n";
@@ -6726,8 +6765,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         if (variable.is_static)
             source << "    _gdpp_static_" << sanitize_identifier(variable.name) << "_release();\n";
         else
-            source << "    " << target << " = std::remove_reference_t<decltype(" << target
-                   << ")>{};\n";
+            source << "    "
+                   << emit_storage_assignment(variable.type, target,
+                                              "std::remove_reference_t<decltype(" + target + ")>{}")
+                   << ";\n";
     }
     if (has_static_initialization) {
         source << "    _gdpp_static_initialization_state().store(0, "
@@ -6982,8 +7023,12 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                 in_function_body_ = false;
             }
         } else {
-            source << "    " << (variable.is_static ? "_gdpp_static_" + name + "_storage()" : name)
-                   << " = value;\n";
+            source << "    "
+                   << emit_storage_assignment(
+                          variable.type,
+                          variable.is_static ? "_gdpp_static_" + name + "_storage()" : name,
+                          setter_parameter)
+                   << ";\n";
         }
         source << "}\n\n";
     }
@@ -7082,9 +7127,11 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         if (function.name == "_ready") {
             for (const auto& field : module.fields) {
                 if (field.onready && field.initializer) {
-                    source << "    " << sanitize_identifier(field.name) << " = "
-                           << emit_conversion(field.type, field.initializer->type,
-                                              emit_expression(*field.initializer))
+                    source << "    "
+                           << emit_storage_assignment(
+                                  field.type, sanitize_identifier(field.name),
+                                  emit_conversion(field.type, field.initializer->type,
+                                                  emit_expression(*field.initializer)))
                            << ";\n";
                 }
             }
@@ -7128,9 +7175,11 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         source << "void " << unit.class_name << "::_ready() {\n";
         for (const auto& field : module.fields) {
             if (field.onready && field.initializer) {
-                source << "    " << sanitize_identifier(field.name) << " = "
-                       << emit_conversion(field.type, field.initializer->type,
-                                          emit_expression(*field.initializer))
+                source << "    "
+                       << emit_storage_assignment(
+                              field.type, sanitize_identifier(field.name),
+                              emit_conversion(field.type, field.initializer->type,
+                                              emit_expression(*field.initializer)))
                        << ";\n";
             }
         }

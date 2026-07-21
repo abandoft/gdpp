@@ -74,6 +74,10 @@ void compound_assign(godot::Variant& target, godot::Variant::Operator operation,
                      const godot::Variant& value);
 void compound_assign_integer(godot::Variant& target, godot::Variant::Operator operation,
                              std::int64_t value);
+// godot-cpp 4.x cannot move-assign Dictionary safely: its generated move operator constructs a
+// new dictionary over the live opaque handle without destroying that handle first. Always route
+// generated Dictionary storage writes through the copy operator, including self-assignment.
+void assign_dictionary(godot::Dictionary& target, const godot::Dictionary& value);
 [[nodiscard]] godot::Variant unary(godot::Variant::Operator operation,
                                    const godot::Variant& operand);
 [[nodiscard]] std::int64_t integer_divide(std::int64_t left, std::int64_t right);

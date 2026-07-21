@@ -1071,6 +1071,33 @@ TEST_CASE("compiler lazily initializes and explicitly releases resource constant
                 release) != std::string::npos);
 }
 
+TEST_CASE("compiler copy assigns dictionary storage through the leak safe runtime path") {
+    const gdpp::Compiler compiler;
+    const auto result =
+        compiler.compile("dictionary_storage.gd",
+                         "extends Node\n"
+                         "const STREAMS: Dictionary = {0: preload(\"res://audio/theme.wav\")}\n"
+                         "var state: Dictionary = {\"ready\": true}\n"
+                         "@onready var ready_state: Dictionary = {\"node\": get_node(\".\")}\n"
+                         "func reset() -> void:\n"
+                         "    state = {}\n"
+                         "    state = state\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::assign_dictionary(_gdpp_constant_STREAMS_storage(),") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::assign_dictionary(state,") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::assign_dictionary(ready_state,") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::assign_dictionary(_gdpp_constant_STREAMS_storage(), "
+                "std::remove_reference_t<decltype(_gdpp_constant_STREAMS_storage())>{})") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("state = godot::Dictionary") == std::string::npos);
+}
+
 TEST_CASE("compiler defers instance initialization while the editor exports scenes") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(

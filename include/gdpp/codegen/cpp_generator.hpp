@@ -98,6 +98,8 @@ class CodeGenerator final {
     [[nodiscard]] std::string emit_subscript_read(const Type& container, const Type& result,
                                                   std::string value) const;
     [[nodiscard]] std::string emit_subscript_store(const Type& container, std::string value) const;
+    [[nodiscard]] std::string emit_storage_assignment(const Type& target_type, std::string target,
+                                                      std::string value) const;
     [[nodiscard]] std::string emit_direct_builtin_member(std::string_view owner, std::string object,
                                                          std::string_view member) const;
     [[nodiscard]] std::string emit_direct_builtin_assignment(std::string_view owner,
