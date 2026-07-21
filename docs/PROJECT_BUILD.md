@@ -48,7 +48,10 @@ Web 保持独立可选 target pack，不计入这 12 个 ZIP。
 
 每个 ZIP 内的 `PACKAGE_MANIFEST.txt` 记录 GDPP 版本、compiler API、目标 Godot API、宿主、
 最低系统和可导出目标。打包器会核对三套 SDK 的 runtime ABI/源码摘要，并失败关闭地拒绝错误
-版本、错误平台、缺少移动 target pack 或最低版本不一致的组合。
+版本、错误平台、缺少移动 target pack 或最低版本不一致的组合。schema 7 还把 C++17、异常关闭、
+Windows 静态 MSVC CRT 与 Android `c++_shared` 写成必填 ABI 字段；SDK profile 构建和独立
+provider fixture 共用 compiler、toolchain、sysroot、deployment target、RC/MT 工具参数，避免
+嵌套 CMake 配置与预编译 godot-cpp 静态库漂移。
 
 SDK profile 不沿用构建 GDPP 编译器插件时的优化级别。`debug` 静态库始终以 Debug 构建，
 `release` 静态库始终以 Release 构建；因此开发者使用 Debug compiler 插件执行 Release 导出时，
