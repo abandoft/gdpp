@@ -264,7 +264,16 @@ void AttachedCompiledScript::_placeholder_erased(void*) {}
 
 bool AttachedCompiledScript::_can_instantiate() const {
     const auto value = descriptor();
-    return value && !value->abstract && value->factory;
+    if (!value || value->abstract || !value->factory)
+        return false;
+
+    // Godot rebuilds extension_list.cfg from a HashSet and therefore does not guarantee that a
+    // provider GDExtension is initialized before the generated GDPP project extension. Behavior
+    // registration is deliberately provider-independent; native availability is resolved here,
+    // after every startup extension has entered ClassDB. A missing or disabled provider fails
+    // closed instead of advertising a script that the engine cannot instantiate.
+    auto* class_db = godot::ClassDBSingleton::get_singleton();
+    return class_db && class_db->can_instantiate(value->native_base_type);
 }
 
 godot::Ref<godot::Script> AttachedCompiledScript::_get_base_script() const {
