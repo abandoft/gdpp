@@ -521,6 +521,15 @@ void collect_type(const Type& type, NativeTypeIncludes& includes, const GodotApi
     else if (type.kind == TypeKind::object && script_symbols &&
              script_symbols->find_class(type.name))
         includes.scripts.insert(type.name);
+    else if (type.kind == TypeKind::object && script_symbols &&
+             script_symbols->find_native_class(type.name))
+        includes.resolved_native_scripts.insert(type.name);
+    else if (type.kind == TypeKind::object && script_symbols) {
+        if (const auto* inner = script_symbols->find_inner_native(type.name)) {
+            if (const auto* owner = script_symbols->owner_of(*inner))
+                includes.complete_script_resources.insert(owner->path);
+        }
+    }
     else if (type.kind == TypeKind::script_resource && script_symbols &&
              script_symbols->find_path(type.name))
         includes.script_resources.insert(type.name);
@@ -1086,6 +1095,16 @@ std::string CodeGenerator::cpp_type(const Type& type) const {
                         return "godot::Ref<" + symbol->native_class_name + ">";
                     return symbol->native_class_name + "*";
                 }
+                if (const auto* symbol = script_symbols_->find_native_class(type.name)) {
+                    if (symbol->attached) {
+                        if (api_.inherits(symbol->godot_base_type, "RefCounted"))
+                            return "godot::Ref<godot::RefCounted>";
+                        return "godot::Object*";
+                    }
+                    if (api_.inherits(symbol->godot_base_type, "RefCounted"))
+                        return "godot::Ref<" + symbol->native_class_name + ">";
+                    return symbol->native_class_name + "*";
+                }
             }
             return "godot::Variant";
         }
@@ -1275,6 +1294,10 @@ std::string CodeGenerator::inner_cpp_type(std::string_view name) const {
     if (const auto exact = inner_native_names_.find(std::string{name});
         exact != inner_native_names_.end()) {
         return exact->second;
+    }
+    if (script_symbols_) {
+        if (const auto* inner = script_symbols_->find_inner_native(std::string{name}))
+            return inner->native_class_name;
     }
     const auto separator = name.rfind('.');
     if (separator != std::string_view::npos)
@@ -2695,6 +2718,11 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                     if (!owner && current_script_ && !current_inner_script_)
                         owner = script_symbols_->base_of(*current_script_);
                 }
+                if (!owner &&
+                    callee.resolution == ir::ResolutionKind::script_static_callable &&
+                    !callee.resolved_owner.empty()) {
+                    owner = script_symbols_->find_native_class(callee.resolved_owner);
+                }
                 if (!owner)
                     owner = script_symbols_->find_global(callee.operands.at(0)->type.name);
                 if (!owner && callee.operands.at(0)->value == "self")
@@ -2733,8 +2761,12 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             }
             if (!script_method && callee.resolution == ir::ResolutionKind::inner_constructor &&
                 current_script_) {
-                if (const auto* inner_owner =
-                        script_symbols_->find_inner(*current_script_, callee.resolved_owner)) {
+                const auto* inner_owner =
+                    script_symbols_->find_inner_native(callee.resolved_owner);
+                if (!inner_owner)
+                    inner_owner =
+                        script_symbols_->find_inner(*current_script_, callee.resolved_owner);
+                if (inner_owner) {
                     script_method = script_symbols_->find_inner_member(*inner_owner, "_init");
                 }
             }
@@ -3043,6 +3075,9 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                           inner_cpp_type(callee.resolved_owner) + ">{}.instantiate"
                 : callee.resolution == ir::ResolutionKind::script_super && !callee.setter.empty()
                     ? native_super_owner(callee.resolved_owner) + "::" + script_native_name
+                : callee.resolution == ir::ResolutionKind::script_static_callable &&
+                          !callee.resolved_owner.empty()
+                    ? callee.resolved_owner + "::" + script_native_name
                     : emit_expression(callee);
             if (callee.resolution == ir::ResolutionKind::godot_method &&
                 callee.value == "get_node") {
@@ -3113,6 +3148,9 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         } else if (callee.resolution == ir::ResolutionKind::script_super &&
                    !callee.setter.empty()) {
             invocation = native_super_owner(callee.resolved_owner) + "::" + script_native_name;
+        } else if (callee.resolution == ir::ResolutionKind::script_static_callable &&
+                   !callee.resolved_owner.empty()) {
+            invocation = callee.resolved_owner + "::" + script_native_name;
         } else if (callee.kind == ir::ExpressionKind::member &&
                    callee.resolution != ir::ResolutionKind::script_super &&
                    callee.operands.at(0)->resolution != ir::ResolutionKind::godot_type &&
