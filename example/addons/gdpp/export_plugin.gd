@@ -22,7 +22,7 @@ const PROVIDER_DESCRIPTORS_BACKUP := (
 )
 const SCRIPT_CLASS_CACHE := "res://.godot/global_script_class_cache.cfg"
 const GODOT_EXPORT_CACHE_DIRECTORY := "res://.godot/exported"
-const EXPORT_TRANSFORM_REVISION := 18
+const EXPORT_TRANSFORM_REVISION := 19
 
 var _compiler: Object
 var _ready := false
@@ -744,7 +744,11 @@ func _prepare_autoloads() -> bool:
         if not setting.begins_with("autoload/"):
             continue
         var original := str(ProjectSettings.get_setting(setting, ""))
-        var script_path := original.trim_prefix("*")
+        var configured_path := original.trim_prefix("*")
+        var script_path := _resolve_resource_uid(configured_path)
+        if configured_path.begins_with("uid://") and script_path.is_empty():
+            _fail_export("autoload '%s' has an unresolved resource UID" % setting)
+            return false
         if not _compiled_scripts.has(script_path):
             continue
         if _editor_only_scripts.has(script_path):
@@ -786,21 +790,27 @@ func _prepare_autoloads() -> bool:
     return true
 
 
+func _resolve_resource_uid(path: String) -> String:
+    if not path.begins_with("uid://"):
+        return path
+    var resource_id := ResourceUID.text_to_id(path)
+    if resource_id == ResourceUID.INVALID_ID or not ResourceUID.has_id(resource_id):
+        return ""
+    return ResourceUID.get_id_path(resource_id)
+
+
 func _activate_autoloads() -> void:
     for setting: String in _autoload_replacements:
         var original := str(_autoload_originals[setting])
-        var script_path := original.trim_prefix("*")
-        var generated_path := str(_autoload_replacements[setting])
-        # ProjectSettings has already serialized project.binary before this callback. A virtual
-        # import remap preserves the customer's original autoload setting while redirecting the
-        # stripped script path to its generated native scene inside the exported package.
-        var remap := "[remap]\n\npath=\"%s\"\n" % generated_path.c_escape()
-        add_file(script_path + ".remap", remap.to_utf8_buffer(), false)
+        var prefix := "*" if original.begins_with("*") else ""
+        ProjectSettings.set_setting(setting, prefix + str(_autoload_replacements[setting]))
     for path: String in _autoload_files:
         add_file(path, str(_autoload_files[path]).to_utf8_buffer(), false)
 
 
 func _restore_autoloads() -> void:
+    for setting: String in _autoload_originals:
+        ProjectSettings.set_setting(setting, _autoload_originals[setting])
     _autoload_originals.clear()
 
 

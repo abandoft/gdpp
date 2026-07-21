@@ -114,19 +114,21 @@ foreach(required_editor_only_contract IN ITEMS
             "Editor-only runtime export guard is missing: ${required_editor_only_contract}")
     endif()
 endforeach()
-foreach(required_autoload_remap IN ITEMS
-        "add_file(script_path + \".remap\", remap.to_utf8_buffer(), false)"
-        "path=\\\"%s\\\"")
-    string(FIND "${export_plugin}" "${required_autoload_remap}" autoload_remap_offset)
-    if(autoload_remap_offset EQUAL -1)
+foreach(required_autoload_rewrite IN ITEMS
+        "func _resolve_resource_uid(path: String) -> String:"
+        "ResourceUID.get_id_path(resource_id)"
+        "ProjectSettings.set_setting(setting, prefix + str(_autoload_replacements[setting]))"
+        "ProjectSettings.set_setting(setting, _autoload_originals[setting])")
+    string(FIND "${export_plugin}" "${required_autoload_rewrite}" autoload_rewrite_offset)
+    if(autoload_rewrite_offset EQUAL -1)
         message(FATAL_ERROR
-            "Binary autoload remap is missing: ${required_autoload_remap}")
+            "Transactional binary autoload rewrite is missing: ${required_autoload_rewrite}")
     endif()
 endforeach()
-string(FIND "${export_plugin}" "ProjectSettings.set_setting(setting" autoload_mutation_offset)
-if(NOT autoload_mutation_offset EQUAL -1)
+string(FIND "${export_plugin}" "add_file(script_path + \".remap\"" autoload_sidecar_offset)
+if(NOT autoload_sidecar_offset EQUAL -1)
     message(FATAL_ERROR
-        "Export callbacks must not mutate autoload ProjectSettings after project.binary is saved")
+        "Script-to-scene remap sidecars do not satisfy Godot's autoload type check")
 endif()
 foreach(required_attached_contract IN ITEMS
         "distribution_result.get(\"attached_script_bases\", {})"
