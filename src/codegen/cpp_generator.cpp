@@ -1182,7 +1182,10 @@ std::string CodeGenerator::virtual_return_type(const GodotMethodRecord& method) 
 
 std::string CodeGenerator::native_property_info(const Type& type,
                                                 const std::string_view name) const {
-    if (describe_container_type(type)) {
+    // Variant is encoded as NIL plus PROPERTY_USAGE_NIL_IS_VARIANT in Godot's reflection ABI.
+    // A plain NIL PropertyInfo means an actual nil value and causes editor/runtime introspection
+    // to lose the dynamic argument contract.
+    if (type.kind == TypeKind::variant || describe_container_type(type)) {
         return "([] { auto info = godot::GetTypeInfo<" + cpp_type(type) +
                ">::get_class_info(); info.name = " + godot_string_name(std::string{name}) +
                "; return info; }())";

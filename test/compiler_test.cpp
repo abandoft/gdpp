@@ -53,7 +53,7 @@ TEST_CASE("compiler lowers instance and static rest methods through the vararg A
         "rest_methods.gd",
         "func collect(required: int, optional: int = 2, ...values: Array) -> int:\n"
         "    return required + optional + values.size()\n"
-        "static func join(...values) -> int:\n"
+        "static func join(first, ...values) -> int:\n"
         "    return values.size()\n"
         "func invoke() -> int:\n"
         "    return collect(1, 2, 3, 4) + join(5, 6, 7)\n",
@@ -72,6 +72,8 @@ TEST_CASE("compiler lowers instance and static rest methods through the vararg A
             std::string::npos);
     REQUIRE(result.unit.source.find("_gdpp_rest_arguments.resize(") != std::string::npos);
     REQUIRE(result.unit.source.find("_gdpp_call_rest_") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::GetTypeInfo<godot::Variant>::get_class_info()") !=
+            std::string::npos);
 }
 
 TEST_CASE("variadic initializers preserve default construction and pack new arguments") {
