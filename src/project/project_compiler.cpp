@@ -1216,19 +1216,23 @@ std::string generated_registration(const std::vector<CompiledProjectScript>& scr
            << "void initialize_gdpp_project(godot::ModuleInitializationLevel level) {\n"
            << "    if (level != godot::MODULE_INITIALIZATION_LEVEL_SCENE) return;\n";
     if (has_attached_scripts) {
-        output << "    GDREGISTER_RUNTIME_CLASS(gdpp::runtime::AttachedScriptBehavior);\n"
-               << "    GDREGISTER_RUNTIME_CLASS(gdpp::runtime::AttachedCompiledLanguage);\n"
-               << "    GDREGISTER_RUNTIME_CLASS(gdpp::runtime::AttachedCompiledScript);\n";
+        // Export runs in the editor and must invoke ScriptExtension virtual callbacks even for
+        // non-tool customer scripts. Keep the bridge infrastructure editor-visible; generated
+        // behavior classes retain their own tool/runtime registration policy below.
+        output << "    GDREGISTER_CLASS(gdpp::runtime::AttachedScriptBehavior);\n"
+               << "    GDREGISTER_CLASS(gdpp::runtime::AttachedCompiledLanguage);\n"
+               << "    GDREGISTER_CLASS(gdpp::runtime::AttachedCompiledScript);\n";
     }
     for (const auto& script : scripts) {
+        const bool editor_visible = script.is_tool || script.is_attached;
         for (const auto& inner_class_name : script.inner_class_names) {
             const bool is_abstract =
                 std::find(script.abstract_inner_class_names.begin(),
                           script.abstract_inner_class_names.end(),
                           inner_class_name) != script.abstract_inner_class_names.end();
-            emit_registration(inner_class_name, is_abstract, script.is_tool);
+            emit_registration(inner_class_name, is_abstract, editor_visible);
         }
-        emit_registration(script.class_name, script.is_abstract, script.is_tool);
+        emit_registration(script.class_name, script.is_abstract, editor_visible);
     }
     if (has_attached_scripts) {
         for (const auto& script : scripts) {

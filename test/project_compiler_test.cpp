@@ -952,6 +952,12 @@ TEST_CASE("project compiler attaches scripts to third-party GDExtension instance
     REQUIRE(cmake.find("libvendor") == std::string::npos);
     REQUIRE(registration.find("register_attached_script") != std::string::npos);
     REQUIRE(registration.find("register_singleton") != std::string::npos);
+    REQUIRE(registration.find("GDREGISTER_CLASS(gdpp::runtime::AttachedCompiledLanguage)") !=
+            std::string::npos);
+    REQUIRE(registration.find("GDREGISTER_CLASS(gdpp::runtime::AttachedCompiledScript)") !=
+            std::string::npos);
+    REQUIRE(registration.find("GDREGISTER_CLASS(" + result.scripts.front().class_name + ")") !=
+            std::string::npos);
     REQUIRE(descriptor.find("reloadable = false") != std::string::npos);
 }
 
