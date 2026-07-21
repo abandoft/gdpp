@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 SUPPORTED_GODOT_VERSIONS = ("4.4", "4.5", "4.6", "4.7")
-SDK_SCHEMA = 6
+SDK_SCHEMA = 7
 STATIC_ADDON_FILES = (
     "THIRD_PARTY_NOTICES.md",
     "export_plugin.gd",
