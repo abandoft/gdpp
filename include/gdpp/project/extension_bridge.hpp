@@ -52,6 +52,9 @@ struct ExtensionBridgeClass {
     // nor a native link dependency. Scripts extending these classes use the attached-script
     // backend; the generated project library never forms a cross-library C++ inheritance edge.
     bool runtime_only{false};
+    // Editor extension classes participate in editor validation but are unavailable in export
+    // templates and therefore must not be registered by a distribution project library.
+    bool editor_only{false};
     // If true, an undeclared member is a compile-time error. Providers can leave this false while
     // migrating a legacy binary-only API, then enable fail-closed typo checking once complete.
     bool members_complete{false};

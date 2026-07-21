@@ -355,6 +355,8 @@ std::vector<ExtensionBridge> reflect_extension_contracts() {
         ExtensionBridgeClass contract;
         contract.gdscript_name = class_name_utf8;
         contract.runtime_only = true;
+        contract.editor_only = class_db->class_get_api_type(class_name) ==
+                               godot::ClassDBSingleton::API_EDITOR_EXTENSION;
         contract.members_complete = true;
         std::unordered_set<std::string> member_keys;
         godot::StringName current = class_name;
@@ -521,6 +523,12 @@ std::vector<ExtensionBridge> reflect_extension_contracts() {
             current = class_db->get_parent_class(current);
         }
         contract.godot_base = current.is_empty() ? "Object" : native_string(godot::String{current});
+        if (!current.is_empty()) {
+            const auto base_api = class_db->class_get_api_type(current);
+            contract.editor_only = contract.editor_only ||
+                                   base_api == godot::ClassDBSingleton::API_EDITOR ||
+                                   base_api == godot::ClassDBSingleton::API_EDITOR_EXTENSION;
+        }
 
         std::sort(contract.members.begin(), contract.members.end(),
                   [](const auto& left, const auto& right) {
@@ -531,7 +539,8 @@ std::vector<ExtensionBridge> reflect_extension_contracts() {
         std::sort(contract.enums.begin(), contract.enums.end(),
                   [](const auto& left, const auto& right) { return left.name < right.name; });
 
-        std::string identity = contract.gdscript_name + "\nbase:" + contract.godot_base + "\n";
+        std::string identity = contract.gdscript_name + "\nbase:" + contract.godot_base +
+                               "\neditor-only:" + (contract.editor_only ? "true\n" : "false\n");
         for (const auto& member : contract.members) {
             identity += std::to_string(static_cast<int>(member.kind)) + ":" + member.name + ":" +
                         member.type + ":" + (member.read_only ? "ro" : "rw") + ":" +
@@ -1076,6 +1085,7 @@ godot::Dictionary GDPPCompiler::compile_project(
     output["removed_count"] = static_cast<int64_t>(result.removed_count);
     godot::PackedStringArray scripts;
     godot::PackedStringArray abstract_scripts;
+    godot::PackedStringArray editor_only_scripts;
     godot::Dictionary script_classes;
     godot::Dictionary attached_script_bases;
     for (const auto& script : result.scripts) {
@@ -1090,9 +1100,12 @@ godot::Dictionary GDPPCompiler::compile_project(
         }
         if (script.is_abstract)
             abstract_scripts.push_back(godot::String{resource_path.c_str()});
+        if (script.is_editor_only)
+            editor_only_scripts.push_back(godot::String{resource_path.c_str()});
     }
     output["scripts"] = scripts;
     output["abstract_scripts"] = abstract_scripts;
+    output["editor_only_scripts"] = editor_only_scripts;
     output["script_classes"] = script_classes;
     output["attached_script_bases"] = attached_script_bases;
     godot::PackedStringArray diagnostics;

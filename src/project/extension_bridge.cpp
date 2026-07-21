@@ -485,6 +485,17 @@ bool parse_bridge_members(const JsonObject& object, ExtensionBridgeClass& bridge
                           const std::filesystem::path& manifest,
                           std::vector<std::string>& diagnostics) {
     bool valid = true;
+    if (field(object, "editor_only")) {
+        const auto* editor_only = bool_field(object, "editor_only");
+        if (!editor_only) {
+            diagnostics.push_back(path_to_utf8(manifest) + ": bridge class '" +
+                                  bridge_class.gdscript_name +
+                                  "' field 'editor_only' must be boolean");
+            valid = false;
+        } else {
+            bridge_class.editor_only = *editor_only;
+        }
+    }
     if (field(object, "members_complete")) {
         const auto* complete = bool_field(object, "members_complete");
         if (!complete) {
@@ -650,8 +661,8 @@ load_extension_bridges(const std::filesystem::path& project_root,
                                              "base names");
                 continue;
             }
-            ExtensionBridgeClass bridge_class{*gdscript_name, {},    {}, *godot_base,
-                                              true,           false, {}, {}};
+            ExtensionBridgeClass bridge_class{*gdscript_name, {},    {}, *godot_base, true,
+                                              false,          false, {}, {}};
             if (!parse_bridge_members(*class_object, bridge_class, manifest, result.diagnostics))
                 continue;
             if (!parse_bridge_enums(*class_object, bridge_class, manifest, result.diagnostics))

@@ -261,6 +261,49 @@ TEST_CASE("project compiler preserves tool mode across incremental cache hits") 
             std::string::npos);
 }
 
+TEST_CASE("project compiler excludes editor class hierarchies from runtime registration") {
+    const auto root = fixture_root("project-editor-only-registration");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "editor_plugin.gd", "@tool\n"
+                                          "extends EditorPlugin\n"
+                                          "class_name CustomerEditorPlugin\n");
+    write_text(root / "editor_derived.gd", "@tool\n"
+                                           "extends CustomerEditorPlugin\n"
+                                           "class_name CustomerEditorDerived\n");
+    write_text(root / "runtime_worker.gd", "extends Node\n"
+                                           "class_name CustomerRuntimeWorker\n");
+    const auto options = project_options(root);
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.scripts.size(), std::size_t{3});
+    const auto find_script = [&](const std::string_view name) {
+        return std::find_if(result.scripts.begin(), result.scripts.end(), [&](const auto& script) {
+            return script.relative_path.filename().string() == std::string{name};
+        });
+    };
+    const auto plugin = find_script("editor_plugin.gd");
+    const auto derived = find_script("editor_derived.gd");
+    const auto runtime = find_script("runtime_worker.gd");
+    REQUIRE(plugin != result.scripts.end());
+    REQUIRE(derived != result.scripts.end());
+    REQUIRE(runtime != result.scripts.end());
+    REQUIRE(plugin->is_editor_only);
+    REQUIRE(derived->is_editor_only);
+    REQUIRE(!runtime->is_editor_only);
+
+    const auto registration = read_text(options.output_directory / "register_types.cpp");
+    REQUIRE(registration.find("godot::Engine::get_singleton()->is_editor_hint()") !=
+            std::string::npos);
+    REQUIRE(registration.find("if (gdpp_editor_environment) {\n        GDREGISTER_CLASS(" +
+                              plugin->class_name + ");\n    }") != std::string::npos);
+    REQUIRE(registration.find("if (gdpp_editor_environment) {\n        GDREGISTER_CLASS(" +
+                              derived->class_name + ");\n    }") != std::string::npos);
+    REQUIRE(registration.find("    GDREGISTER_RUNTIME_CLASS(" + runtime->class_name + ");") !=
+            std::string::npos);
+}
+
 TEST_CASE("project compiler isolates tool access to runtime script state") {
     const auto root = fixture_root("project-tool-runtime-isolation");
     std::error_code error;
@@ -1261,6 +1304,49 @@ TEST_CASE("project compiler dynamically bridges a binary-only GDExtension class"
     REQUIRE(abi_changed.success);
     REQUIRE_EQ(abi_changed.compiled_count, std::size_t{1});
     REQUIRE_EQ(abi_changed.cache_hit_count, std::size_t{0});
+}
+
+TEST_CASE("project compiler propagates provider editor-only contracts") {
+    const auto root = fixture_root("project-editor-only-extension-bridge");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "addons/vendor/vendor.gdextension",
+               "[configuration]\nentry_symbol=\"vendor_init\"\n");
+    write_text(root / "addons/vendor/gdpp_bridge.json",
+               "{\"schema\":1,\"provider\":\"vendor.gdextension\","
+               "\"abi\":\"vendor-editor-v1\",\"godot_minimum\":\"4.4\","
+               "\"classes\":[{\"gdscript_name\":\"VendorEditorBase\","
+               "\"godot_base\":\"Node\",\"mode\":\"runtime\","
+               "\"editor_only\":true}]}\n");
+    write_text(root / "consumer.gd", "@tool\nextends VendorEditorBase\n"
+                                     "class_name VendorEditorConsumer\n");
+    const auto options = project_options(root);
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.scripts.size(), std::size_t{1});
+    REQUIRE(result.scripts.front().is_attached);
+    REQUIRE(result.scripts.front().is_editor_only);
+    const auto registration = read_text(options.output_directory / "register_types.cpp");
+    REQUIRE(registration.find("if (gdpp_editor_environment) {\n        GDREGISTER_CLASS(" +
+                              result.scripts.front().class_name + ");\n    }") !=
+            std::string::npos);
+    REQUIRE(registration.find("if (gdpp_editor_environment) {\n        {\n            "
+                              "godot::String error;") != std::string::npos);
+
+    write_text(root / "addons/vendor/gdpp_bridge.json",
+               "{\"schema\":1,\"provider\":\"vendor.gdextension\","
+               "\"abi\":\"vendor-editor-v1\",\"godot_minimum\":\"4.4\","
+               "\"classes\":[{\"gdscript_name\":\"VendorEditorBase\","
+               "\"godot_base\":\"Node\",\"mode\":\"runtime\","
+               "\"editor_only\":\"yes\"}]}\n");
+    const auto malformed = gdpp::ProjectCompiler{}.compile(options);
+    REQUIRE(!malformed.success);
+    REQUIRE(std::any_of(
+        malformed.diagnostics.begin(), malformed.diagnostics.end(), [](const auto& item) {
+            return item.diagnostic.message.find("field 'editor_only' must be boolean") !=
+                   std::string::npos;
+        }));
 }
 
 TEST_CASE("project compiler consumes runtime contracts reflected from ClassDB") {

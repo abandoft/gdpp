@@ -41,12 +41,14 @@ struct CompiledProjectScript {
     std::string source_file_name;
     std::vector<std::string> inner_class_names;
     std::vector<std::string> abstract_inner_class_names;
+    std::vector<std::string> editor_only_inner_class_names;
     std::optional<std::string> icon_path;
     std::string native_base_type;
     std::string external_base_name;
     bool is_abstract{false};
     bool is_tool{false};
     bool is_attached{false};
+    bool is_editor_only{false};
     bool cache_hit{false};
 };
 
