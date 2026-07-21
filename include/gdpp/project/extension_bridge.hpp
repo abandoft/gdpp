@@ -49,7 +49,8 @@ struct ExtensionBridgeClass {
     std::string godot_base;
     // Runtime bridges describe classes registered in ClassDB by a binary-only provider.
     // They deliberately use Variant dispatch and therefore require neither provider headers
-    // nor a native link dependency. Cross-library native GDExtension inheritance is rejected.
+    // nor a native link dependency. Scripts extending these classes use the attached-script
+    // backend; the generated project library never forms a cross-library C++ inheritance edge.
     bool runtime_only{false};
     // If true, an undeclared member is a compile-time error. Providers can leave this false while
     // migrating a legacy binary-only API, then enable fail-closed typo checking once complete.
