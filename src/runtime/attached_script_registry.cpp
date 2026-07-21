@@ -32,15 +32,15 @@ void set_error(godot::String* destination, const godot::String& message) {
         *destination = message;
 }
 
-bool same_identity(const AttachedScriptDescriptor& left,
-                   const AttachedScriptDescriptor& right) {
+bool same_identity(const AttachedScriptDescriptor& left, const AttachedScriptDescriptor& right) {
     return left.source_path == right.source_path && left.global_name == right.global_name &&
            left.native_base_type == right.native_base_type &&
            left.base_script_path == right.base_script_path &&
            left.behavior_class == right.behavior_class && left.factory == right.factory &&
            left.tool == right.tool && left.abstract == right.abstract &&
            left.properties.size() == right.properties.size() &&
-           left.methods.size() == right.methods.size() && left.signals.size() == right.signals.size();
+           left.methods.size() == right.methods.size() &&
+           left.signals.size() == right.signals.size();
 }
 
 template <typename Items, typename Name>
@@ -101,19 +101,21 @@ bool register_attached_script(AttachedScriptDescriptor descriptor, godot::String
     }
 
     godot::String duplicate;
-    if (!names_are_unique(descriptor.properties,
-                          [](const AttachedScriptProperty& item) { return item.info.name; },
-                          &duplicate)) {
+    if (!names_are_unique(
+            descriptor.properties,
+            [](const AttachedScriptProperty& item) { return item.info.name; }, &duplicate)) {
         set_error(error, "duplicate attached script property: " + duplicate);
         return false;
     }
-    if (!names_are_unique(descriptor.methods,
-                          [](const godot::MethodInfo& item) { return item.name; }, &duplicate)) {
+    if (!names_are_unique(
+            descriptor.methods, [](const godot::MethodInfo& item) { return item.name; },
+            &duplicate)) {
         set_error(error, "duplicate attached script method: " + duplicate);
         return false;
     }
-    if (!names_are_unique(descriptor.signals,
-                          [](const godot::MethodInfo& item) { return item.name; }, &duplicate)) {
+    if (!names_are_unique(
+            descriptor.signals, [](const godot::MethodInfo& item) { return item.name; },
+            &duplicate)) {
         set_error(error, "duplicate attached script signal: " + duplicate);
         return false;
     }
@@ -142,6 +144,62 @@ std::optional<AttachedScriptDescriptor> find_attached_script(const godot::String
     if (found == registry().end())
         return std::nullopt;
     return found->second;
+}
+
+std::optional<AttachedScriptDescriptor> resolve_attached_script(const godot::String& source_path,
+                                                                godot::String* error) {
+    std::lock_guard<std::mutex> lock{registry_mutex()};
+    const auto root = registry().find(registry_key(source_path.simplify_path()));
+    if (root == registry().end()) {
+        set_error(error, "attached script descriptor is not registered: " + source_path);
+        return std::nullopt;
+    }
+
+    AttachedScriptDescriptor resolved = root->second;
+    std::unordered_set<std::string> visited;
+    visited.emplace(root->first);
+    auto base_path = resolved.base_script_path;
+    const auto append_unique = [](auto& destination, const auto& inherited, auto&& name) {
+        for (const auto& item : inherited) {
+            const auto duplicate =
+                std::any_of(destination.begin(), destination.end(),
+                            [&](const auto& existing) { return name(existing) == name(item); });
+            if (!duplicate)
+                destination.push_back(item);
+        }
+    };
+
+    while (!base_path.is_empty()) {
+        const auto key = registry_key(base_path.simplify_path());
+        if (!visited.emplace(key).second) {
+            set_error(error, "cyclic attached script inheritance at: " + base_path);
+            return std::nullopt;
+        }
+        const auto base = registry().find(key);
+        if (base == registry().end()) {
+            set_error(error, "attached base script descriptor is not registered: " + base_path);
+            return std::nullopt;
+        }
+        if (base->second.native_base_type != resolved.native_base_type) {
+            set_error(error,
+                      "attached script inheritance changes native base type at: " + base_path);
+            return std::nullopt;
+        }
+        append_unique(resolved.properties, base->second.properties,
+                      [](const AttachedScriptProperty& item) { return item.info.name; });
+        append_unique(resolved.methods, base->second.methods,
+                      [](const godot::MethodInfo& item) { return item.name; });
+        append_unique(resolved.signals, base->second.signals,
+                      [](const godot::MethodInfo& item) { return item.name; });
+        const godot::Array constant_names = base->second.constants.keys();
+        for (std::int64_t index = 0; index < constant_names.size(); ++index) {
+            const godot::Variant& name = constant_names[index];
+            if (!resolved.constants.has(name))
+                resolved.constants[name] = base->second.constants[name];
+        }
+        base_path = base->second.base_script_path;
+    }
+    return resolved;
 }
 
 std::vector<godot::String> attached_script_paths() {

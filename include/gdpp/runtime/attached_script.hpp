@@ -5,6 +5,7 @@
 #include <godot_cpp/classes/script_language_extension.hpp>
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/core/property_info.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -75,7 +76,17 @@ struct AttachedScriptDescriptor {
 void unregister_all_attached_scripts();
 [[nodiscard]] std::optional<AttachedScriptDescriptor>
 find_attached_script(const godot::String& source_path);
+// Resolves a complete script view, with derived declarations shadowing inherited ones. A missing
+// or cyclic base chain fails closed and returns no descriptor.
+[[nodiscard]] std::optional<AttachedScriptDescriptor>
+resolve_attached_script(const godot::String& source_path, godot::String* error = nullptr);
 [[nodiscard]] std::vector<godot::String> attached_script_paths();
+
+// Constructs the provider-owned native object, attaches the compiled script and invokes _init
+// with the supplied arguments. The Variant preserves RefCounted ownership when applicable.
+[[nodiscard]] godot::Variant instantiate_attached_script(const godot::String& source_path,
+                                                         const godot::Array& arguments = {},
+                                                         godot::String* error = nullptr);
 
 class AttachedCompiledScript;
 
@@ -98,8 +109,8 @@ class AttachedCompiledLanguage : public godot::ScriptLanguageExtension {
     godot::PackedStringArray _get_doc_comment_delimiters() const override;
     godot::PackedStringArray _get_string_delimiters() const override;
     godot::Ref<godot::Script> _make_template(const godot::String& source,
-                                              const godot::String& class_name,
-                                              const godot::String& base_class_name) const override;
+                                             const godot::String& class_name,
+                                             const godot::String& base_class_name) const override;
     godot::TypedArray<godot::Dictionary>
     _get_built_in_templates(const godot::StringName& object) const override;
     bool _is_using_templates() override;
@@ -125,12 +136,10 @@ class AttachedCompiledLanguage : public godot::ScriptLanguageExtension {
     godot::Dictionary _complete_code(const godot::String& code, const godot::String& path,
                                      godot::Object* owner) const override;
     godot::Dictionary _lookup_code(const godot::String& code, const godot::String& symbol,
-                                   const godot::String& path,
-                                   godot::Object* owner) const override;
+                                   const godot::String& path, godot::Object* owner) const override;
     godot::String _auto_indent_code(const godot::String& code, std::int32_t from_line,
                                     std::int32_t to_line) const override;
-    void _add_global_constant(const godot::StringName& name,
-                              const godot::Variant& value) override;
+    void _add_global_constant(const godot::StringName& name, const godot::Variant& value) override;
     void _add_named_global_constant(const godot::StringName& name,
                                     const godot::Variant& value) override;
     void _remove_named_global_constant(const godot::StringName& name) override;
@@ -141,24 +150,21 @@ class AttachedCompiledLanguage : public godot::ScriptLanguageExtension {
     std::int32_t _debug_get_stack_level_line(std::int32_t level) const override;
     godot::String _debug_get_stack_level_function(std::int32_t level) const override;
     godot::String _debug_get_stack_level_source(std::int32_t level) const override;
-    godot::Dictionary _debug_get_stack_level_locals(std::int32_t level,
-                                                     std::int32_t max_subitems,
+    godot::Dictionary _debug_get_stack_level_locals(std::int32_t level, std::int32_t max_subitems,
+                                                    std::int32_t max_depth) override;
+    godot::Dictionary _debug_get_stack_level_members(std::int32_t level, std::int32_t max_subitems,
                                                      std::int32_t max_depth) override;
-    godot::Dictionary _debug_get_stack_level_members(std::int32_t level,
-                                                      std::int32_t max_subitems,
-                                                      std::int32_t max_depth) override;
     void* _debug_get_stack_level_instance(std::int32_t level) override;
     godot::Dictionary _debug_get_globals(std::int32_t max_subitems,
                                          std::int32_t max_depth) override;
     godot::String _debug_parse_stack_level_expression(std::int32_t level,
-                                                       const godot::String& expression,
-                                                       std::int32_t max_subitems,
-                                                       std::int32_t max_depth) override;
+                                                      const godot::String& expression,
+                                                      std::int32_t max_subitems,
+                                                      std::int32_t max_depth) override;
     godot::TypedArray<godot::Dictionary> _debug_get_current_stack_info() override;
     void _reload_all_scripts() override;
     void _reload_scripts(const godot::Array& scripts, bool soft_reload) override;
-    void _reload_tool_script(const godot::Ref<godot::Script>& script,
-                             bool soft_reload) override;
+    void _reload_tool_script(const godot::Ref<godot::Script>& script, bool soft_reload) override;
     godot::PackedStringArray _get_recognized_extensions() const override;
     godot::TypedArray<godot::Dictionary> _get_public_functions() const override;
     godot::Dictionary _get_public_constants() const override;
@@ -166,12 +172,11 @@ class AttachedCompiledLanguage : public godot::ScriptLanguageExtension {
     void _profiling_start() override;
     void _profiling_stop() override;
     void _profiling_set_save_native_calls(bool enable) override;
-    std::int32_t _profiling_get_accumulated_data(
-        godot::ScriptLanguageExtensionProfilingInfo* info_array,
-        std::int32_t info_max) override;
-    std::int32_t _profiling_get_frame_data(
-        godot::ScriptLanguageExtensionProfilingInfo* info_array,
-        std::int32_t info_max) override;
+    std::int32_t
+    _profiling_get_accumulated_data(godot::ScriptLanguageExtensionProfilingInfo* info_array,
+                                    std::int32_t info_max) override;
+    std::int32_t _profiling_get_frame_data(godot::ScriptLanguageExtensionProfilingInfo* info_array,
+                                           std::int32_t info_max) override;
     void _frame() override;
     bool _handles_global_class_type(const godot::String& type) const override;
     godot::Dictionary _get_global_class_name(const godot::String& path) const override;
@@ -201,7 +206,8 @@ class AttachedCompiledScript : public godot::ScriptExtension {
     void _set_source_code(const godot::String& code) override;
     godot::Error _reload(bool keep_state) override;
     bool _has_method(const godot::StringName& method) const override;
-    godot::Variant _get_script_method_argument_count(const godot::StringName& method) const override;
+    godot::Variant
+    _get_script_method_argument_count(const godot::StringName& method) const override;
     godot::Dictionary _get_method_info(const godot::StringName& method) const override;
     bool _is_tool() const override;
     bool _is_valid() const override;

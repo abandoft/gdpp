@@ -13,6 +13,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace gdpp::runtime {
 namespace {
@@ -47,22 +48,35 @@ class AttachedScriptInstance final {
     godot::Ref<AttachedScriptBehavior> behavior;
 };
 
+struct PendingConstruction {
+    godot::String source_path;
+    const godot::Array* arguments{nullptr};
+    bool consumed{false};
+};
+
+thread_local PendingConstruction* pending_construction{nullptr};
+
 const AttachedScriptProperty* find_property(const AttachedScriptInstance* instance,
-                                             const godot::StringName& name) {
-    const auto found = std::find_if(instance->descriptor.properties.begin(),
-                                    instance->descriptor.properties.end(), [&](const auto& item) {
-                                        return item.info.name == name;
-                                    });
+                                            const godot::StringName& name) {
+    const auto found =
+        std::find_if(instance->descriptor.properties.begin(), instance->descriptor.properties.end(),
+                     [&](const auto& item) { return item.info.name == name; });
     return found == instance->descriptor.properties.end() ? nullptr : &*found;
 }
 
 const godot::MethodInfo* find_method(const AttachedScriptInstance* instance,
                                      const godot::StringName& name) {
-    const auto found = std::find_if(instance->descriptor.methods.begin(),
-                                    instance->descriptor.methods.end(), [&](const auto& item) {
-                                        return item.name == name;
-                                    });
+    const auto found =
+        std::find_if(instance->descriptor.methods.begin(), instance->descriptor.methods.end(),
+                     [&](const auto& item) { return item.name == name; });
     return found == instance->descriptor.methods.end() ? nullptr : &*found;
+}
+
+const godot::MethodInfo* find_method(const AttachedScriptDescriptor& descriptor,
+                                     const godot::StringName& name) {
+    const auto found = std::find_if(descriptor.methods.begin(), descriptor.methods.end(),
+                                    [&](const auto& item) { return item.name == name; });
+    return found == descriptor.methods.end() ? nullptr : &*found;
 }
 
 bool has_signal(const AttachedScriptInstance* instance, const godot::StringName& name) {
@@ -88,12 +102,9 @@ void destroy_variant(GDExtensionVariantPtr value) {
 }
 
 GDExtensionPropertyInfo copy_property_info(const godot::PropertyInfo& info) {
-    return {static_cast<GDExtensionVariantType>(info.type),
-            memnew(godot::StringName(info.name)),
-            memnew(godot::StringName(info.class_name)),
-            info.hint,
-            memnew(godot::String(info.hint_string)),
-            info.usage};
+    return {static_cast<GDExtensionVariantType>(info.type), memnew(godot::StringName(info.name)),
+            memnew(godot::StringName(info.class_name)),     info.hint,
+            memnew(godot::String(info.hint_string)),        info.usage};
 }
 
 void destroy_property_info(const GDExtensionPropertyInfo& info) {
@@ -195,7 +206,7 @@ GDExtensionBool instance_get(AttachedScriptInstance* instance, const godot::Stri
 }
 
 const GDExtensionPropertyInfo* instance_property_list(AttachedScriptInstance* instance,
-                                                       std::uint32_t* count) {
+                                                      std::uint32_t* count) {
     *count = static_cast<std::uint32_t>(instance->descriptor.properties.size());
     if (*count == 0)
         return nullptr;
@@ -211,14 +222,14 @@ void instance_free_property_list(AttachedScriptInstance*, const GDExtensionPrope
 }
 
 GDExtensionBool instance_property_can_revert(AttachedScriptInstance* instance,
-                                              const godot::StringName* name) {
+                                             const godot::StringName* name) {
     const auto* property = find_property(instance, *name);
     return property && property->has_default;
 }
 
 GDExtensionBool instance_property_get_revert(AttachedScriptInstance* instance,
-                                              const godot::StringName* name,
-                                              godot::Variant* result) {
+                                             const godot::StringName* name,
+                                             godot::Variant* result) {
     const auto* property = find_property(instance, *name);
     if (!property || !property->has_default)
         return false;
@@ -242,7 +253,7 @@ void instance_property_state(AttachedScriptInstance* instance,
 }
 
 const GDExtensionMethodInfo* instance_method_list(AttachedScriptInstance* instance,
-                                                   std::uint32_t* count) {
+                                                  std::uint32_t* count) {
     *count = static_cast<std::uint32_t>(instance->descriptor.methods.size());
     if (*count == 0)
         return nullptr;
@@ -258,8 +269,8 @@ void instance_free_method_list(AttachedScriptInstance*, const GDExtensionMethodI
 }
 
 GDExtensionVariantType instance_property_type(AttachedScriptInstance* instance,
-                                               const godot::StringName* name,
-                                               GDExtensionBool* valid) {
+                                              const godot::StringName* name,
+                                              GDExtensionBool* valid) {
     const auto* property = find_property(instance, *name);
     *valid = property != nullptr;
     return property ? static_cast<GDExtensionVariantType>(property->info.type)
@@ -383,6 +394,25 @@ void* AttachedCompiledScript::_instance_create(godot::Object* object) const {
         }
     }
     behavior->initialize_instance();
+
+    if (find_method(instance, "_init")) {
+        const godot::Array empty_arguments;
+        const auto* arguments = &empty_arguments;
+        if (pending_construction && pending_construction->source_path == metadata->source_path) {
+            arguments = pending_construction->arguments;
+            pending_construction->consumed = true;
+        }
+        std::vector<const godot::Variant*> argument_pointers;
+        argument_pointers.reserve(static_cast<std::size_t>(arguments->size()));
+        for (std::int64_t index = 0; index < arguments->size(); ++index)
+            argument_pointers.push_back(&(*arguments)[index]);
+        GDExtensionCallError call_error{};
+        call_behavior(instance, "_init", argument_pointers.data(), arguments->size(), call_error);
+        if (call_error.error != GDEXTENSION_CALL_OK) {
+            godot::memdelete(instance);
+            return nullptr;
+        }
+    }
     return godot::gdextension_interface::script_instance_create3(&script_instance_info(), instance);
 }
 
@@ -393,6 +423,45 @@ bool AttachedCompiledScript::_instance_has(godot::Object* object) const {
     const auto found = AttachedScriptInstance::instances().find(object);
     return found != AttachedScriptInstance::instances().end() &&
            found->second->script.ptr() == this;
+}
+
+godot::Variant instantiate_attached_script(const godot::String& source_path,
+                                           const godot::Array& arguments, godot::String* error) {
+    const auto descriptor = resolve_attached_script(source_path, error);
+    if (!descriptor)
+        return {};
+    auto* class_db = godot::ClassDBSingleton::get_singleton();
+    if (!class_db || !class_db->can_instantiate(descriptor->native_base_type)) {
+        if (error)
+            *error = "attached native base is not instantiable: " +
+                     godot::String{descriptor->native_base_type};
+        return {};
+    }
+
+    godot::Variant instance = class_db->instantiate(descriptor->native_base_type);
+    godot::Object* object = instance;
+    if (!object) {
+        if (error)
+            *error = "ClassDB failed to instantiate attached native base: " +
+                     godot::String{descriptor->native_base_type};
+        return {};
+    }
+
+    godot::Ref<AttachedCompiledScript> script;
+    script.instantiate();
+    script->set_source_path(descriptor->source_path);
+    PendingConstruction construction{descriptor->source_path, &arguments, false};
+    auto* previous = pending_construction;
+    pending_construction = &construction;
+    object->set_script(script);
+    pending_construction = previous;
+    if (!script->_instance_has(object) ||
+        (find_method(*descriptor, "_init") && !construction.consumed)) {
+        if (error)
+            *error = "failed to attach or initialize compiled script: " + descriptor->source_path;
+        return {};
+    }
+    return instance;
 }
 
 } // namespace gdpp::runtime
