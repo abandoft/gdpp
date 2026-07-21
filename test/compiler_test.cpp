@@ -765,9 +765,8 @@ TEST_CASE("compiler resolves forward constants before field initializers") {
 TEST_CASE("compiler defers scalar Godot constants until after extension initialization") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(
-        "constant_utility.gd",
-        "extends Node2D\nconst MAX_ANGLE: float = deg_to_rad(10.0)\n"
-        "func angle() -> float:\n    return MAX_ANGLE\n");
+        "constant_utility.gd", "extends Node2D\nconst MAX_ANGLE: float = deg_to_rad(10.0)\n"
+                               "func angle() -> float:\n    return MAX_ANGLE\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.header.find("static const double& MAX_ANGLE();") != std::string::npos);
@@ -2693,8 +2692,7 @@ last"""
     REQUIRE(result.unit.header.find("_gdpp_enum_HEX = 65280") != std::string::npos);
     REQUIRE(result.unit.header.find("_gdpp_enum_BINARY = 165") != std::string::npos);
     REQUIRE(result.unit.header.find("_gdpp_enum_DECIMAL = 12345") != std::string::npos);
-    REQUIRE(result.unit.source.find("_gdpp_constant_LEADING_storage() = 0.5") !=
-            std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_constant_LEADING_storage() = 0.5") != std::string::npos);
     REQUIRE(result.unit.source.find("_gdpp_constant_TRAILING_storage() = 4.0") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("12.50e+10") != std::string::npos);
