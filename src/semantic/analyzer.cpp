@@ -517,11 +517,14 @@ void SemanticAnalyzer::validate_local_call(const ast::FunctionDeclaration& funct
     const auto required = static_cast<std::size_t>(
         std::count_if(function.parameters.begin(), function.parameters.end(),
                       [](const auto& parameter) { return !parameter.default_value; }));
-    if (arguments.size() < required || arguments.size() > function.parameters.size()) {
+    if (arguments.size() < required ||
+        (!function.rest_parameter && arguments.size() > function.parameters.size())) {
         diagnostics_.error(
             "GDS4054",
             "script method '" + function.name + "' expects " + std::to_string(required) +
-                (required == function.parameters.size()
+                (function.rest_parameter
+                     ? " or more argument(s)"
+                 : required == function.parameters.size()
                      ? " argument(s)"
                      : " to " + std::to_string(function.parameters.size()) + " argument(s)") +
                 ", got " + std::to_string(arguments.size()),
@@ -536,6 +539,37 @@ void SemanticAnalyzer::validate_local_call(const ast::FunctionDeclaration& funct
             target, *call.operand(index + 1), arguments[index], call.operand(index + 1)->span,
             "argument " + std::to_string(index + 1) + " of '" + function.name + "'");
     }
+}
+
+void SemanticAnalyzer::analyze_rest_parameter(const ast::Parameter& parameter,
+                                              const std::string_view owner) {
+    if (api_.version().rfind("4.4", 0) == 0) {
+        diagnostics_.error("GDS4161",
+                           std::string{owner} +
+                               " rest parameters require a Godot 4.5 or newer target",
+                           parameter.span);
+    }
+
+    auto type = Type{TypeKind::array, "Array"};
+    if (parameter.type) {
+        const auto specified = type_from_name(*parameter.type, parameter.span);
+        if (specified.kind != TypeKind::array) {
+            diagnostics_.error("GDS4162",
+                               "the rest parameter type must be Array, got " +
+                                   specified.display_name(),
+                               parameter.span);
+        } else if (const auto descriptor = describe_container_type(specified);
+                   descriptor && !descriptor->arguments.empty() &&
+                   descriptor->arguments.front() != "Variant") {
+            diagnostics_.error("GDS4163",
+                               "typed arrays are not supported for a rest parameter",
+                               parameter.span);
+        } else {
+            type = specified;
+        }
+    }
+    model_.parameter_types_[&parameter] = type;
+    declare({SymbolKind::parameter, parameter.name, type, parameter.span, false});
 }
 
 void SemanticAnalyzer::validate_container_method_call(const Type& container,
@@ -2046,7 +2080,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                   member   ? static_cast<std::uint16_t>(member->parameters.size())
                                   : method ? method->maximum_arguments
                                            : std::uint16_t{0},
-                                  method && method->is_vararg,
+                                  member ? member->is_vararg : method && method->is_vararg,
                                   true};
             } else if (language_intrinsic) {
                 resolve_intrinsic(*language_intrinsic);
@@ -2453,7 +2487,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         ApiResolution{
                             ApiResolutionKind::script_super, object_resolution->owner, "", "",
                             result, static_cast<std::uint16_t>(member->required_arguments),
-                            static_cast<std::uint16_t>(member->parameters.size()), false, true});
+                            static_cast<std::uint16_t>(member->parameters.size()),
+                            member->is_vararg, true});
                 } else if (dynamic_dispatch) {
                     model_.api_resolutions_.emplace(
                         &callee, ApiResolution{ApiResolutionKind::dynamic_method, "", "", "",
@@ -3992,7 +4027,8 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
         diagnostics_.error("GDS4065", "_init cannot be static", function.span);
     if (function.name == "_static_init" && !function.is_static)
         diagnostics_.error("GDS4123", "_static_init must be declared static", function.span);
-    if (function.name == "_static_init" && !function.parameters.empty())
+    if (function.name == "_static_init" &&
+        (!function.parameters.empty() || function.rest_parameter))
         diagnostics_.error("GDS4124", "_static_init cannot declare parameters", function.span);
     if (function.name == "_init" && function.return_type && *function.return_type != "void") {
         diagnostics_.error("GDS4066", "_init cannot declare a non-void return type", function.span);
@@ -4077,13 +4113,15 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
             require_expression_assignable(type, *parameter.default_value, *analyzed_default,
                                           parameter.span, "invalid default value");
     }
+    if (function.rest_parameter)
+        analyze_rest_parameter(*function.rest_parameter, "function");
     const auto current_required = static_cast<std::size_t>(
         std::count_if(function.parameters.begin(), function.parameters.end(),
                       [](const auto& parameter) { return parameter.default_value == nullptr; }));
     const auto validate_override = [&](const std::string& owner, const Type& parent_return,
                                        const std::vector<Type>& parent_parameters,
                                        const std::size_t parent_required,
-                                       const bool parent_static) {
+                                       const bool parent_static, const bool parent_vararg) {
         if (function.is_static != parent_static) {
             diagnostics_.error("GDS4143",
                                owner + " override '" + function.name +
@@ -4091,14 +4129,18 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
                                function.span);
         }
         if (current_required > parent_required ||
-            function.parameters.size() < parent_parameters.size()) {
+            (!function.rest_parameter &&
+             (parent_vararg || function.parameters.size() < parent_parameters.size()))) {
             diagnostics_.error("GDS4102",
                                owner + " override '" + function.name + "' accepts " +
                                    std::to_string(current_required) + " to " +
-                                   std::to_string(function.parameters.size()) +
+                                   (function.rest_parameter
+                                        ? std::string{"unbounded"}
+                                        : std::to_string(function.parameters.size())) +
                                    " argument(s), which does not include the parent range " +
                                    std::to_string(parent_required) + " to " +
-                                   std::to_string(parent_parameters.size()),
+                                   (parent_vararg ? std::string{"unbounded"}
+                                                  : std::to_string(parent_parameters.size())),
                                function.span);
         }
         if (function.return_type &&
@@ -4134,7 +4176,8 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
     if (inherited_script_method) {
         validate_override(
             "script", inherited_script_method->type, inherited_script_method->parameters,
-            inherited_script_method->required_arguments, inherited_script_method->is_static);
+            inherited_script_method->required_arguments, inherited_script_method->is_static,
+            inherited_script_method->is_vararg);
     } else if (virtual_method) {
         std::vector<Type> api_parameters;
         api_parameters.reserve(virtual_method->maximum_arguments);
@@ -4159,7 +4202,8 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
                                     ? void_type
                                     : type_from_godot_api(virtual_method->return_type);
         validate_override("Godot virtual", api_return, api_parameters,
-                          virtual_method->required_arguments, virtual_method->is_static);
+                          virtual_method->required_arguments, virtual_method->is_static,
+                          virtual_method->is_vararg);
     }
     const auto flow = valid_abstract_contract ? FlowResult{} : analyze_statements(function.body);
     if (current_callable_suspends_)
@@ -4230,6 +4274,8 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
             require_expression_assignable(type, *parameter.default_value, *analyzed_default,
                                           parameter.span, "invalid lambda default value");
     }
+    if (expression.rest_parameter)
+        analyze_rest_parameter(*expression.rest_parameter, "lambda");
     const auto flow = analyze_statements(expression.body);
     if (current_callable_suspends_)
         model_.coroutine_lambdas_.insert(&expression);
@@ -5204,6 +5250,7 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
                                   ? type_from_name(*function.return_type, function.span)
                                   : variant_type;
                 member.is_static = function.is_static;
+                member.is_vararg = function.rest_parameter.has_value();
                 member.is_abstract = function.is_abstract;
                 member.has_explicit_type =
                     function.name == "_init" || function.return_type.has_value();

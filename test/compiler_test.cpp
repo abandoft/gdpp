@@ -29,6 +29,83 @@ TEST_CASE("compiler generates bindable GDExtension C++") {
     REQUIRE(result.unit.source.find("ADD_SIGNAL") != std::string::npos);
 }
 
+TEST_CASE("semantic analysis accepts Godot rest parameters and unbounded calls") {
+    gdpp::CompileOptions options;
+    options.target_version = gdpp::GodotVersion::v4_6;
+    const auto result = gdpp::Compiler{}.compile(
+        "rest_semantics.gd",
+        "func collect(required: int, optional: int = 2, ...values: Array) -> int:\n"
+        "    return required + optional + values.size()\n"
+        "static func static_collect(...values) -> int:\n"
+        "    return values.size()\n"
+        "func invoke() -> int:\n"
+        "    var local := func(prefix: int, ...parts: Array) -> int: return prefix + parts.size()\n"
+        "    return collect(1, 2, 3, 4) + static_collect(1, 2, 3) + local.call(1, 2, 3)\n",
+        options);
+
+    REQUIRE(result.success);
+}
+
+TEST_CASE("semantic analysis enforces rest parameter type and target contracts") {
+    gdpp::CompileOptions modern;
+    modern.target_version = gdpp::GodotVersion::v4_6;
+    const auto wrong_type = gdpp::Compiler{}.compile(
+        "wrong_rest_type.gd", "func collect(...values: Dictionary):\n    pass\n", modern);
+    const auto typed_array = gdpp::Compiler{}.compile(
+        "typed_rest.gd", "func collect(...values: Array[int]):\n    pass\n", modern);
+    const auto variant_array = gdpp::Compiler{}.compile(
+        "variant_rest.gd", "func collect(...values: Array[Variant]):\n    pass\n", modern);
+
+    gdpp::CompileOptions legacy;
+    legacy.target_version = gdpp::GodotVersion::v4_4;
+    const auto legacy_target = gdpp::Compiler{}.compile(
+        "legacy_rest.gd", "func collect(...values):\n    pass\n", legacy);
+    const auto static_initializer = gdpp::Compiler{}.compile(
+        "static_init_rest.gd", "static func _static_init(...values):\n    pass\n", modern);
+
+    const auto has_code = [](const auto& result, const std::string& code) {
+        return std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                           [&](const auto& diagnostic) { return diagnostic.code == code; });
+    };
+    REQUIRE(!wrong_type.success);
+    REQUIRE(!typed_array.success);
+    REQUIRE(variant_array.success);
+    REQUIRE(!legacy_target.success);
+    REQUIRE(!static_initializer.success);
+    REQUIRE(has_code(wrong_type, "GDS4162"));
+    REQUIRE(has_code(typed_array, "GDS4163"));
+    REQUIRE(has_code(legacy_target, "GDS4161"));
+    REQUIRE(has_code(static_initializer, "GDS4124"));
+}
+
+TEST_CASE("semantic overrides preserve unbounded callable ranges") {
+    gdpp::CompileOptions options;
+    options.target_version = gdpp::GodotVersion::v4_6;
+    const auto invalid = gdpp::Compiler{}.compile(
+        "invalid_vararg_override.gd",
+        "class Base:\n"
+        "    func collect(value, ...extras):\n"
+        "        pass\n"
+        "class Derived extends Base:\n"
+        "    func collect(value):\n"
+        "        pass\n",
+        options);
+    const auto valid = gdpp::Compiler{}.compile(
+        "valid_vararg_override.gd",
+        "class Base:\n"
+        "    func collect(value):\n"
+        "        pass\n"
+        "class Derived extends Base:\n"
+        "    func collect(value, ...extras):\n"
+        "        pass\n",
+        options);
+
+    REQUIRE(!invalid.success);
+    REQUIRE(valid.success);
+    REQUIRE(std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS4102"; }));
+}
+
 TEST_CASE("compiler emits recursive structural match tests with exact and rest cardinality") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile(
