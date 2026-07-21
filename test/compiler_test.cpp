@@ -46,6 +46,34 @@ TEST_CASE("semantic analysis accepts Godot rest parameters and unbounded calls")
     REQUIRE(result.success);
 }
 
+TEST_CASE("compiler lowers instance and static rest methods through the vararg ABI") {
+    gdpp::CompileOptions options;
+    options.target_version = gdpp::GodotVersion::v4_4;
+    const auto result = gdpp::Compiler{}.compile(
+        "rest_methods.gd",
+        "func collect(required: int, optional: int = 2, ...values: Array) -> int:\n"
+        "    return required + optional + values.size()\n"
+        "static func join(...values) -> int:\n"
+        "    return values.size()\n"
+        "func invoke() -> int:\n"
+        "    return collect(1, 2, 3, 4) + join(5, 6, 7)\n",
+        options);
+
+    REQUIRE(result.success);
+    REQUIRE(
+        result.unit.header.find("godot::Variant _gdpp_argument_optional, godot::Array values") !=
+        std::string::npos);
+    REQUIRE(result.unit.header.find("_gdpp_vararg_call_collect") != std::string::npos);
+    REQUIRE(result.unit.header.find("_gdpp_vararg_call_join") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::bind_vararg_method(") != std::string::npos);
+    REQUIRE(result.unit.source.find("method.flags |= GDEXTENSION_METHOD_FLAG_STATIC") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_rest_arguments.resize(") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_call_rest_") != std::string::npos);
+}
+
 TEST_CASE("semantic analysis enforces rest parameter type contracts across targets") {
     gdpp::CompileOptions modern;
     modern.target_version = gdpp::GodotVersion::v4_6;
