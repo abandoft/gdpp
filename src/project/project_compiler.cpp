@@ -1054,6 +1054,7 @@ std::string generated_cmake(const ProjectCompileOptions& options,
         << "endif()\n"
         << "target_compile_options(gdpp_project PRIVATE\n"
         << "  $<$<CXX_COMPILER_ID:MSVC>:/utf-8>\n"
+        << "  $<$<CXX_COMPILER_ID:MSVC>:/bigobj>\n"
         << "  $<$<CXX_COMPILER_ID:MSVC>:/permissive->\n"
         << "  $<$<CXX_COMPILER_ID:MSVC>:/Zc:__cplusplus>\n"
         << "  $<$<CXX_COMPILER_ID:MSVC>:/EHsc>\n"
@@ -2423,8 +2424,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                     self(self, argument_type);
                     arguments.push_back(std::move(argument_type));
                 }
-                std::string name = container->kind == ContainerTypeKind::array ? "Array["
-                                                                               : "Dictionary[";
+                std::string name =
+                    container->kind == ContainerTypeKind::array ? "Array[" : "Dictionary[";
                 for (std::size_t index = 0; index < arguments.size(); ++index) {
                     if (index != 0)
                         name += ", ";
@@ -2437,8 +2438,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             if (type.kind != TypeKind::object && type.kind != TypeKind::enumeration)
                 return;
 
-            if (const auto exact_alias = aliases.find(type.name);
-                exact_alias != aliases.end()) {
+            if (const auto exact_alias = aliases.find(type.name); exact_alias != aliases.end()) {
                 type = {TypeKind::object, native_script_names[exact_alias->second]};
                 return;
             }
@@ -2459,26 +2459,25 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             }
 
             const auto& owner = inputs[owner_index];
-            const auto root_enum = std::find_if(
-                owner.enums.begin(), owner.enums.end(),
-                [&](const ScriptEnumSymbol& enumeration) {
-                    return enumeration.name == member_name;
-                });
+            const auto root_enum = std::find_if(owner.enums.begin(), owner.enums.end(),
+                                                [&](const ScriptEnumSymbol& enumeration) {
+                                                    return enumeration.name == member_name;
+                                                });
             if (root_enum != owner.enums.end()) {
                 type = {TypeKind::enumeration,
                         native_script_names[owner_index] + "::" + root_enum->name};
                 return;
             }
             if (const auto* inner = [&]() -> const ScriptInnerClassSymbol* {
-                    const auto found = std::find_if(
-                        owner.inner_classes.begin(), owner.inner_classes.end(),
-                        [&](const ScriptInnerClassSymbol& candidate) {
-                            return candidate.name == member_name;
-                        });
+                    const auto found =
+                        std::find_if(owner.inner_classes.begin(), owner.inner_classes.end(),
+                                     [&](const ScriptInnerClassSymbol& candidate) {
+                                         return candidate.name == member_name;
+                                     });
                     return found == owner.inner_classes.end() ? nullptr : &*found;
                 }()) {
-                type = {TypeKind::object, native_script_names[owner_index] + "__" +
-                                                  native_inner_suffix(inner->name)};
+                type = {TypeKind::object,
+                        native_script_names[owner_index] + "__" + native_inner_suffix(inner->name)};
                 return;
             }
             const auto enum_separator = member_name.rfind('.');
@@ -2486,20 +2485,19 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                 return;
             const auto inner_name = member_name.substr(0, enum_separator);
             const auto enum_name = member_name.substr(enum_separator + 1);
-            const auto inner = std::find_if(
-                owner.inner_classes.begin(), owner.inner_classes.end(),
-                [&](const ScriptInnerClassSymbol& candidate) {
-                    return candidate.name == inner_name;
-                });
+            const auto inner = std::find_if(owner.inner_classes.begin(), owner.inner_classes.end(),
+                                            [&](const ScriptInnerClassSymbol& candidate) {
+                                                return candidate.name == inner_name;
+                                            });
             if (inner == owner.inner_classes.end())
                 return;
             const auto enumeration = std::find_if(
                 inner->enums.begin(), inner->enums.end(),
                 [&](const ScriptEnumSymbol& candidate) { return candidate.name == enum_name; });
             if (enumeration != inner->enums.end()) {
-                type = {TypeKind::enumeration,
-                        native_script_names[owner_index] + "__" +
-                            native_inner_suffix(inner->name) + "::" + enumeration->name};
+                type = {TypeKind::enumeration, native_script_names[owner_index] + "__" +
+                                                   native_inner_suffix(inner->name) +
+                                                   "::" + enumeration->name};
             }
         };
         for (auto& member : input.members) {
@@ -2665,9 +2663,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     finalized_native_script_names.reserve(inputs.size());
     for (auto& input : inputs) {
         input.public_abi_hash = append_public_abi(input);
-        finalized_native_script_names.push_back(
-            "GDPPNative_" + input.native_class_stem + "_" +
-            input.public_abi_hash.substr(0, 16));
+        finalized_native_script_names.push_back("GDPPNative_" + input.native_class_stem + "_" +
+                                                input.public_abi_hash.substr(0, 16));
     }
     const auto remap_input_type = [](Type& type, const std::string& previous,
                                      const std::string& replacement) {
@@ -2696,9 +2693,9 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                 }
             }
         }
-        script_symbols.update_class_identity(
-            inputs[identity].relative, replacement,
-            to_snake_case(inputs[identity].native_class_stem) + ".gd.hpp");
+        script_symbols.update_class_identity(inputs[identity].relative, replacement,
+                                             to_snake_case(inputs[identity].native_class_stem) +
+                                                 ".gd.hpp");
     }
 
     for (auto& input : inputs) {

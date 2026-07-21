@@ -108,6 +108,8 @@ TEST_CASE("project compiler incrementally generates a unified native extension")
     REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
                 .find("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>") != std::string::npos);
     REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
+                .find("$<$<CXX_COMPILER_ID:MSVC>:/bigobj>") != std::string::npos);
+    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
                 .find("$<$<CXX_COMPILER_ID:MSVC>:/permissive->") != std::string::npos);
     REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
                 .find("set(GDPP_MSVC_COMPILE_JOBS 4 CACHE STRING") != std::string::npos);
