@@ -548,8 +548,10 @@ if(GDPP_BUILD_TESTS)
             -T "${CMAKE_GENERATOR_TOOLSET}")
     endif()
     if(CMAKE_OSX_ARCHITECTURES)
+        string(REPLACE ";" "\\;" GDPP_ATTACHED_TEST_OSX_ARCHITECTURES
+            "${CMAKE_OSX_ARCHITECTURES}")
         list(APPEND GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
-            "-DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}")
+            "-DCMAKE_OSX_ARCHITECTURES=${GDPP_ATTACHED_TEST_OSX_ARCHITECTURES}")
     endif()
     if(CMAKE_OSX_DEPLOYMENT_TARGET)
         list(APPEND GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
@@ -665,6 +667,7 @@ if(GDPP_BUILD_TESTS)
                 "${GDPP_ATTACHED_TEST_ROOT}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory
                 "${GDPP_ATTACHED_TEST_ROOT}/.godot"
+                "${GDPP_ATTACHED_TEST_ROOT}/export"
                 "${GDPP_ATTACHED_TEST_ROOT}/addons/vendor/binary"
                 "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/binary"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -680,7 +683,7 @@ if(GDPP_BUILD_TESTS)
                 "${GDPP_ATTACHED_TEST_RELEASE_LIBRARY}"
                 "${GDPP_ATTACHED_TEST_ROOT}/addons/vendor/binary"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${GDPP_ADDON_DIRECTORY}/gdpp.gdextension"
+                "${GDPP_TEST_COMPILER_DESCRIPTOR}"
                 "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/gdpp.gdextension"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${GDPP_ADDON_DIRECTORY}/plugin.cfg"
