@@ -257,6 +257,67 @@ set_target_properties(
         ARCHIVE_OUTPUT_DIRECTORY "${GDPP_EXTENSION_OUTPUT}"
 )
 
+if(GDPP_BUILD_TESTS)
+    set(GDPP_ATTACHED_TEST_ROOT "${CMAKE_BINARY_DIR}/attached-extension-project")
+    set(GDPP_ATTACHED_TEST_VENDOR_OUTPUT "${CMAKE_BINARY_DIR}/attached-extension-vendor")
+    set(GDPP_ATTACHED_TEST_GENERATED "${CMAKE_BINARY_DIR}/attached-extension-generated")
+    add_library(
+        gdpp_test_vendor
+        SHARED
+        "${CMAKE_SOURCE_DIR}/test/attached_extension/vendor_base.cpp"
+        "${CMAKE_SOURCE_DIR}/test/attached_extension/register_types.cpp"
+    )
+    target_include_directories(
+        gdpp_test_vendor
+        PRIVATE "${CMAKE_SOURCE_DIR}/test/attached_extension"
+    )
+    target_link_libraries(gdpp_test_vendor PRIVATE godot::cpp)
+    target_compile_features(gdpp_test_vendor PRIVATE cxx_std_17)
+    set_target_properties(
+        gdpp_test_vendor
+        PROPERTIES
+            OUTPUT_NAME "gdpp_test_vendor.${GDPP_PLATFORM}.${GDPP_ARCH}"
+            LIBRARY_OUTPUT_DIRECTORY "${GDPP_ATTACHED_TEST_VENDOR_OUTPUT}"
+            RUNTIME_OUTPUT_DIRECTORY "${GDPP_ATTACHED_TEST_VENDOR_OUTPUT}"
+            ARCHIVE_OUTPUT_DIRECTORY "${GDPP_ATTACHED_TEST_VENDOR_OUTPUT}"
+            CXX_VISIBILITY_PRESET hidden
+            VISIBILITY_INLINES_HIDDEN YES
+    )
+    if(UNIX AND NOT APPLE)
+        target_link_options(gdpp_test_vendor PRIVATE "LINKER:--exclude-libs,ALL")
+        file(GENERATE
+            OUTPUT "${GDPP_ATTACHED_TEST_GENERATED}/vendor.exports.map"
+            CONTENT "{ global: gdpp_test_vendor_init; local: *; };\n"
+        )
+        target_link_options(gdpp_test_vendor PRIVATE
+            "LINKER:--version-script=${GDPP_ATTACHED_TEST_GENERATED}/vendor.exports.map")
+    elseif(APPLE)
+        file(GENERATE
+            OUTPUT "${GDPP_ATTACHED_TEST_GENERATED}/vendor.exports.macos"
+            CONTENT "_gdpp_test_vendor_init\n"
+        )
+        target_link_options(gdpp_test_vendor PRIVATE
+            "LINKER:-exported_symbols_list,${GDPP_ATTACHED_TEST_GENERATED}/vendor.exports.macos")
+    endif()
+    gdpp_set_project_warnings(gdpp_test_vendor)
+
+    if(APPLE AND GDPP_ARCH STREQUAL "universal")
+        string(CONCAT GDPP_ATTACHED_TEST_VENDOR_LIBRARIES
+            "macos.editor.arm64 = \"res://addons/vendor/binary/"
+            "$<TARGET_FILE_NAME:gdpp_test_vendor>\"\n"
+            "macos.editor.x86_64 = \"res://addons/vendor/binary/"
+            "$<TARGET_FILE_NAME:gdpp_test_vendor>\"")
+    else()
+        set(GDPP_ATTACHED_TEST_VENDOR_LIBRARIES
+            "${GDPP_PLATFORM}.editor.${GDPP_ARCH} = \"res://addons/vendor/binary/$<TARGET_FILE_NAME:gdpp_test_vendor>\"")
+    endif()
+    file(GENERATE
+        OUTPUT "${GDPP_ATTACHED_TEST_GENERATED}/vendor.gdextension"
+        CONTENT
+            "[configuration]\n\nentry_symbol = \"gdpp_test_vendor_init\"\ncompatibility_minimum = \"${GDPP_GODOT_API_VERSION}\"\nreloadable = false\n\n[libraries]\n\n${GDPP_ATTACHED_TEST_VENDOR_LIBRARIES}\n"
+    )
+endif()
+
 # Integration tests must load the compiler produced by the current build, never a stale
 # multi-platform package artifact that happens to remain in the example project. Include a
 # build-tree identity because several architecture/configuration trees may coexist and CMake
@@ -530,6 +591,41 @@ add_custom_target(
     VERBATIM
 )
 
+if(GDPP_BUILD_TESTS)
+    add_custom_target(
+        gdpp_attached_extension_fixture ALL
+        COMMAND "${CMAKE_COMMAND}" -E remove_directory "${GDPP_ATTACHED_TEST_ROOT}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                "${CMAKE_SOURCE_DIR}/test/attached_extension/project"
+                "${GDPP_ATTACHED_TEST_ROOT}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+                "${GDPP_ATTACHED_TEST_ROOT}/.godot"
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/vendor/binary"
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/binary"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ATTACHED_TEST_ROOT}/extension_list.compiler.cfg"
+                "${GDPP_ATTACHED_TEST_ROOT}/.godot/extension_list.cfg"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ATTACHED_TEST_GENERATED}/vendor.gdextension"
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/vendor/vendor.gdextension"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:gdpp_test_vendor>"
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/vendor/binary/$<TARGET_FILE_NAME:gdpp_test_vendor>"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ADDON_DIRECTORY}/gdpp.gdextension"
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/gdpp.gdextension"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:gdpp_godot_plugin>"
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/binary/$<TARGET_FILE_NAME:gdpp_godot_plugin>"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                "${GDPP_ADDON_DIRECTORY}/sdk"
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/sdk"
+        DEPENDS gdpp_addon gdpp_test_vendor
+        COMMENT "Preparing independent GDExtension attachment integration project"
+        VERBATIM
+    )
+endif()
+
 configure_file(
     "${CMAKE_SOURCE_DIR}/test/godot/smoke.gd"
     "${GDPP_PROJECT_BUILD_ROOT}/service_smoke.gd"
@@ -686,6 +782,30 @@ if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
             DEPENDS ${GDPP_DIRECT_EXPORT_DEPENDENCY}
             FIXTURES_REQUIRED gdpp_clean_extension_registry
             TIMEOUT 600
+    )
+    add_test(
+        NAME gdpp.godot.attached_extension_compile
+        COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --path "${GDPP_ATTACHED_TEST_ROOT}"
+                --script addons/gdpp/build/compile_attached.gd
+    )
+    set_tests_properties(
+        gdpp.godot.attached_extension_compile
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "GDPP_ATTACHED_COMPILE_OK"
+            FIXTURES_SETUP gdpp_attached_extension_native
+            TIMEOUT 600
+    )
+    add_test(
+        NAME gdpp.godot.attached_extension_runtime
+        COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --path "${GDPP_ATTACHED_TEST_ROOT}"
+                --script addons/gdpp/build/runtime_attached.gd
+    )
+    set_tests_properties(
+        gdpp.godot.attached_extension_runtime
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "GDPP_ATTACHED_RUNTIME_OK"
+            FIXTURES_REQUIRED gdpp_attached_extension_native
+            TIMEOUT 120
     )
 endif()
 
