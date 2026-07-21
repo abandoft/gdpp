@@ -44,15 +44,46 @@ foreach(GDPP_TEST_PACKAGER IN ITEMS build_android_sdk.py build_web_sdk.py build_
     endforeach()
 endforeach()
 
-# Both independent CMake consumers of the packaged Windows SDK must inherit the parent's static
-# MSVC CRT contract: the godot-cpp profile builders and the release vendor GDExtension fixture.
+# Both independent CMake consumers of packaged godot-cpp archives must inherit one centralized
+# parent toolchain contract: the SDK profile builders and the release vendor GDExtension fixture.
 file(READ "${GDPP_TEST_SOURCE_DIR}/cmake/GodotPlugin.cmake" GDPP_TEST_PLUGIN_CMAKE)
+foreach(GDPP_TEST_CONTRACT_FIELD IN ITEMS
+        CMAKE_CXX_COMPILER
+        CMAKE_TOOLCHAIN_FILE
+        CMAKE_SYSROOT
+        CMAKE_CXX_COMPILER_TARGET
+        CMAKE_OSX_DEPLOYMENT_TARGET
+        CMAKE_OSX_SYSROOT
+        CMAKE_MSVC_RUNTIME_LIBRARY
+        CMAKE_RC_COMPILER
+        CMAKE_MT)
+    string(FIND "${GDPP_TEST_PLUGIN_CMAKE}"
+        "            ${GDPP_TEST_CONTRACT_FIELD}"
+        GDPP_TEST_CONTRACT_FIELD_OFFSET)
+    if(GDPP_TEST_CONTRACT_FIELD_OFFSET EQUAL -1)
+        message(FATAL_ERROR
+            "Central native CMake contract omits ${GDPP_TEST_CONTRACT_FIELD}")
+    endif()
+endforeach()
+
 string(REGEX MATCHALL
-    "-DCMAKE_MSVC_RUNTIME_LIBRARY=\\$\\{CMAKE_MSVC_RUNTIME_LIBRARY\\}"
-    GDPP_TEST_MSVC_RUNTIME_PROPAGATIONS
+    "\\$\\{GDPP_NATIVE_CMAKE_CONTRACT_ARGS\\}"
+    GDPP_TEST_NATIVE_CONTRACT_CONSUMERS
     "${GDPP_TEST_PLUGIN_CMAKE}")
-list(LENGTH GDPP_TEST_MSVC_RUNTIME_PROPAGATIONS GDPP_TEST_MSVC_RUNTIME_PROPAGATION_COUNT)
-if(GDPP_TEST_MSVC_RUNTIME_PROPAGATION_COUNT LESS 2)
+list(LENGTH GDPP_TEST_NATIVE_CONTRACT_CONSUMERS GDPP_TEST_NATIVE_CONTRACT_CONSUMER_COUNT)
+if(NOT GDPP_TEST_NATIVE_CONTRACT_CONSUMER_COUNT EQUAL 2)
     message(FATAL_ERROR
-        "Independent target SDK consumers do not preserve the MSVC CRT contract")
+        "Expected SDK binding and vendor fixture to share the native CMake contract")
 endif()
+
+foreach(GDPP_TEST_GENERATOR_FIELD IN ITEMS CMAKE_GENERATOR_PLATFORM CMAKE_GENERATOR_TOOLSET)
+    string(REGEX MATCHALL
+        "${GDPP_TEST_GENERATOR_FIELD}"
+        GDPP_TEST_GENERATOR_FIELD_MATCHES
+        "${GDPP_TEST_PLUGIN_CMAKE}")
+    list(LENGTH GDPP_TEST_GENERATOR_FIELD_MATCHES GDPP_TEST_GENERATOR_FIELD_COUNT)
+    if(GDPP_TEST_GENERATOR_FIELD_COUNT LESS 2)
+        message(FATAL_ERROR
+            "Nested native builds do not preserve ${GDPP_TEST_GENERATOR_FIELD}")
+    endif()
+endforeach()

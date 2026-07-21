@@ -13,6 +13,33 @@ add_subdirectory(
 )
 
 include(ExternalProject)
+
+# Every nested CMake build consumes a precompiled godot-cpp archive and therefore belongs to the
+# same native ABI domain as the parent. Keep the toolchain-bearing cache variables in one list so
+# SDK profile builds and independent provider fixtures cannot silently drift apart.
+function(gdpp_collect_native_cmake_contract output_variable)
+    set(contract_arguments)
+    foreach(contract_variable IN ITEMS
+            CMAKE_CXX_COMPILER
+            CMAKE_TOOLCHAIN_FILE
+            CMAKE_SYSROOT
+            CMAKE_CXX_COMPILER_TARGET
+            CMAKE_CXX_COMPILER_EXTERNAL_TOOLCHAIN
+            CMAKE_OSX_DEPLOYMENT_TARGET
+            CMAKE_OSX_SYSROOT
+            CMAKE_MSVC_RUNTIME_LIBRARY
+            CMAKE_RC_COMPILER
+            CMAKE_MT)
+        if(DEFINED ${contract_variable} AND NOT "${${contract_variable}}" STREQUAL "")
+            string(REPLACE ";" "\\;" contract_value "${${contract_variable}}")
+            list(APPEND contract_arguments "-D${contract_variable}=${contract_value}")
+        endif()
+    endforeach()
+    set(${output_variable} "${contract_arguments}" PARENT_SCOPE)
+endfunction()
+
+gdpp_collect_native_cmake_contract(GDPP_NATIVE_CMAKE_CONTRACT_ARGS)
+
 function(gdpp_add_sdk_binding target_name api_version godot_target output_variable)
     set(build_directory "${CMAKE_BINARY_DIR}/sdk/${target_name}")
 
@@ -30,49 +57,37 @@ function(gdpp_add_sdk_binding target_name api_version godot_target output_variab
     endif()
     set(configure_arguments
         -DCMAKE_BUILD_TYPE=${binding_build_type}
-        -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
         -DGODOTCPP_API_VERSION=${api_version}
         -DGODOTCPP_TARGET=${godot_target}
         -DGODOTCPP_ENABLE_TESTING=OFF
         -DGODOTCPP_SYSTEM_HEADERS=ON
+        ${GDPP_NATIVE_CMAKE_CONTRACT_ARGS}
     )
     if(CMAKE_OSX_ARCHITECTURES)
         string(REPLACE ";" "|" escaped_osx_architectures "${CMAKE_OSX_ARCHITECTURES}")
         list(APPEND configure_arguments
             "-DCMAKE_OSX_ARCHITECTURES=${escaped_osx_architectures}")
     endif()
-    if(CMAKE_OSX_DEPLOYMENT_TARGET)
-        list(APPEND configure_arguments
-            "-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
-    endif()
     if(MSVC)
         list(APPEND configure_arguments
-            "-DCMAKE_CXX_FLAGS=/D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00"
-            "-DCMAKE_MSVC_RUNTIME_LIBRARY=${CMAKE_MSVC_RUNTIME_LIBRARY}")
-        # ExternalProject starts a fresh CMake configure and cannot inherit tool paths cached by
-        # the parent.  Hosted toolchains normally expose rc.exe and mt.exe through PATH, but a
-        # standalone Visual Studio/Windows SDK installation may only be discoverable by the
-        # outer configure.  Preserve the exact resource and manifest tools so every packaged SDK
-        # profile uses the same complete MSVC toolchain contract.
-        if(CMAKE_RC_COMPILER)
-            list(APPEND configure_arguments
-                "-DCMAKE_RC_COMPILER=${CMAKE_RC_COMPILER}")
-        endif()
-        if(CMAKE_MT)
-            list(APPEND configure_arguments "-DCMAKE_MT=${CMAKE_MT}")
-        endif()
+            "-DCMAKE_CXX_FLAGS=/D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00")
     elseif(WIN32)
         list(APPEND configure_arguments
             "-DCMAKE_CXX_FLAGS=-D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00")
     endif()
-    if(CMAKE_TOOLCHAIN_FILE)
-        list(APPEND configure_arguments -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE})
+    set(generator_arguments)
+    if(CMAKE_GENERATOR_PLATFORM)
+        list(APPEND generator_arguments CMAKE_GENERATOR_PLATFORM "${CMAKE_GENERATOR_PLATFORM}")
+    endif()
+    if(CMAKE_GENERATOR_TOOLSET)
+        list(APPEND generator_arguments CMAKE_GENERATOR_TOOLSET "${CMAKE_GENERATOR_TOOLSET}")
     endif()
     ExternalProject_Add(
         ${target_name}
         SOURCE_DIR "${CMAKE_SOURCE_DIR}/third/godot-cpp"
         BINARY_DIR "${build_directory}"
         CMAKE_GENERATOR "${CMAKE_GENERATOR}"
+        ${generator_arguments}
         LIST_SEPARATOR "|"
         CMAKE_ARGS ${configure_arguments}
         BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR> --target godot-cpp --parallel
@@ -544,7 +559,7 @@ if(GDPP_BUILD_TESTS)
         -B "${GDPP_ATTACHED_TEST_RELEASE_BUILD}"
         -G "${CMAKE_GENERATOR}"
         -DCMAKE_BUILD_TYPE=Release
-        -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+        ${GDPP_NATIVE_CMAKE_CONTRACT_ARGS}
         -DGDPP_SDK_DIR=${GDPP_ATTACHED_TEST_SDK}
         -DGDPP_VENDOR_SOURCE_DIR=${CMAKE_SOURCE_DIR}/test/attached_extension
         -DGDPP_OUTPUT_DIR=${GDPP_ATTACHED_TEST_VENDOR_OUTPUT}
@@ -559,21 +574,11 @@ if(GDPP_BUILD_TESTS)
         list(APPEND GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
             -T "${CMAKE_GENERATOR_TOOLSET}")
     endif()
-    if(MSVC)
-        # This is an independent SDK consumer, so it cannot inherit the parent cache. Match the
-        # packaged godot-cpp CRT exactly or MSVC rejects the release DLL with LNK2038.
-        list(APPEND GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
-            "-DCMAKE_MSVC_RUNTIME_LIBRARY=${CMAKE_MSVC_RUNTIME_LIBRARY}")
-    endif()
     if(CMAKE_OSX_ARCHITECTURES)
         string(REPLACE ";" "\\;" GDPP_ATTACHED_TEST_OSX_ARCHITECTURES
             "${CMAKE_OSX_ARCHITECTURES}")
         list(APPEND GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
             "-DCMAKE_OSX_ARCHITECTURES=${GDPP_ATTACHED_TEST_OSX_ARCHITECTURES}")
-    endif()
-    if(CMAKE_OSX_DEPLOYMENT_TARGET)
-        list(APPEND GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
-            "-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
     endif()
     add_custom_target(
         gdpp_test_vendor_release
