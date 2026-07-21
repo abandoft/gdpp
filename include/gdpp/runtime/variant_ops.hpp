@@ -1,6 +1,7 @@
 #pragma once
 
 #include <godot_cpp/classes/class_db_singleton.hpp>
+#include <godot_cpp/core/object.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/color.hpp>
@@ -142,6 +143,12 @@ using CallableContinuation = std::function<godot::Variant(const godot::Array&)>;
 [[nodiscard]] godot::Callable make_callable(godot::Object* owner, std::size_t required_arguments,
                                             std::size_t positional_arguments, bool is_vararg,
                                             CallableContinuation continuation);
+
+// godot-cpp exposes instance-only vararg method binding. Generated scripts also require static
+// variadic methods and one ABI for attached ScriptExtension behavior classes, so register the raw
+// GDExtension call thunk while retaining full MethodInfo reflection and default arguments.
+void bind_vararg_method(const godot::StringName& class_name, const godot::MethodInfo& method,
+                        GDExtensionClassMethodCall call, bool has_return_value);
 
 // Local lambdas remain ordinary Godot Callables when they escape, but a call made while the
 // generated C++ retains the concrete adapter type can invoke the closure directly. This removes

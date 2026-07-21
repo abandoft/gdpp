@@ -691,6 +691,66 @@ godot::Callable make_callable(godot::Object* owner, std::size_t required_argumen
                                                  is_vararg, std::move(continuation)))};
 }
 
+void bind_vararg_method(const godot::StringName& class_name, const godot::MethodInfo& method,
+                        const GDExtensionClassMethodCall call, const bool has_return_value) {
+    if (class_name.is_empty() || method.name.is_empty() || !call) {
+        godot::UtilityFunctions::push_error("GDPP: invalid variadic method registration");
+        return;
+    }
+
+    godot::LocalVector<godot::PropertyInfo> properties;
+    properties.reserve(method.arguments.size() + 1);
+    properties.push_back(method.return_val);
+    for (const auto& argument : method.arguments)
+        properties.push_back(argument);
+
+    godot::LocalVector<GDExtensionPropertyInfo> extension_properties;
+    extension_properties.reserve(properties.size());
+    for (const auto& property : properties) {
+        extension_properties.push_back({
+            static_cast<GDExtensionVariantType>(property.type),
+            property.name._native_ptr(),
+            property.class_name._native_ptr(),
+            static_cast<std::uint32_t>(property.hint),
+            property.hint_string._native_ptr(),
+            property.usage,
+        });
+    }
+
+    godot::LocalVector<GDExtensionClassMethodArgumentMetadata> metadata;
+    metadata.resize(properties.size());
+    metadata[0] = method.return_val_metadata;
+    for (std::uint32_t index = 0; index < method.arguments.size(); ++index) {
+        metadata[index + 1] = index < method.arguments_metadata.size()
+                                  ? method.arguments_metadata[index]
+                                  : GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE;
+    }
+
+    godot::LocalVector<GDExtensionVariantPtr> defaults;
+    defaults.reserve(method.default_arguments.size());
+    for (const auto& value : method.default_arguments)
+        defaults.push_back(const_cast<GDExtensionVariantPtr>(value._native_ptr()));
+
+    auto flags = method.flags | GDEXTENSION_METHOD_FLAG_VARARG;
+    const GDExtensionClassMethodInfo extension_method{
+        method.name._native_ptr(),
+        nullptr,
+        call,
+        nullptr,
+        flags,
+        static_cast<GDExtensionBool>(has_return_value),
+        extension_properties.ptr(),
+        metadata[0],
+        static_cast<std::uint32_t>(method.arguments.size()),
+        method.arguments.is_empty() ? nullptr : extension_properties.ptr() + 1,
+        method.arguments.is_empty() ? nullptr : metadata.ptr() + 1,
+        static_cast<std::uint32_t>(method.default_arguments.size()),
+        defaults.is_empty() ? nullptr : defaults.ptr(),
+    };
+    godot::gdextension_interface::classdb_register_extension_class_method(
+        godot::gdextension_interface::library, class_name._native_ptr(), &extension_method);
+}
+
 godot::Variant call_dynamic_impl(godot::Variant& target, const godot::StringName& method,
                                  const godot::Variant** arguments, std::size_t argument_count) {
     static const godot::StringName get_script_method{"get_script"};
