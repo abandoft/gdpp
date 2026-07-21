@@ -130,7 +130,12 @@ if(GDPP_SERIALIZE_SDK_BINDING_BUILDS)
     endforeach()
 endif()
 
-add_library(gdpp_runtime STATIC "${CMAKE_SOURCE_DIR}/src/runtime/variant_ops.cpp")
+add_library(gdpp_runtime STATIC
+    "${CMAKE_SOURCE_DIR}/src/runtime/variant_ops.cpp"
+    "${CMAKE_SOURCE_DIR}/src/runtime/attached_script_registry.cpp"
+    "${CMAKE_SOURCE_DIR}/src/runtime/attached_script_instance.cpp"
+    "${CMAKE_SOURCE_DIR}/src/runtime/attached_script_language.cpp"
+)
 add_library(gdpp::runtime ALIAS gdpp_runtime)
 target_include_directories(gdpp_runtime PUBLIC "${CMAKE_SOURCE_DIR}/include")
 target_link_libraries(gdpp_runtime PUBLIC godot::cpp)

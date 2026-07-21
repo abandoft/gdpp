@@ -107,7 +107,7 @@ void destroy_property_infos(const GDExtensionPropertyInfo* values, std::uint32_t
         return;
     for (std::uint32_t index = 0; index < count; ++index)
         destroy_property_info(values[index]);
-    memdelete_arr(values);
+    godot::memdelete_arr(values);
 }
 
 GDExtensionMethodInfo copy_method_info(const godot::MethodInfo& info) {
@@ -140,7 +140,7 @@ void destroy_method_info(const GDExtensionMethodInfo& info) {
     if (info.default_arguments) {
         for (std::uint32_t index = 0; index < info.default_argument_count; ++index)
             destroy_variant(info.default_arguments[index]);
-        memdelete_arr(info.default_arguments);
+        godot::memdelete_arr(info.default_arguments);
     }
 }
 
@@ -149,7 +149,7 @@ void destroy_method_infos(const GDExtensionMethodInfo* values, std::uint32_t cou
         return;
     for (std::uint32_t index = 0; index < count; ++index)
         destroy_method_info(values[index]);
-    memdelete_arr(values);
+    godot::memdelete_arr(values);
 }
 
 GDExtensionBool instance_set(AttachedScriptInstance* instance, const godot::StringName* name,
@@ -322,7 +322,7 @@ GDExtensionScriptLanguagePtr instance_language(AttachedScriptInstance*) {
     return language ? language->_owner : nullptr;
 }
 
-void instance_free(AttachedScriptInstance* instance) { memdelete(instance); }
+void instance_free(AttachedScriptInstance* instance) { godot::memdelete(instance); }
 
 const GDExtensionScriptInstanceInfo3& script_instance_info() {
     static const GDExtensionScriptInstanceInfo3 value{
@@ -378,7 +378,7 @@ void* AttachedCompiledScript::_instance_create(godot::Object* object) const {
     {
         std::lock_guard<std::mutex> lock{AttachedScriptInstance::instances_mutex()};
         if (!AttachedScriptInstance::instances().emplace(object, instance).second) {
-            memdelete(instance);
+            godot::memdelete(instance);
             return nullptr;
         }
     }
