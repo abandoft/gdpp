@@ -202,19 +202,36 @@ bool contains_await_syntax(const std::vector<ast::Statement>& statements) {
 
 struct ProjectEnumLookup {
     const ScriptClassSymbol* owner{nullptr};
+    const ScriptInnerClassSymbol* inner_owner{nullptr};
     const ScriptEnumSymbol* enumeration{nullptr};
+    std::string native_owner;
 };
 
 ProjectEnumLookup find_project_enum(const ScriptSymbolTable* symbols, const std::string& name) {
     if (!symbols)
         return {};
+    if (const auto separator = name.rfind("::"); separator != std::string::npos) {
+        const auto owner_name = name.substr(0, separator);
+        const auto enum_name = name.substr(separator + 2);
+        if (const auto* owner = symbols->find_native_class(owner_name))
+            return {owner, nullptr, symbols->find_enum(*owner, enum_name), owner_name};
+        if (const auto* inner = symbols->find_inner_native(owner_name)) {
+            const auto enumeration = std::find_if(
+                inner->enums.begin(), inner->enums.end(),
+                [&](const ScriptEnumSymbol& candidate) { return candidate.name == enum_name; });
+            return {symbols->owner_of(*inner), inner,
+                    enumeration == inner->enums.end() ? nullptr : &*enumeration, owner_name};
+        }
+        return {};
+    }
     const auto separator = name.find('.');
     if (separator == std::string::npos || name.find('.', separator + 1) != std::string::npos)
         return {};
     const auto* owner = symbols->find_global(name.substr(0, separator));
     if (!owner)
         return {};
-    return {owner, symbols->find_enum(*owner, name.substr(separator + 1))};
+    return {owner, nullptr, symbols->find_enum(*owner, name.substr(separator + 1)),
+            owner->native_class_name};
 }
 
 struct ExternalEnumLookup {
@@ -630,8 +647,11 @@ SemanticAnalyzer::find_inner_class(const std::string& name) const noexcept {
     }
     if (unique)
         return unique;
-    return script_symbols_ && current_script_ ? script_symbols_->find_inner(*current_script_, name)
-                                              : nullptr;
+    if (script_symbols_ && current_script_) {
+        if (const auto* current = script_symbols_->find_inner(*current_script_, name))
+            return current;
+    }
+    return script_symbols_ ? script_symbols_->find_inner_native(name) : nullptr;
 }
 
 const ScriptInnerClassSymbol*
@@ -663,9 +683,14 @@ SemanticAnalyzer::find_nested_inner_class(const ScriptInnerClassSymbol& owner,
             found != local_inner_classes_.end()) {
             return &found->second;
         }
-        if (script_symbols_ && current_script_) {
-            if (const auto* found = script_symbols_->find_inner(*current_script_, qualified))
-                return found;
+        if (script_symbols_) {
+            const auto* script_owner = script_symbols_->owner_of(*current);
+            if (!script_owner)
+                script_owner = current_script_;
+            if (script_owner) {
+                if (const auto* found = script_symbols_->find_inner(*script_owner, qualified))
+                    return found;
+            }
         }
         current = inner_base_of(*current);
     }
@@ -761,6 +786,35 @@ Type SemanticAnalyzer::declared_or_inferred(const std::optional<std::string>& an
 }
 
 Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) {
+    const auto parsed_type = type_from_annotation(name);
+    if (const auto container = describe_container_type(parsed_type)) {
+        std::vector<Type> arguments;
+        arguments.reserve(container->arguments.size());
+        for (const auto& argument : container->arguments) {
+            auto argument_type = type_from_name(argument, span);
+            if (argument_type.kind == TypeKind::void_type) {
+                diagnostics_.error("GDS4139", "typed container arguments cannot use the void type",
+                                   span);
+            }
+            if (is_explicitly_typed_container(argument_type)) {
+                diagnostics_.error(
+                    "GDS4138",
+                    "nested typed containers are not supported by Godot; use an untyped "
+                    "Array or Dictionary for the nested value",
+                    span);
+            }
+            arguments.push_back(std::move(argument_type));
+        }
+        std::string canonical = container->kind == ContainerTypeKind::array ? "Array["
+                                                                            : "Dictionary[";
+        for (std::size_t index = 0; index < arguments.size(); ++index) {
+            if (index != 0)
+                canonical += ", ";
+            canonical += arguments[index].name;
+        }
+        canonical += ']';
+        return {parsed_type.kind, std::move(canonical)};
+    }
     if (enum_types_.find(name) != enum_types_.end()) {
         if (current_inner_class_)
             return {TypeKind::enumeration, current_inner_class_->name + "." + name};
@@ -782,6 +836,42 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
         record_script_dependency(project_enum.owner);
         return {TypeKind::enumeration, name};
     }
+    if (const auto separator = name.find('.'); separator != std::string::npos) {
+        const auto alias = script_resource_aliases_.find(name.substr(0, separator));
+        if (alias != script_resource_aliases_.end()) {
+            const auto* owner = alias->second;
+            const auto member_name = name.substr(separator + 1);
+            record_script_dependency(owner);
+            if (const auto* inner = script_symbols_->find_inner(*owner, member_name))
+                return {TypeKind::object, inner->native_class_name};
+            if (const auto* enumeration = script_symbols_->find_enum(*owner, member_name)) {
+                return {TypeKind::enumeration,
+                        owner->native_class_name + "::" + enumeration->name};
+            }
+            if (const auto inner_separator = member_name.rfind('.');
+                inner_separator != std::string::npos) {
+                const auto* inner =
+                    script_symbols_->find_inner(*owner, member_name.substr(0, inner_separator));
+                if (inner) {
+                    const auto enum_name = member_name.substr(inner_separator + 1);
+                    const auto enumeration = std::find_if(
+                        inner->enums.begin(), inner->enums.end(),
+                        [&](const ScriptEnumSymbol& candidate) {
+                            return candidate.name == enum_name;
+                        });
+                    if (enumeration != inner->enums.end()) {
+                        return {TypeKind::enumeration,
+                                inner->native_class_name + "::" + enumeration->name};
+                    }
+                }
+            }
+            diagnostics_.error("GDS4059",
+                               "script resource alias '" + name.substr(0, separator) +
+                                   "' has no type '" + member_name + "'",
+                               span);
+            return unknown_type;
+        }
+    }
     if (current_script_ && name.find('.') == std::string::npos) {
         if (const auto* enumeration = script_symbols_->find_enum(*current_script_, name)) {
             return {TypeKind::enumeration, current_script_->script_name + "." + enumeration->name};
@@ -794,23 +884,7 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
         model_.referenced_extension_abis_.insert(external_enum.owner->provider_abi);
         return {TypeKind::enumeration, name};
     }
-    const auto type = type_from_annotation(name);
-    if (const auto container = describe_container_type(type)) {
-        for (const auto& argument : container->arguments) {
-            const auto argument_type = type_from_name(argument, span);
-            if (argument_type.kind == TypeKind::void_type) {
-                diagnostics_.error("GDS4139", "typed container arguments cannot use the void type",
-                                   span);
-            }
-            if (is_explicitly_typed_container(argument_type)) {
-                diagnostics_.error(
-                    "GDS4138",
-                    "nested typed containers are not supported by Godot; use an untyped "
-                    "Array or Dictionary for the nested value",
-                    span);
-            }
-        }
-    }
+    const auto type = parsed_type;
     const auto* project_type = script_symbols_ ? script_symbols_->find_global(name) : nullptr;
     const auto* external_type = script_symbols_ ? script_symbols_->find_external(name) : nullptr;
     if (external_type)
@@ -1484,6 +1558,15 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                                               expression.value(), "", "", result, 0,
                                                               0, false, true});
             }
+        } else if (const auto alias = script_resource_aliases_.find(expression.value());
+                   alias != script_resource_aliases_.end()) {
+            result = {TypeKind::script_resource, alias->second->path};
+            record_script_dependency(alias->second);
+            model_.api_resolutions_.emplace(
+                &expression,
+                ApiResolution{ApiResolutionKind::script_resource,
+                              alias->second->native_class_name, "", "", result, 0, 0, false,
+                              true});
         } else if (expression.value() == "PI" || expression.value() == "TAU" ||
                    expression.value() == "INF" || expression.value() == "NAN") {
             result = {TypeKind::floating, "float"};
@@ -5258,6 +5341,7 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
     bound_accessor_fields_.clear();
     functions_.clear();
     local_inner_classes_.clear();
+    script_resource_aliases_.clear();
     allow_dynamic_await_return_ = false;
     current_function_static_ = false;
     instance_context_available_ = true;
@@ -5283,6 +5367,25 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
     current_script_ = script_symbols_ ? script_symbols_->find_path(current_script_path_) : nullptr;
     if (script_symbols_ && current_script_)
         record_script_dependency(script_symbols_->base_of(*current_script_));
+    if (script_symbols_) {
+        for (const auto& variable : script.variables) {
+            if (!variable.is_constant || !variable.initializer)
+                continue;
+            const auto* call = variable.initializer->get_if<ast::CallExpression>();
+            if (!call || !call->callee ||
+                call->callee->kind() != ast::ExpressionKind::identifier ||
+                call->callee->value() != "preload" || call->arguments.size() != 1 ||
+                !call->arguments.front() ||
+                call->arguments.front()->literal_kind() != ast::LiteralKind::string) {
+                continue;
+            }
+            if (const auto* target = script_symbols_->resolve_path(
+                    current_script_path_, call->arguments.front()->value())) {
+                script_resource_aliases_.insert_or_assign(variable.name, target);
+                record_script_dependency(target);
+            }
+        }
+    }
     Scope inherited_scope;
     if (script_symbols_ && current_script_) {
         for (const auto* member : script_symbols_->inherited_members(*current_script_)) {

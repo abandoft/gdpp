@@ -300,6 +300,7 @@ class SemanticAnalyzer final {
     std::unordered_map<std::string, std::unordered_set<std::string>> bound_accessor_fields_;
     std::unordered_map<std::string, const ast::FunctionDeclaration*> functions_;
     std::unordered_map<std::string, ScriptInnerClassSymbol> local_inner_classes_;
+    std::unordered_map<std::string, const ScriptClassSymbol*> script_resource_aliases_;
     const ScriptInnerClassSymbol* current_inner_class_{nullptr};
     const ScriptInnerClassSymbol* current_inner_base_{nullptr};
     bool allow_dynamic_await_return_{false};
