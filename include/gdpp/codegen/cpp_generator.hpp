@@ -28,6 +28,8 @@ struct GeneratedUnit {
     std::optional<std::string> icon_path;
     bool is_abstract{false};
     bool is_tool{false};
+    bool is_attached{false};
+    std::string attached_native_base;
 };
 
 class CodeGenerator final {
@@ -38,7 +40,9 @@ class CodeGenerator final {
     [[nodiscard]] GeneratedUnit generate(const mir::Module& module, const std::string& source_path,
                                          const std::string& native_class_suffix = {},
                                          const std::string& native_base_class = {},
-                                         const std::string& native_base_header = {}) const;
+                                         const std::string& native_base_header = {},
+                                         bool attached_script = false,
+                                         const std::string& attached_native_base = {}) const;
 
   private:
     struct StatementSlice {
@@ -133,6 +137,8 @@ class CodeGenerator final {
     [[nodiscard]] std::string lift_async_loop_locals(const ir::Statement& statement,
                                                      std::size_t indent) const;
     [[nodiscard]] std::string cpp_type(const Type& type) const;
+    [[nodiscard]] std::string self_object_expression() const;
+    [[nodiscard]] std::string godot_owner_expression() const;
     [[nodiscard]] std::string api_native_type(std::string_view api_type,
                                               std::string_view native_meta) const;
     [[nodiscard]] std::string virtual_parameter_type(const GodotMethodRecord& method,
@@ -174,6 +180,8 @@ class CodeGenerator final {
     mutable bool in_function_body_{false};
     mutable bool in_callable_lambda_{false};
     mutable bool in_async_continuation_{false};
+    mutable bool attached_script_{false};
+    mutable std::string attached_godot_base_type_;
     mutable std::unordered_map<std::string, std::string> inner_native_names_;
     mutable std::unordered_map<std::string, std::string> inner_godot_base_types_;
     mutable std::unordered_map<std::string, std::string> inner_base_names_;
