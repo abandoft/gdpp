@@ -19,11 +19,12 @@ const EXTENSION_REGISTRY_BACKUP := "res://.godot/gdpp_extension_list.export-back
 const COMPILER_DESCRIPTOR_BACKUP := "res://.godot/gdpp_compiler_descriptor.export-backup"
 const SCRIPT_CLASS_CACHE := "res://.godot/global_script_class_cache.cfg"
 const GODOT_EXPORT_CACHE_DIRECTORY := "res://.godot/exported"
-const EXPORT_TRANSFORM_REVISION := 16
+const EXPORT_TRANSFORM_REVISION := 17
 
 var _compiler: Object
 var _ready := false
 var _script_classes: Dictionary = {}
+var _attached_script_bases: Dictionary = {}
 var _compiled_scripts: Dictionary = {}
 var _abstract_scripts: Dictionary = {}
 var _runtime_descriptor := ""
@@ -271,6 +272,25 @@ func _customize_resource(resource: Resource, path: String) -> Resource:
     if not _script_classes.has(script_path):
         _fail_export("resource '%s' uses an uncompiled script '%s'" % [path, script_path])
         return null
+    if _attached_script_bases.has(script_path):
+        var replacements := {resource.get_instance_id(): resource}
+        var changes := {"count": 0}
+        var copied_properties := _attach_compiled_script(
+            resource,
+            script_path,
+            null,
+            replacements,
+            changes,
+            path
+        )
+        if copied_properties < 0:
+            _fail_export("resource '%s' cannot attach its compiled script" % path)
+            return null
+        _metrics_mutex.lock()
+        _customized_resource_count += 1
+        _copied_property_count += copied_properties
+        _metrics_mutex.unlock()
+        return resource
     var replacement := ClassDB.instantiate(StringName(_script_classes[script_path]))
     if not replacement is Resource:
         if replacement != null:
@@ -525,6 +545,7 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
         return false
 
     _script_classes = distribution_result.get("script_classes", {})
+    _attached_script_bases = distribution_result.get("attached_script_bases", {})
     _compiled_scripts.clear()
     for script_path: String in _script_classes:
         _compiled_scripts[script_path] = true
@@ -629,6 +650,10 @@ func _cleanup_stale_development_libraries(current_library: String) -> void:
 
 func _validate_native_classes() -> bool:
     _has_resource_scripts = false
+    if not _attached_script_bases.is_empty():
+        if not ClassDB.class_exists(&"AttachedCompiledScript"):
+            _fail_export("attached script runtime class is unavailable")
+            return false
     for script_path: String in _script_classes:
         var native_class_name := StringName(_script_classes[script_path])
         if not ClassDB.class_exists(native_class_name):
@@ -636,6 +661,30 @@ func _validate_native_classes() -> bool:
                 "native class '%s' for '%s' is unavailable" % [native_class_name, script_path]
             )
             return false
+        if _attached_script_bases.has(script_path):
+            var attached_base := StringName(_attached_script_bases[script_path])
+            if not ClassDB.class_exists(attached_base):
+                _fail_export(
+                    "third-party native base '%s' for '%s' is unavailable" % [
+                        attached_base,
+                        script_path,
+                    ]
+                )
+                return false
+            if (
+                not _abstract_scripts.has(script_path)
+                and not ClassDB.can_instantiate(attached_base)
+            ):
+                _fail_export(
+                    "third-party native base '%s' for '%s' cannot be instantiated" % [
+                        attached_base,
+                        script_path,
+                    ]
+                )
+                return false
+            if ClassDB.is_parent_class(attached_base, &"Resource"):
+                _has_resource_scripts = true
+            continue
         if (
             not _abstract_scripts.has(script_path)
             and not ClassDB.can_instantiate(native_class_name)
@@ -671,9 +720,11 @@ func _prepare_autoloads() -> bool:
         if not _compiled_scripts.has(script_path):
             continue
         var native_class := StringName(_script_classes[script_path])
+        var attached_base := StringName(_attached_script_bases.get(script_path, ""))
         # Export preparation must not construct customer autoloads: their field
         # initializers may access services that are only valid after SceneTree startup.
-        if not ClassDB.is_parent_class(native_class, &"Node"):
+        var scene_type := attached_base if not attached_base.is_empty() else native_class
+        if not ClassDB.is_parent_class(scene_type, &"Node"):
             _fail_export(
                 "script autoload '%s' must compile to a Node-derived native class"
                 % setting.trim_prefix("autoload/")
@@ -681,10 +732,23 @@ func _prepare_autoloads() -> bool:
             return false
         var autoload_name := setting.trim_prefix("autoload/")
         var generated_path := RUNTIME_RESOURCE_PREFIX + "autoload/%s.tscn" % setting.md5_text()
-        var scene := (
-            "[gd_scene format=3]\n\n[node name=\"%s\" type=\"%s\"]\n"
-            % [autoload_name.c_escape(), str(native_class).c_escape()]
-        )
+        var scene := ""
+        if attached_base.is_empty():
+            scene = (
+                "[gd_scene format=3]\n\n[node name=\"%s\" type=\"%s\"]\n"
+                % [autoload_name.c_escape(), str(native_class).c_escape()]
+            )
+        else:
+            scene = (
+                "[gd_scene load_steps=2 format=3]\n\n"
+                + "[sub_resource type=\"AttachedCompiledScript\" id=\"AttachedScript\"]\n"
+                + "source_path = \"%s\"\n\n" % script_path.c_escape()
+                + "[node name=\"%s\" type=\"%s\"]\n" % [
+                    autoload_name.c_escape(),
+                    str(attached_base).c_escape(),
+                ]
+                + "script = SubResource(\"AttachedScript\")\n"
+            )
         _autoload_files[generated_path] = scene
         _autoload_replacements[setting] = generated_path
         _autoload_originals[setting] = original
@@ -918,6 +982,27 @@ func _collect_scene_replacement_plan(
                     "GDPP: scene '%s' uses uncompiled script '%s'" % [scene_path, script_path]
                 )
                 return false
+            if _attached_script_bases.has(script_path):
+                var attached_base := StringName(_attached_script_bases[script_path])
+                if not node.is_class(attached_base):
+                    push_error(
+                        (
+                            "GDPP: third-party object '%s' for '%s' is not an instance of '%s'"
+                        )
+                        % [node.get_class(), script_path, attached_base]
+                    )
+                    return false
+                replacement_plan.append({
+                    "node": node,
+                    "native_class": attached_base,
+                    "script_path": script_path,
+                    "attached": true,
+                    "stored_properties": _serialized_node_properties(
+                        scene_state,
+                        node_path
+                    ),
+                })
+                continue
             var native_class := StringName(_script_classes[script_path])
             if not ClassDB.is_parent_class(native_class, &"Node"):
                 return false
@@ -935,6 +1020,7 @@ func _collect_scene_replacement_plan(
                 "node": node,
                 "native_class": native_class,
                 "script_path": script_path,
+                "attached": false,
                 "stored_properties": _serialized_node_properties(scene_state, node_path),
             })
 
@@ -1002,9 +1088,17 @@ func _replace_planned_nodes(
     # A missing class/property therefore fails the complete scene atomically
     # instead of leaving a partially replaced graph whose scripts are stripped.
     var prepared: Dictionary = {}
+    var attached_scripts: Dictionary = {}
     var copied_properties := 0
     for plan: Dictionary in replacement_plan:
         var node: Node = plan.node
+        if bool(plan.get("attached", false)):
+            var compiled_script := _make_attached_script(str(plan.script_path))
+            if compiled_script == null:
+                _free_prepared_replacements(prepared)
+                return null
+            attached_scripts[node.get_instance_id()] = compiled_script
+            continue
         var native_class := StringName(plan.native_class)
         var replacement := ClassDB.instantiate(native_class) as Node
         if replacement == null:
@@ -1033,6 +1127,20 @@ func _replace_planned_nodes(
     var result := scene_root
     for plan: Dictionary in replacement_plan:
         var node: Node = plan.node
+        if bool(plan.get("attached", false)):
+            var attached_copied := _install_attached_script(
+                node,
+                attached_scripts[node.get_instance_id()],
+                plan.get("stored_properties", {}),
+                resource_replacements,
+                resource_changes,
+                scene_path
+            )
+            if attached_copied < 0:
+                _free_prepared_replacements(prepared)
+                return null
+            copied_properties += attached_copied
+            continue
         var replaces_root := node == result
         var replacement: Node = prepared[node.get_instance_id()]
         _replace_node(node, replacement, replacement_nodes)
@@ -1125,31 +1233,48 @@ func _replace_owner(node: Node, old_owner: Node, new_owner: Node) -> void:
         _replace_owner(child, old_owner, new_owner)
 
 
-func _copy_storage_properties(
+func _make_attached_script(script_path: String) -> Script:
+    var instance := ClassDB.instantiate(&"AttachedCompiledScript")
+    if not instance is Script:
+        if instance != null:
+            instance.free()
+        push_error("GDPP: cannot instantiate the attached script runtime")
+        return null
+    var script := instance as Script
+    script.set("source_path", script_path)
+    if not script.is_valid() or str(script.get("source_path")) != script_path:
+        push_error("GDPP: compiled script descriptor for '%s' is unavailable" % script_path)
+        return null
+    return script
+
+
+func _storage_property_values(
     source: Object,
+    serialized_properties: Variant = null
+) -> Dictionary:
+    if serialized_properties is Dictionary:
+        return (serialized_properties as Dictionary).duplicate()
+    var values: Dictionary = {}
+    for property: Dictionary in source.get_property_list():
+        var property_name := str(property.get("name", ""))
+        var usage := int(property.get("usage", 0))
+        if property_name == "script" or (usage & PROPERTY_USAGE_STORAGE) == 0:
+            continue
+        values[property_name] = source.get(property_name)
+    return values
+
+
+func _restore_storage_properties(
+    source_class: StringName,
     destination: Object,
-    serialized_properties: Variant = null,
-    resource_replacements: Variant = null,
-    resource_changes: Variant = null,
-    context_path: String = ""
+    source_properties: Dictionary,
+    replacements: Dictionary,
+    changes: Dictionary,
+    context_path: String
 ) -> int:
-    var replacements: Dictionary = (
-        resource_replacements if resource_replacements is Dictionary else {}
-    )
-    var changes: Dictionary = resource_changes if resource_changes is Dictionary else {"count": 0}
     var destination_properties: Dictionary = {}
     for property: Dictionary in destination.get_property_list():
         destination_properties[str(property.get("name", ""))] = true
-    var source_properties: Dictionary = {}
-    if serialized_properties is Dictionary:
-        source_properties = serialized_properties
-    else:
-        for property: Dictionary in source.get_property_list():
-            var property_name := str(property.get("name", ""))
-            var usage := int(property.get("usage", 0))
-            if property_name == "script" or (usage & PROPERTY_USAGE_STORAGE) == 0:
-                continue
-            source_properties[property_name] = source.get(property_name)
     var copied := 0
     for name: String in source_properties:
         # Godot exposes Object metadata as dynamic `metadata/<key>` storage
@@ -1175,7 +1300,7 @@ func _copy_storage_properties(
                 "GDPP: native class '%s' is missing stored property '%s' from '%s'" % [
                     destination.get_class(),
                     name,
-                    source.get_class(),
+                    source_class,
                 ]
             )
             return -1
@@ -1190,6 +1315,82 @@ func _copy_storage_properties(
         )
         copied += 1
     return copied
+
+
+func _install_attached_script(
+    object: Object,
+    script: Script,
+    serialized_properties: Variant = null,
+    resource_replacements: Variant = null,
+    resource_changes: Variant = null,
+    context_path: String = ""
+) -> int:
+    var replacements: Dictionary = (
+        resource_replacements if resource_replacements is Dictionary else {}
+    )
+    var changes: Dictionary = resource_changes if resource_changes is Dictionary else {"count": 0}
+    var source_class := StringName(object.get_class())
+    var source_properties := _storage_property_values(object, serialized_properties)
+    object.set_script(script)
+    if object.get_script() != script:
+        push_error(
+            "GDPP: third-party object '%s' rejected compiled script '%s'" % [
+                source_class,
+                str(script.get("source_path")),
+            ]
+        )
+        return -1
+    return _restore_storage_properties(
+        source_class,
+        object,
+        source_properties,
+        replacements,
+        changes,
+        context_path
+    )
+
+
+func _attach_compiled_script(
+    object: Object,
+    script_path: String,
+    serialized_properties: Variant = null,
+    resource_replacements: Variant = null,
+    resource_changes: Variant = null,
+    context_path: String = ""
+) -> int:
+    var script := _make_attached_script(script_path)
+    if script == null:
+        return -1
+    return _install_attached_script(
+        object,
+        script,
+        serialized_properties,
+        resource_replacements,
+        resource_changes,
+        context_path
+    )
+
+
+func _copy_storage_properties(
+    source: Object,
+    destination: Object,
+    serialized_properties: Variant = null,
+    resource_replacements: Variant = null,
+    resource_changes: Variant = null,
+    context_path: String = ""
+) -> int:
+    var replacements: Dictionary = (
+        resource_replacements if resource_replacements is Dictionary else {}
+    )
+    var changes: Dictionary = resource_changes if resource_changes is Dictionary else {"count": 0}
+    return _restore_storage_properties(
+        StringName(source.get_class()),
+        destination,
+        _storage_property_values(source, serialized_properties),
+        replacements,
+        changes,
+        context_path
+    )
 
 
 func _sanitize_storage_value(
@@ -1315,6 +1516,33 @@ func _transform_resource_graph(
                 % [context_path, script_path]
             )
             return null
+        if _attached_script_bases.has(script_path):
+            # Install the identity mapping before restoring fields so self-references and
+            # cyclic built-in Resource graphs retain their exact topology.
+            replacements[instance_id] = resource
+            var copied_attached := _attach_compiled_script(
+                resource,
+                script_path,
+                null,
+                replacements,
+                changes,
+                context_path
+            )
+            if copied_attached < 0:
+                replacements.erase(instance_id)
+                _fail_export(
+                    "resource graph '%s' cannot attach compiled script '%s'" % [
+                        context_path,
+                        script_path,
+                    ]
+                )
+                return null
+            changes.count = int(changes.get("count", 0)) + 1
+            _metrics_mutex.lock()
+            _customized_resource_count += 1
+            _copied_property_count += copied_attached
+            _metrics_mutex.unlock()
+            return resource
         var replacement := ClassDB.instantiate(StringName(_script_classes[script_path]))
         if not replacement is Resource:
             if replacement != null:
@@ -1741,6 +1969,7 @@ func _print_export_summary() -> void:
 func _reset_export_state() -> void:
     _ready = false
     _script_classes.clear()
+    _attached_script_bases.clear()
     _compiled_scripts.clear()
     _abstract_scripts.clear()
     _runtime_descriptor = ""
