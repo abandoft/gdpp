@@ -757,6 +757,25 @@ std::string property_hint(const ir::Field& field, const GodotApi& api,
         return {};
     if (field.property_type.kind == TypeKind::enumeration) {
         if (script_symbols) {
+            if (const auto separator = field.property_type.name.rfind("::");
+                separator != std::string::npos) {
+                const auto owner_name = field.property_type.name.substr(0, separator);
+                const auto enum_name = field.property_type.name.substr(separator + 2);
+                if (const auto* owner = script_symbols->find_native_class(owner_name)) {
+                    if (const auto* enumeration = script_symbols->find_enum(*owner, enum_name);
+                        enumeration && enumeration->is_bitfield) {
+                        return "godot::PROPERTY_HINT_FLAGS";
+                    }
+                } else if (const auto* inner = script_symbols->find_inner_native(owner_name)) {
+                    const auto enumeration = std::find_if(
+                        inner->enums.begin(), inner->enums.end(),
+                        [&](const ScriptEnumSymbol& candidate) {
+                            return candidate.name == enum_name;
+                        });
+                    if (enumeration != inner->enums.end() && enumeration->is_bitfield)
+                        return "godot::PROPERTY_HINT_FLAGS";
+                }
+            }
             const auto separator = field.property_type.name.find('.');
             if (separator != std::string::npos) {
                 if (const auto* owner = script_symbols->find_external(
@@ -825,6 +844,33 @@ std::string property_hint_string(const ir::Field& field, const ScriptSymbolTable
         if (!field.enum_hint.empty())
             return field.enum_hint;
         if (script_symbols) {
+            if (const auto separator = field.property_type.name.rfind("::");
+                separator != std::string::npos) {
+                const auto owner_name = field.property_type.name.substr(0, separator);
+                const auto enum_name = field.property_type.name.substr(separator + 2);
+                const ScriptEnumSymbol* enumeration = nullptr;
+                if (const auto* owner = script_symbols->find_native_class(owner_name)) {
+                    enumeration = script_symbols->find_enum(*owner, enum_name);
+                } else if (const auto* inner =
+                               script_symbols->find_inner_native(owner_name)) {
+                    const auto found = std::find_if(
+                        inner->enums.begin(), inner->enums.end(),
+                        [&](const ScriptEnumSymbol& candidate) {
+                            return candidate.name == enum_name;
+                        });
+                    if (found != inner->enums.end())
+                        enumeration = &*found;
+                }
+                if (enumeration) {
+                    std::string result;
+                    for (const auto& entry : enumeration->entries) {
+                        if (!result.empty())
+                            result.push_back(',');
+                        result += entry.name + ":" + std::to_string(entry.value);
+                    }
+                    return result;
+                }
+            }
             const auto separator = field.property_type.name.find('.');
             if (separator != std::string::npos) {
                 if (const auto* owner = script_symbols->find_global(
