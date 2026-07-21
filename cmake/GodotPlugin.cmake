@@ -341,7 +341,7 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
     file(GENERATE
         OUTPUT "${GDPP_SDK_MANIFEST}"
         CONTENT
-            "GDPP_SDK ${GDPP_NATIVE_SDK_SCHEMA}\napi ${GDPP_SDK_VERSION}\nplatform ${GDPP_PLATFORM}\narch ${GDPP_ARCH}\nprofiles development,debug,release\nplatform_minimum ${GDPP_PLATFORM_MINIMUM}\ngdpp_version ${PROJECT_VERSION}\nruntime_abi ${GDPP_NATIVE_RUNTIME_ABI}\nruntime_header_sha256 ${GDPP_NATIVE_RUNTIME_HEADER_SHA256}\nruntime_source_sha256 ${GDPP_NATIVE_RUNTIME_SOURCE_SHA256}\ninteger_semantics_header_sha256 ${GDPP_INTEGER_SEMANTICS_HEADER_SHA256}\ncompiler ${CMAKE_CXX_COMPILER_ID}\ncompiler_version ${CMAKE_CXX_COMPILER_VERSION}\n"
+            "GDPP_SDK ${GDPP_NATIVE_SDK_SCHEMA}\napi ${GDPP_SDK_VERSION}\nplatform ${GDPP_PLATFORM}\narch ${GDPP_ARCH}\nprofiles development,debug,release\nplatform_minimum ${GDPP_PLATFORM_MINIMUM}\ngdpp_version ${PROJECT_VERSION}\nruntime_abi ${GDPP_NATIVE_RUNTIME_ABI}\nruntime_header_sha256 ${GDPP_NATIVE_RUNTIME_HEADER_SHA256}\nruntime_source_sha256 ${GDPP_NATIVE_RUNTIME_SOURCE_SHA256}\nattached_runtime_header_sha256 ${GDPP_ATTACHED_RUNTIME_HEADER_SHA256}\nattached_runtime_registry_source_sha256 ${GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE_SHA256}\nattached_runtime_instance_source_sha256 ${GDPP_ATTACHED_RUNTIME_INSTANCE_SOURCE_SHA256}\nattached_runtime_language_source_sha256 ${GDPP_ATTACHED_RUNTIME_LANGUAGE_SOURCE_SHA256}\ninteger_semantics_header_sha256 ${GDPP_INTEGER_SEMANTICS_HEADER_SHA256}\ncompiler ${CMAKE_CXX_COMPILER_ID}\ncompiler_version ${CMAKE_CXX_COMPILER_VERSION}\n"
     )
 
     set(GDPP_SDK_PACKAGE_COMMANDS
@@ -357,6 +357,18 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${GDPP_NATIVE_RUNTIME_SOURCE}"
                 "${GDPP_SDK_DIRECTORY}/src/runtime/variant_ops.cpp"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ATTACHED_RUNTIME_HEADER}"
+                "${GDPP_SDK_DIRECTORY}/include/gdpp/runtime/attached_script.hpp"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE}"
+                "${GDPP_SDK_DIRECTORY}/src/runtime/attached_script_registry.cpp"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ATTACHED_RUNTIME_INSTANCE_SOURCE}"
+                "${GDPP_SDK_DIRECTORY}/src/runtime/attached_script_instance.cpp"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ATTACHED_RUNTIME_LANGUAGE_SOURCE}"
+                "${GDPP_SDK_DIRECTORY}/src/runtime/attached_script_language.cpp"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${GDPP_INTEGER_SEMANTICS_HEADER}"
                 "${GDPP_SDK_DIRECTORY}/include/gdpp/numeric/integer_semantics.hpp"
@@ -416,6 +428,10 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
             "${CMAKE_SOURCE_DIR}/third/godot-cpp/LICENSE.md"
             "${GDPP_NATIVE_RUNTIME_HEADER}"
             "${GDPP_NATIVE_RUNTIME_SOURCE}"
+            "${GDPP_ATTACHED_RUNTIME_HEADER}"
+            "${GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE}"
+            "${GDPP_ATTACHED_RUNTIME_INSTANCE_SOURCE}"
+            "${GDPP_ATTACHED_RUNTIME_LANGUAGE_SOURCE}"
             "${GDPP_INTEGER_SEMANTICS_HEADER}"
             "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
         COMMENT "Packaging compiler-only Godot ${GDPP_SDK_VERSION} SDK"

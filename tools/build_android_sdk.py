@@ -74,12 +74,19 @@ def main() -> int:
     class_db_patch = source_root / "cmake/PatchGodotCppClassDB.cmake"
     runtime_header = source_root / "include/gdpp/runtime/variant_ops.hpp"
     runtime_source = source_root / "src/runtime/variant_ops.cpp"
+    attached_runtime_files = (
+        source_root / "include/gdpp/runtime/attached_script.hpp",
+        source_root / "src/runtime/attached_script_registry.cpp",
+        source_root / "src/runtime/attached_script_instance.cpp",
+        source_root / "src/runtime/attached_script_language.cpp",
+    )
     integer_semantics_header = source_root / "include/gdpp/numeric/integer_semantics.hpp"
     for required in (
         godot_cpp / "CMakeLists.txt",
         class_db_patch,
         runtime_header,
         runtime_source,
+        *attached_runtime_files,
         integer_semantics_header,
     ):
         if not required.is_file():
@@ -160,6 +167,9 @@ def main() -> int:
     shutil.copy2(godot_cpp / "LICENSE.md", stage / "godot-cpp/LICENSE.md")
     shutil.copy2(runtime_header, stage / "include/gdpp/runtime/variant_ops.hpp")
     shutil.copy2(runtime_source, stage / "src/runtime/variant_ops.cpp")
+    shutil.copy2(attached_runtime_files[0], stage / "include/gdpp/runtime/attached_script.hpp")
+    for source in attached_runtime_files[1:]:
+        shutil.copy2(source, stage / "src/runtime" / source.name)
     shutil.copy2(
         integer_semantics_header,
         stage / "include/gdpp/numeric/integer_semantics.hpp",
@@ -183,6 +193,10 @@ def main() -> int:
         f"runtime_abi {args.runtime_abi}\n"
         f"runtime_header_sha256 {sha256(runtime_header)}\n"
         f"runtime_source_sha256 {sha256(runtime_source)}\n"
+        f"attached_runtime_header_sha256 {sha256(attached_runtime_files[0])}\n"
+        f"attached_runtime_registry_source_sha256 {sha256(attached_runtime_files[1])}\n"
+        f"attached_runtime_instance_source_sha256 {sha256(attached_runtime_files[2])}\n"
+        f"attached_runtime_language_source_sha256 {sha256(attached_runtime_files[3])}\n"
         f"integer_semantics_header_sha256 {sha256(integer_semantics_header)}\n"
         f"compiler Android_NDK\n"
         f"compiler_version {ndk_revision}\n"

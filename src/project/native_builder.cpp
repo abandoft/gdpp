@@ -228,6 +228,10 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
     std::string runtime_abi;
     std::string runtime_header_sha256;
     std::string runtime_source_sha256;
+    std::string attached_runtime_header_sha256;
+    std::string attached_runtime_registry_source_sha256;
+    std::string attached_runtime_instance_source_sha256;
+    std::string attached_runtime_language_source_sha256;
     std::string integer_semantics_header_sha256;
     std::string web_threads;
     std::string source_paths;
@@ -250,6 +254,14 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
             runtime_header_sha256 = value;
         else if (key == "runtime_source_sha256")
             runtime_source_sha256 = value;
+        else if (key == "attached_runtime_header_sha256")
+            attached_runtime_header_sha256 = value;
+        else if (key == "attached_runtime_registry_source_sha256")
+            attached_runtime_registry_source_sha256 = value;
+        else if (key == "attached_runtime_instance_source_sha256")
+            attached_runtime_instance_source_sha256 = value;
+        else if (key == "attached_runtime_language_source_sha256")
+            attached_runtime_language_source_sha256 = value;
         else if (key == "integer_semantics_header_sha256")
             integer_semantics_header_sha256 = value;
         else if (key == "web_threads")
@@ -347,6 +359,10 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
     }
     if (runtime_header_sha256 != GDPP_NATIVE_RUNTIME_HEADER_SHA256 ||
         runtime_source_sha256 != GDPP_NATIVE_RUNTIME_SOURCE_SHA256 ||
+        attached_runtime_header_sha256 != GDPP_ATTACHED_RUNTIME_HEADER_SHA256 ||
+        attached_runtime_registry_source_sha256 != GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE_SHA256 ||
+        attached_runtime_instance_source_sha256 != GDPP_ATTACHED_RUNTIME_INSTANCE_SOURCE_SHA256 ||
+        attached_runtime_language_source_sha256 != GDPP_ATTACHED_RUNTIME_LANGUAGE_SOURCE_SHA256 ||
         integer_semantics_header_sha256 != GDPP_INTEGER_SEMANTICS_HEADER_SHA256) {
         diagnostics.emplace_back(
             "native SDK runtime contract does not match this GDPP compiler; reinstall the "
@@ -369,6 +385,17 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
                         runtime_header_sha256, "runtime header");
     verify_runtime_file(options.sdk_root / "src/runtime/variant_ops.cpp", runtime_source_sha256,
                         "runtime source");
+    verify_runtime_file(options.sdk_root / "include/gdpp/runtime/attached_script.hpp",
+                        attached_runtime_header_sha256, "attached runtime header");
+    verify_runtime_file(options.sdk_root / "src/runtime/attached_script_registry.cpp",
+                        attached_runtime_registry_source_sha256,
+                        "attached registry runtime source");
+    verify_runtime_file(options.sdk_root / "src/runtime/attached_script_instance.cpp",
+                        attached_runtime_instance_source_sha256,
+                        "attached instance runtime source");
+    verify_runtime_file(options.sdk_root / "src/runtime/attached_script_language.cpp",
+                        attached_runtime_language_source_sha256,
+                        "attached language runtime source");
     verify_runtime_file(options.sdk_root / "include/gdpp/numeric/integer_semantics.hpp",
                         integer_semantics_header_sha256, "integer semantics header");
     return diagnostics.empty();
@@ -1088,6 +1115,15 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
     const auto generated = options.project_output_directory / "generated";
     const auto registration = options.project_output_directory / "register_types.cpp";
     const auto runtime = options.sdk_root / "src/runtime/variant_ops.cpp";
+    const auto registration_source = read_file(registration);
+    const bool has_attached_runtime =
+        registration_source &&
+        registration_source->find("gdpp::runtime::register_attached_script") != std::string::npos;
+    const std::vector<std::filesystem::path> attached_runtime_sources{
+        options.sdk_root / "src/runtime/attached_script_registry.cpp",
+        options.sdk_root / "src/runtime/attached_script_instance.cpp",
+        options.sdk_root / "src/runtime/attached_script_language.cpp",
+    };
     std::vector<std::filesystem::path> includes{
         generated,
         options.sdk_root / "include",
@@ -1117,6 +1153,17 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
         if (!std::filesystem::is_regular_file(required))
             result.diagnostics.push_back("missing native SDK input: " + path_to_utf8(required));
     }
+    if (has_attached_runtime) {
+        if (!std::filesystem::is_regular_file(includes[1] / "gdpp/runtime/attached_script.hpp")) {
+            result.diagnostics.push_back(
+                "missing native SDK input: " +
+                path_to_utf8(includes[1] / "gdpp/runtime/attached_script.hpp"));
+        }
+        for (const auto& source : attached_runtime_sources) {
+            if (!std::filesystem::is_regular_file(source))
+                result.diagnostics.push_back("missing native SDK input: " + path_to_utf8(source));
+        }
+    }
     // Godot-cpp uses upstream ABI target names internally. They are deliberately kept out of
     // GDPP's public build-profile API and artifact names.
     const std::string binding_target = options.profile == NativeBuildProfile::development ? "editor"
@@ -1145,14 +1192,20 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
         return result;
 
     std::vector<std::filesystem::path> sources{registration, runtime};
+    if (has_attached_runtime)
+        sources.insert(sources.end(), attached_runtime_sources.begin(),
+                       attached_runtime_sources.end());
     std::error_code error;
+    bool found_generated_source = false;
     for (std::filesystem::directory_iterator iterator{generated, error}, end;
          !error && iterator != end; iterator.increment(error)) {
         if (iterator->is_regular_file() &&
-            ends_with(iterator->path().filename().string(), ".gd.cpp"))
+            ends_with(iterator->path().filename().string(), ".gd.cpp")) {
             sources.push_back(iterator->path());
+            found_generated_source = true;
+        }
     }
-    if (error || sources.size() == 2) {
+    if (error || !found_generated_source) {
         result.diagnostics.emplace_back("no generated project translation units were found");
         return result;
     }
@@ -1213,6 +1266,11 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
         options.sdk_root / "include/gdpp/runtime/variant_ops.hpp",
         options.sdk_root / "include/gdpp/numeric/integer_semantics.hpp",
     };
+    if (has_attached_runtime) {
+        compile_inputs.push_back(options.sdk_root / "include/gdpp/runtime/attached_script.hpp");
+        compile_inputs.insert(compile_inputs.end(), attached_runtime_sources.begin(),
+                              attached_runtime_sources.end());
+    }
     const auto bridge_lock = options.project_output_directory / "bridge.lock";
     if (std::filesystem::is_regular_file(bridge_lock))
         compile_inputs.push_back(bridge_lock);

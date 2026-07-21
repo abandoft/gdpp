@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 SUPPORTED_GODOT_VERSIONS = ("4.4", "4.5", "4.6", "4.7")
-SDK_SCHEMA = 5
+SDK_SCHEMA = 6
 STATIC_ADDON_FILES = (
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
@@ -199,6 +199,10 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
         "runtime_abi",
         "runtime_header_sha256",
         "runtime_source_sha256",
+        "attached_runtime_header_sha256",
+        "attached_runtime_registry_source_sha256",
+        "attached_runtime_instance_source_sha256",
+        "attached_runtime_language_source_sha256",
         "integer_semantics_header_sha256",
     )
     for field in runtime_contract:

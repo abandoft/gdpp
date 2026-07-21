@@ -877,6 +877,29 @@ std::string generated_cmake(const ProjectCompileOptions& options,
     std::ostringstream output;
     const bool has_attached_scripts = std::any_of(
         scripts.begin(), scripts.end(), [](const auto& script) { return script.is_attached; });
+    std::ostringstream attached_runtime_integrity;
+    if (has_attached_scripts) {
+        attached_runtime_integrity
+            << "file(SHA256 \"${GDPP_SDK_DIR}/include/gdpp/runtime/attached_script.hpp\" "
+               "GDPP_ATTACHED_RUNTIME_HEADER_SHA256)\n"
+            << "file(SHA256 \"${GDPP_SDK_DIR}/src/runtime/attached_script_registry.cpp\" "
+               "GDPP_ATTACHED_RUNTIME_REGISTRY_SHA256)\n"
+            << "file(SHA256 \"${GDPP_SDK_DIR}/src/runtime/attached_script_instance.cpp\" "
+               "GDPP_ATTACHED_RUNTIME_INSTANCE_SHA256)\n"
+            << "file(SHA256 \"${GDPP_SDK_DIR}/src/runtime/attached_script_language.cpp\" "
+               "GDPP_ATTACHED_RUNTIME_LANGUAGE_SHA256)\n"
+            << "if(NOT GDPP_ATTACHED_RUNTIME_HEADER_SHA256 STREQUAL \""
+            << GDPP_ATTACHED_RUNTIME_HEADER_SHA256
+            << "\" OR NOT GDPP_ATTACHED_RUNTIME_REGISTRY_SHA256 STREQUAL \""
+            << GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE_SHA256
+            << "\" OR NOT GDPP_ATTACHED_RUNTIME_INSTANCE_SHA256 STREQUAL \""
+            << GDPP_ATTACHED_RUNTIME_INSTANCE_SOURCE_SHA256
+            << "\" OR NOT GDPP_ATTACHED_RUNTIME_LANGUAGE_SHA256 STREQUAL \""
+            << GDPP_ATTACHED_RUNTIME_LANGUAGE_SOURCE_SHA256 << "\")\n"
+            << "  message(FATAL_ERROR \"GDPP attached runtime contract does not match generated "
+               "code; reinstall the matching SDK\")\n"
+            << "endif()\n";
+    }
     output
         << "cmake_minimum_required(VERSION 3.22)\n"
         << "project(gdpp_project LANGUAGES CXX)\n\n"
@@ -923,7 +946,7 @@ std::string generated_cmake(const ProjectCompileOptions& options,
         << "  message(FATAL_ERROR \"GDPP SDK runtime contract does not match generated code; "
            "reinstall the matching SDK\")\n"
         << "endif()\n"
-        << "set(GDPP_BINDING_EXTENSION \".a\")\n"
+        << attached_runtime_integrity.str() << "set(GDPP_BINDING_EXTENSION \".a\")\n"
         << "if(GDPP_PLATFORM STREQUAL \"windows\")\n"
         << "  set(GDPP_BINDING_EXTENSION \".lib\")\n"
         << "endif()\n"
