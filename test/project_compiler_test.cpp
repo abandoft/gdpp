@@ -579,7 +579,9 @@ TEST_CASE("project compiler resolves script and nested internal enum identities"
                                      "    var shared: Shared = Shared.ACTIVE\n"
                                      "    var status: Packet.Status = Packet.Status.READY\n"
                                      "    func select(value: Packet.Status) -> Packet.Status:\n"
-                                     "        return value\n");
+                                     "        return value\n"
+                                     "    func accepts(value: Variant) -> bool:\n"
+                                     "        return value is Shared and value is Packet.Status\n");
     const auto options = project_options(root);
     const auto result = gdpp::ProjectCompiler{}.compile(options);
 
@@ -589,6 +591,7 @@ TEST_CASE("project compiler resolves script and nested internal enum identities"
         read_text(options.output_directory / "generated" / result.scripts.front().source_file_name);
     REQUIRE(source.find("Shared::_gdpp_enum_ACTIVE") != std::string::npos);
     REQUIRE(source.find("Status::_gdpp_enum_READY") != std::string::npos);
+    REQUIRE(source.find(".get_type() == godot::Variant::INT") != std::string::npos);
 }
 
 TEST_CASE("project compiler preserves nested internal class identities across cache hits") {

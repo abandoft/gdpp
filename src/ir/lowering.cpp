@@ -977,7 +977,9 @@ bool IrVerifier::verify_expression(const ir::Expression& expression) {
         if (resolution != ir::ResolutionKind::godot_type &&
             resolution != ir::ResolutionKind::external_type &&
             resolution != ir::ResolutionKind::script_type &&
-            resolution != ir::ResolutionKind::inner_type) {
+            resolution != ir::ResolutionKind::inner_type &&
+            resolution != ir::ResolutionKind::script_enum_type &&
+            resolution != ir::ResolutionKind::global_enum_type) {
             diagnostics_.error("GDS5023", "type-test IR requires a resolved type operand",
                                expression.span);
             valid = false;

@@ -2387,7 +2387,9 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             if (target.resolution != ir::ResolutionKind::godot_type &&
                 target.resolution != ir::ResolutionKind::external_type &&
                 target.resolution != ir::ResolutionKind::script_type &&
-                target.resolution != ir::ResolutionKind::inner_type) {
+                target.resolution != ir::ResolutionKind::inner_type &&
+                target.resolution != ir::ResolutionKind::script_enum_type &&
+                target.resolution != ir::ResolutionKind::global_enum_type) {
                 diagnostics_.error("GDS3001", "type test is missing its resolved target type",
                                    expression.span);
                 return type_test("false");

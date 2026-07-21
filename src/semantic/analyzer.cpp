@@ -979,7 +979,9 @@ Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expressi
                                   (target->kind == ApiResolutionKind::type_reference ||
                                    target->kind == ApiResolutionKind::external_type_reference ||
                                    target->kind == ApiResolutionKind::script_type_reference ||
-                                   target->kind == ApiResolutionKind::inner_type_reference) &&
+                                   target->kind == ApiResolutionKind::inner_type_reference ||
+                                   target->kind == ApiResolutionKind::script_enum_type ||
+                                   target->kind == ApiResolutionKind::global_enum_type) &&
                                   right.kind != TypeKind::void_type;
         if (!valid_target) {
             diagnostics_.error("GDS4067", "the right operand of 'is' must be a type",
