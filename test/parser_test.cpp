@@ -717,6 +717,65 @@ TEST_CASE("parser enforces callable parameter ordering and unique names") {
     REQUIRE_EQ(lambda->parameters.size(), std::size_t{1});
 }
 
+TEST_CASE("parser preserves function and lambda rest parameters") {
+    const gdpp::SourceFile source{
+        "rest_parameters.gd",
+        "func collect(required: int, optional = 2, ...values: Array) -> Array:\n"
+        "    return values\n"
+        "static func static_collect(...values):\n"
+        "    pass\n"
+        "func make_callable():\n"
+        "    return func named(prefix: String, ...parts: Array): return parts\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(script.functions.size(), std::size_t{3});
+    REQUIRE_EQ(script.functions.front().parameters.size(), std::size_t{2});
+    REQUIRE(script.functions.front().rest_parameter.has_value());
+    REQUIRE_EQ(script.functions.front().rest_parameter->name, std::string{"values"});
+    REQUIRE_EQ(script.functions.front().rest_parameter->type,
+               std::optional<std::string>{"Array"});
+    REQUIRE(script.functions.at(1).is_static);
+    REQUIRE(script.functions.at(1).rest_parameter.has_value());
+    const auto* lambda = script.functions.back().body.front().expression()->lambda();
+    REQUIRE(lambda != nullptr);
+    REQUIRE_EQ(lambda->name, std::string{"named"});
+    REQUIRE_EQ(lambda->parameters.size(), std::size_t{1});
+    REQUIRE(lambda->rest_parameter.has_value());
+    REQUIRE_EQ(lambda->rest_parameter->name, std::string{"parts"});
+}
+
+TEST_CASE("parser rejects invalid rest parameter placement and defaults") {
+    const gdpp::SourceFile source{
+        "invalid_rest_parameters.gd",
+        "signal changed(...values)\n"
+        "func after_rest(...values, trailing):\n"
+        "    pass\n"
+        "func default_rest(...values = []):\n"
+        "    pass\n"
+        "func duplicate(value, ...value):\n"
+        "    pass\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+    const auto script = gdpp::Parser{tokens, diagnostics}.parse_script();
+
+    REQUIRE(diagnostics.has_errors());
+    const auto has = [&](const std::string& code) {
+        return std::any_of(diagnostics.items().begin(), diagnostics.items().end(),
+                           [&](const auto& diagnostic) { return diagnostic.code == code; });
+    };
+    REQUIRE(has("GDS2035"));
+    REQUIRE(has("GDS2036"));
+    REQUIRE(has("GDS2037"));
+    REQUIRE(has("GDS2038"));
+    REQUIRE(script.signals.front().parameters.empty());
+    REQUIRE(script.functions.front().rest_parameter.has_value());
+    REQUIRE(script.functions.front().parameters.empty());
+    REQUIRE(!script.functions.at(1).rest_parameter.has_value());
+}
+
 TEST_CASE("parser accepts inline match and conditional suites") {
     const gdpp::SourceFile source{"inline_suites.gd", "func describe(value: int):\n"
                                                       "    match value:\n"

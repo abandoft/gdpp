@@ -334,6 +334,7 @@ struct EnumDeclaration {
 struct FunctionDeclaration {
     std::string name;
     std::vector<Parameter> parameters;
+    std::optional<Parameter> rest_parameter;
     std::optional<std::string> return_type;
     Block body;
     std::vector<Annotation> annotations;
@@ -346,6 +347,7 @@ struct FunctionDeclaration {
 struct LambdaExpression {
     std::string name;
     std::vector<Parameter> parameters;
+    std::optional<Parameter> rest_parameter;
     std::optional<std::string> return_type;
     Block body;
     SourceSpan span{};

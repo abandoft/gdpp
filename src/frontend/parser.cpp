@@ -500,14 +500,16 @@ void Parser::apply_active_warning_ignores(ast::Statement& statement) const {
     }
 }
 
-std::vector<ast::Parameter> Parser::parse_parameters(const std::string_view owner,
-                                                     const bool allow_defaults) {
-    std::vector<ast::Parameter> parameters;
+Parser::ParsedParameters Parser::parse_parameters(const std::string_view owner,
+                                                  const bool allow_defaults,
+                                                  const bool allow_rest) {
+    ParsedParameters parameters;
     std::unordered_map<std::string, SourceSpan> declared_names;
     bool optional_parameter_seen = false;
     consume(TokenKind::left_paren, "expected '('");
     while (!check(TokenKind::right_paren) && !at_end()) {
         const auto begin = current().span;
+        const bool is_rest = match(TokenKind::ellipsis);
         ast::Parameter parameter;
         parameter.name = consume_soft_identifier("expected a parameter name").lexeme;
         if (match_inferred_assignment()) {
@@ -521,11 +523,26 @@ std::vector<ast::Parameter> Parser::parse_parameters(const std::string_view owne
         parameter.span = joined(begin, previous().span);
         const bool has_default = parameter.default_value != nullptr;
         bool accepted = true;
-        if (has_default && !allow_defaults) {
+        if (parameters.rest) {
+            diagnostics_.error("GDS2037", "parameters cannot follow the rest parameter in a " +
+                                               std::string{owner},
+                               parameter.span);
+            accepted = false;
+        }
+        if (is_rest && !allow_rest) {
+            diagnostics_.error("GDS2036",
+                               std::string{owner} + " declarations cannot have a rest parameter",
+                               parameter.span);
+            accepted = false;
+        } else if (is_rest && has_default) {
+            diagnostics_.error("GDS2038", "the rest parameter cannot have a default value",
+                               parameter.span);
+            accepted = false;
+        } else if (has_default && !allow_defaults) {
             diagnostics_.error("GDS2033",
                                std::string{owner} + " parameters cannot have a default value",
                                parameter.span);
-        } else if (!has_default && optional_parameter_seen) {
+        } else if (!is_rest && !has_default && optional_parameter_seen) {
             diagnostics_.error("GDS2034",
                                "mandatory parameters cannot follow optional parameters in a " +
                                    std::string{owner},
@@ -539,9 +556,13 @@ std::vector<ast::Parameter> Parser::parse_parameters(const std::string_view owne
                                parameter.span);
             accepted = false;
         }
-        optional_parameter_seen = optional_parameter_seen || has_default;
-        if (accepted)
-            parameters.push_back(std::move(parameter));
+        optional_parameter_seen = optional_parameter_seen || (has_default && !is_rest);
+        if (accepted) {
+            if (is_rest)
+                parameters.rest = std::move(parameter);
+            else
+                parameters.positional.push_back(std::move(parameter));
+        }
         if (!match(TokenKind::comma) || check(TokenKind::right_paren)) {
             break;
         }
@@ -613,7 +634,7 @@ ast::SignalDeclaration Parser::parse_signal(std::vector<ast::Annotation> annotat
     declaration.annotations = std::move(annotations);
     declaration.name = consume(TokenKind::identifier, "expected a signal name").lexeme;
     if (check(TokenKind::left_paren)) {
-        declaration.parameters = parse_parameters("signal", false);
+        declaration.parameters = parse_parameters("signal", false, false).positional;
     }
     declaration.span = joined(begin, previous().span);
     if (!check(TokenKind::newline)) {
@@ -664,7 +685,9 @@ ast::FunctionDeclaration Parser::parse_function(bool is_static,
         std::any_of(function.annotations.begin(), function.annotations.end(),
                     [](const auto& annotation) { return annotation.name == "abstract"; });
     function.name = consume(TokenKind::identifier, "expected a function name").lexeme;
-    function.parameters = parse_parameters("function");
+    auto parameters = parse_parameters("function");
+    function.parameters = std::move(parameters.positional);
+    function.rest_parameter = std::move(parameters.rest);
     if (match(TokenKind::arrow)) {
         function.return_type = parse_type_name("expected a return type after '->'");
     }
@@ -1254,7 +1277,9 @@ ast::ExpressionPtr Parser::parse_lambda(SourceSpan begin) {
         tokens_[position_ + 1].kind == TokenKind::left_paren) {
         lambda.name = advance().lexeme;
     }
-    lambda.parameters = parse_parameters("lambda");
+    auto parameters = parse_parameters("lambda");
+    lambda.parameters = std::move(parameters.positional);
+    lambda.rest_parameter = std::move(parameters.rest);
     if (match(TokenKind::arrow))
         lambda.return_type = parse_type_name("expected a lambda return type");
     consume(TokenKind::colon, "expected ':' after lambda signature");

@@ -21,6 +21,11 @@ class Parser final {
     [[nodiscard]] ast::Script parse_script();
 
   private:
+    struct ParsedParameters {
+        std::vector<ast::Parameter> positional;
+        std::optional<ast::Parameter> rest;
+    };
+
     class DepthGuard final {
       public:
         DepthGuard(Parser& parser, SourceSpan span);
@@ -54,8 +59,9 @@ class Parser final {
     [[nodiscard]] std::optional<std::string> parse_type_annotation();
     [[nodiscard]] ast::Annotation parse_annotation();
     void apply_warning_directive(const ast::Annotation& annotation);
-    [[nodiscard]] std::vector<ast::Parameter>
-    parse_parameters(std::string_view owner, bool allow_defaults = true);
+    [[nodiscard]] ParsedParameters parse_parameters(std::string_view owner,
+                                                    bool allow_defaults = true,
+                                                    bool allow_rest = true);
     [[nodiscard]] ast::VariableDeclaration parse_variable(bool is_constant,
                                                           std::vector<ast::Annotation> annotations);
     void parse_property_accessors(ast::VariableDeclaration& declaration);
