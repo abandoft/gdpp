@@ -1,3 +1,16 @@
+## 1.7.0
+
+- Added zero-source-change AOT support for GDScript classes that extend types owned by an independent third-party GDExtension, without rebuilding, relinking, or modifying the provider plugin.
+- Introduced an attached AOT backend built on `ScriptLanguageExtension`, `ScriptExtension`, and `ScriptInstance`: the provider continues to own the native Object while generated C++17 behavior supplies script fields, methods, properties, signals, notifications, and RPC metadata.
+- Preserved script inheritance above an attached native root, including field initialization, `_init`, method/property dispatch, virtual callbacks, signal behavior, and inherited or overridden RPC configuration.
+- Implemented exact external `super` calls through the provider's reflected MethodBind compatibility hash and the stable GDExtension ABI instead of unsafe cross-library C++ inheritance or guessed signatures.
+- Extended ClassDB capture and `gdpp_bridge.json` validation with provider identity, exact callable metadata, provider load ordering, cache invalidation, and fail-closed diagnostics when required reflection is unavailable.
+- Converted scenes, standalone resources, embedded resources, and Autoloads to attached compiled scripts during binary-only export while retaining provider-owned native types and serialized state.
+- Preserved third-party descriptors and target libraries byte for byte in exported games, and made the provider registry load before the GDPP project runtime without requiring customer project or vendor source changes.
+- Hardened macOS Universal 2 export with transactional provider-descriptor normalization, per-slice Mach-O validation, crash recovery, and restoration of every source descriptor after export.
+- Added an independent dual-GDExtension fixture and real Godot 4.4–4.7 build, load, runtime, export, PCK-content, binary-architecture, and zero-source-leakage gates for the attached delivery path.
+- Advanced the packaged SDK to schema 6 and runtime ABI 7, hashing and validating all attached runtime headers and sources for host, desktop, mobile, and Web targets.
+
 ## 1.6.0
 
 - Completed the Godot Variant type domain, nullability model, and zero-value truthiness semantics across semantic analysis, typed HIR, generated C++17, and the native runtime.
