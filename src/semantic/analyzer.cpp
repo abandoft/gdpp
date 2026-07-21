@@ -541,15 +541,7 @@ void SemanticAnalyzer::validate_local_call(const ast::FunctionDeclaration& funct
     }
 }
 
-void SemanticAnalyzer::analyze_rest_parameter(const ast::Parameter& parameter,
-                                              const std::string_view owner) {
-    if (api_.version().rfind("4.4", 0) == 0) {
-        diagnostics_.error("GDS4161",
-                           std::string{owner} +
-                               " rest parameters require a Godot 4.5 or newer target",
-                           parameter.span);
-    }
-
+void SemanticAnalyzer::analyze_rest_parameter(const ast::Parameter& parameter) {
     auto type = Type{TypeKind::array, "Array"};
     if (parameter.type) {
         const auto specified = type_from_name(*parameter.type, parameter.span);
@@ -4114,7 +4106,7 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
                                           parameter.span, "invalid default value");
     }
     if (function.rest_parameter)
-        analyze_rest_parameter(*function.rest_parameter, "function");
+        analyze_rest_parameter(*function.rest_parameter);
     const auto current_required = static_cast<std::size_t>(
         std::count_if(function.parameters.begin(), function.parameters.end(),
                       [](const auto& parameter) { return parameter.default_value == nullptr; }));
@@ -4275,7 +4267,7 @@ void SemanticAnalyzer::analyze_lambda(const ast::LambdaExpression& expression) {
                                           parameter.span, "invalid lambda default value");
     }
     if (expression.rest_parameter)
-        analyze_rest_parameter(*expression.rest_parameter, "lambda");
+        analyze_rest_parameter(*expression.rest_parameter);
     const auto flow = analyze_statements(expression.body);
     if (current_callable_suspends_)
         model_.coroutine_lambdas_.insert(&expression);

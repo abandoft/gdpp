@@ -46,7 +46,7 @@ TEST_CASE("semantic analysis accepts Godot rest parameters and unbounded calls")
     REQUIRE(result.success);
 }
 
-TEST_CASE("semantic analysis enforces rest parameter type and target contracts") {
+TEST_CASE("semantic analysis enforces rest parameter type contracts across targets") {
     gdpp::CompileOptions modern;
     modern.target_version = gdpp::GodotVersion::v4_6;
     const auto wrong_type = gdpp::Compiler{}.compile(
@@ -59,7 +59,12 @@ TEST_CASE("semantic analysis enforces rest parameter type and target contracts")
     gdpp::CompileOptions legacy;
     legacy.target_version = gdpp::GodotVersion::v4_4;
     const auto legacy_target = gdpp::Compiler{}.compile(
-        "legacy_rest.gd", "func collect(...values):\n    pass\n", legacy);
+        "legacy_rest.gd",
+        "func collect(required: int, ...values):\n"
+        "    return required + values.size()\n"
+        "func invoke():\n"
+        "    return collect(1, 2, 3)\n",
+        legacy);
     const auto static_initializer = gdpp::Compiler{}.compile(
         "static_init_rest.gd", "static func _static_init(...values):\n    pass\n", modern);
 
@@ -70,11 +75,10 @@ TEST_CASE("semantic analysis enforces rest parameter type and target contracts")
     REQUIRE(!wrong_type.success);
     REQUIRE(!typed_array.success);
     REQUIRE(variant_array.success);
-    REQUIRE(!legacy_target.success);
+    REQUIRE(legacy_target.success);
     REQUIRE(!static_initializer.success);
     REQUIRE(has_code(wrong_type, "GDS4162"));
     REQUIRE(has_code(typed_array, "GDS4163"));
-    REQUIRE(has_code(legacy_target, "GDS4161"));
     REQUIRE(has_code(static_initializer, "GDS4124"));
 }
 

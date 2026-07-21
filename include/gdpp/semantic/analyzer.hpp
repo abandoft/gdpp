@@ -208,7 +208,7 @@ class SemanticAnalyzer final {
     void declare(Symbol symbol);
     [[nodiscard]] const Symbol* resolve(const std::string& name) const noexcept;
     void analyze_function(const ast::FunctionDeclaration& function);
-    void analyze_rest_parameter(const ast::Parameter& parameter, std::string_view owner);
+    void analyze_rest_parameter(const ast::Parameter& parameter);
     void analyze_rpc_annotations(const ast::FunctionDeclaration& function);
     void analyze_class(const ast::ClassDeclaration& declaration);
     void validate_script_abstract_contract(const ast::Script& script);
