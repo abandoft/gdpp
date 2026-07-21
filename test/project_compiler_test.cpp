@@ -811,6 +811,32 @@ TEST_CASE("project compiler dynamically dispatches script overrides with a diffe
     REQUIRE(base_source.find("gdpp::runtime::call_dynamic") != std::string::npos);
 }
 
+TEST_CASE("project compiler isolates fixed and variadic override ABIs") {
+    const auto root = fixture_root("project-vararg-override-abi");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "base.gd", "extends RefCounted\nclass_name VarargOverrideBase\n"
+                                 "func collect(value) -> int:\n    return value\n"
+                                 "func invoke(value: VarargOverrideBase) -> int:\n"
+                                 "    return value.collect(1)\n");
+    write_text(root / "child.gd", "extends VarargOverrideBase\n"
+                                  "class_name VarargOverrideChild\n"
+                                  "func collect(value, ...extras: Array) -> int:\n"
+                                  "    return value + extras.size()\n");
+    const auto options = project_options(root);
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    const auto child_header =
+        read_text(options.output_directory / "generated/vararg_override_child.gd.hpp");
+    const auto base_source =
+        read_text(options.output_directory / "generated/vararg_override_base.gd.cpp");
+    REQUIRE(child_header.find("_gdpp_native_override_collect(godot::Variant value, "
+                              "godot::Array extras)") != std::string::npos);
+    REQUIRE(child_header.find("godot::Array extras) override") == std::string::npos);
+    REQUIRE(base_source.find("gdpp::runtime::call_dynamic") != std::string::npos);
+}
+
 TEST_CASE("project compiler accepts variance-safe script override contracts") {
     const auto root = fixture_root("project-override-variance");
     std::error_code error;
@@ -1477,6 +1503,32 @@ TEST_CASE("project symbol signature changes invalidate dependent script caches")
                         [](const gdpp::ProjectDiagnostic& diagnostic) {
                             return diagnostic.diagnostic.code == "GDS4002";
                         }));
+}
+
+TEST_CASE("project variadic ABI changes invalidate dependent script caches") {
+    const auto root = fixture_root("project-vararg-abi-cache");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "base.gd", "extends RefCounted\nclass_name VarargCacheBase\n"
+                                 "func collect(value: int) -> int:\n    return value\n");
+    write_text(root / "consumer.gd", "extends RefCounted\nclass_name VarargCacheConsumer\n"
+                                     "var source: VarargCacheBase\n"
+                                     "func read() -> int:\n    return source.collect(1)\n");
+    const auto options = project_options(root);
+    const gdpp::ProjectCompiler compiler;
+    const auto initial = compiler.compile(options);
+    REQUIRE(initial.success);
+    REQUIRE_EQ(initial.compiled_count, std::size_t{2});
+
+    write_text(root / "base.gd", "extends RefCounted\nclass_name VarargCacheBase\n"
+                                 "func collect(value: int, ...extras: Array) -> int:\n"
+                                 "    return value + extras.size()\n");
+    const auto changed = compiler.compile(options);
+
+    REQUIRE(changed.success);
+    REQUIRE_EQ(changed.compiled_count, std::size_t{2});
+    REQUIRE_EQ(changed.cache_hit_count, std::size_t{0});
+    REQUIRE(native_class_for(changed, "base.gd") != native_class_for(initial, "base.gd"));
 }
 
 TEST_CASE("project coroutine ABI changes invalidate callers and require cross-script await") {

@@ -308,7 +308,7 @@ bool ScriptSymbolTable::requires_dynamic_dispatch(const ScriptClassSymbol& owner
                                     const ScriptMemberSymbol& right) {
         return left.type == right.type && left.parameters == right.parameters &&
                left.default_parameters == right.default_parameters &&
-               left.is_coroutine == right.is_coroutine;
+               left.is_vararg == right.is_vararg && left.is_coroutine == right.is_coroutine;
     };
     for (const auto& candidate : classes_) {
         if (candidate.path == owner.path)

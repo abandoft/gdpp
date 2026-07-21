@@ -2150,6 +2150,11 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                 if (parameter.default_value)
                     self(self, identity, *parameter.default_value);
             }
+            if (lambda->rest_parameter) {
+                identity << ":rest:" << lambda->rest_parameter->name << ':'
+                         << lambda->rest_parameter->type.value_or("") << ':'
+                         << lambda->rest_parameter->infer_type;
+            }
         }
         identity << ')';
     };
@@ -2183,7 +2188,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                      << static_cast<int>(member.type.kind) << ':' << member.type.name << ':'
                      << member.required_arguments << ':' << member.is_static << ':'
                      << member.has_accessor << ':' << member.has_explicit_type << ':'
-                     << member.is_coroutine << ':' << member.is_abstract;
+                     << member.is_vararg << ':' << member.is_coroutine << ':' << member.is_abstract;
             if (const auto bridge = bridge_classes.find(member.type.name);
                 bridge != bridge_classes.end()) {
                 identity << ":bridge-abi:" << bridge_contract_identity(*bridge->second.bridge);
@@ -2216,8 +2221,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                 identity << "inner-member:" << static_cast<int>(member.kind) << ':' << member.name
                          << ':' << static_cast<int>(member.type.kind) << ':' << member.type.name
                          << ':' << member.required_arguments << ':' << member.is_static << ':'
-                         << member.has_accessor << ':' << member.is_coroutine << ':'
-                         << member.is_abstract;
+                         << member.has_accessor << ':' << member.is_vararg << ':'
+                         << member.is_coroutine << ':' << member.is_abstract;
                 if (const auto bridge = bridge_classes.find(member.type.name);
                     bridge != bridge_classes.end()) {
                     identity << ":bridge-abi:" << bridge_contract_identity(*bridge->second.bridge);
@@ -2254,6 +2259,11 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                     append_expression_identity(append_expression_identity, identity,
                                                *parameter.default_value);
             }
+            if (function.rest_parameter) {
+                identity << ":rest:" << function.rest_parameter->name << ':'
+                         << function.rest_parameter->type.value_or("") << ':'
+                         << function.rest_parameter->infer_type;
+            }
             identity << '\n';
         }
         for (const auto& signal : input.script.signals) {
@@ -2283,6 +2293,11 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                 identity << "inner-function-metadata:" << declaration.name << ':' << function.name
                          << ':';
                 append_annotation_identity(identity, function.annotations);
+                if (function.rest_parameter) {
+                    identity << ":rest:" << function.rest_parameter->name << ':'
+                             << function.rest_parameter->type.value_or("") << ':'
+                             << function.rest_parameter->infer_type;
+                }
                 identity << '\n';
             }
             for (const auto& nested : declaration.classes)

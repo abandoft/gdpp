@@ -1339,6 +1339,7 @@ std::string CodeGenerator::script_method_native_name(const ScriptClassSymbol& ow
     const auto same_native_abi = method.type == (*base)->type &&
                                  method.parameters == (*base)->parameters &&
                                  method.default_parameters == (*base)->default_parameters &&
+                                 method.is_vararg == (*base)->is_vararg &&
                                  coroutine_native_abi(owner, method) ==
                                      coroutine_native_abi(base_owner ? *base_owner : owner, **base);
     // GDScript permits an override to change annotations and to become a coroutine. C++ cannot
@@ -5816,6 +5817,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         return std::any_of(inherited.begin(), inherited.end(), [&](const auto* member) {
             if (member->kind != ScriptMemberKind::function || member->is_static ||
                 member->name != function.name || member->type != function.return_type ||
+                member->is_vararg != function.rest_parameter.has_value() ||
                 member->is_coroutine != function.is_coroutine ||
                 member->parameters.size() != function.parameters.size() ||
                 member->default_parameters.size() != function.parameters.size()) {
