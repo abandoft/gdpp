@@ -50,6 +50,7 @@ func _run() -> void:
     var tool_mode_class := _native_class_for("tool_mode_case.gd")
     var runtime_mode_class := _native_class_for("runtime_mode_case.gd")
     var type_semantics_class := _native_class_for("type_semantics_case.gd")
+    var dictionary_lifetime_class := _native_class_for("dictionary_lifetime_case.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -76,6 +77,7 @@ func _run() -> void:
         or tool_mode_class.is_empty()
         or runtime_mode_class.is_empty()
         or type_semantics_class.is_empty()
+        or dictionary_lifetime_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
@@ -112,6 +114,52 @@ func _run() -> void:
         return
     native_tool_mode = null
     native_runtime_mode = null
+
+    var dictionary_lifetime: Object = ClassDB.instantiate(dictionary_lifetime_class)
+    if dictionary_lifetime == null:
+        push_error("Dictionary lifetime fixture is unavailable")
+        quit(1)
+        return
+    if not dictionary_lifetime.call(&"self_assign_wrappers"):
+        push_error("Reference-backed Godot self-assignment corrupted native storage")
+        dictionary_lifetime = null
+        quit(1)
+        return
+    for iteration in range(64):
+        var dynamic_payload := RefCounted.new()
+        var dynamic_weak := weakref(dynamic_payload)
+        dictionary_lifetime.call(&"replace_dynamic", dynamic_payload)
+        dictionary_lifetime.call(&"self_assign_dynamic")
+        dynamic_payload = null
+        dictionary_lifetime.call(&"clear_dynamic")
+        if dynamic_weak.get_ref() != null:
+            push_error("Dynamic Dictionary replacement retained iteration %d" % iteration)
+            dictionary_lifetime = null
+            quit(1)
+            return
+
+        var typed_payload := RefCounted.new()
+        var typed_weak := weakref(typed_payload)
+        dictionary_lifetime.call(&"replace_typed", typed_payload)
+        typed_payload = null
+        dictionary_lifetime.call(&"clear_typed")
+        if typed_weak.get_ref() != null:
+            push_error("Typed Dictionary replacement retained iteration %d" % iteration)
+            dictionary_lifetime = null
+            quit(1)
+            return
+
+        var shared_payload := RefCounted.new()
+        var shared_weak := weakref(shared_payload)
+        ClassDB.class_call_static(dictionary_lifetime_class, &"replace_shared", shared_payload)
+        shared_payload = null
+        ClassDB.class_call_static(dictionary_lifetime_class, &"clear_shared")
+        if shared_weak.get_ref() != null:
+            push_error("Static Dictionary replacement retained iteration %d" % iteration)
+            dictionary_lifetime = null
+            quit(1)
+            return
+    dictionary_lifetime = null
 
     var native_type_semantics: Object = ClassDB.instantiate(type_semantics_class)
     var type_semantics_script: Script = load("res://type_semantics_case.gd")
