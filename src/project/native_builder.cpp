@@ -239,6 +239,10 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
     std::string ios_slices;
     std::string platform_minimum;
     std::string android_api_level;
+    std::string android_stl;
+    std::string cxx_standard;
+    std::string exceptions;
+    std::string msvc_runtime;
     while (input >> key >> value) {
         if (key == "platform")
             platform = value;
@@ -276,6 +280,14 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
             platform_minimum = value;
         else if (key == "android_api_level")
             android_api_level = value;
+        else if (key == "android_stl")
+            android_stl = value;
+        else if (key == "cxx_standard")
+            cxx_standard = value;
+        else if (key == "exceptions")
+            exceptions = value;
+        else if (key == "msvc_runtime")
+            msvc_runtime = value;
     }
     if (platform != platform_name(options.platform))
         diagnostics.push_back("native SDK platform mismatch: expected " +
@@ -300,11 +312,33 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
             ", package contains " +
             (platform_minimum.empty() ? std::string{"<missing>"} : platform_minimum));
     }
-    if (options.platform == NativePlatform::android && android_api_level != "28") {
+    if (cxx_standard != "17") {
+        diagnostics.push_back("native SDK C++ standard mismatch: expected 17, package contains " +
+                              (cxx_standard.empty() ? std::string{"<missing>"} : cxx_standard));
+    }
+    if (exceptions != "disabled") {
         diagnostics.push_back(
-            "native Android SDK API baseline mismatch: expected 28, package "
-            "contains " +
-            (android_api_level.empty() ? std::string{"<missing>"} : android_api_level));
+            "native SDK exception model mismatch: expected disabled, package contains " +
+            (exceptions.empty() ? std::string{"<missing>"} : exceptions));
+    }
+    const std::string expected_msvc_runtime =
+        options.platform == NativePlatform::windows ? "static" : "not_applicable";
+    if (msvc_runtime != expected_msvc_runtime) {
+        diagnostics.push_back("native SDK MSVC runtime mismatch: expected " +
+                              expected_msvc_runtime + ", package contains " +
+                              (msvc_runtime.empty() ? std::string{"<missing>"} : msvc_runtime));
+    }
+    if (options.platform == NativePlatform::android) {
+        if (android_api_level != "28") {
+            diagnostics.push_back(
+                "native Android SDK API baseline mismatch: expected 28, package contains " +
+                (android_api_level.empty() ? std::string{"<missing>"} : android_api_level));
+        }
+        if (android_stl != "c++_shared") {
+            diagnostics.push_back(
+                "native Android SDK STL mismatch: expected c++_shared, package contains " +
+                (android_stl.empty() ? std::string{"<missing>"} : android_stl));
+        }
     }
     if (options.platform == NativePlatform::web) {
         const auto expected_threads = web_thread_mode_name(options.web_thread_mode);

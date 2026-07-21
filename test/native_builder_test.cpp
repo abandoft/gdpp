@@ -19,6 +19,21 @@ void write_input(const std::filesystem::path& path, const std::string& value = "
     output << value;
 }
 
+std::string read_input(const std::filesystem::path& path) {
+    std::ifstream input{path, std::ios::binary};
+    return {std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+}
+
+void replace_manifest_field(const std::filesystem::path& path, const std::string& current,
+                            const std::string& replacement) {
+    auto content = read_input(path);
+    const auto offset = content.find(current);
+    if (offset == std::string::npos)
+        return;
+    content.replace(offset, current.size(), replacement);
+    write_input(path, content);
+}
+
 std::string attached_runtime_manifest_fields() {
     return "attached_runtime_header_sha256 " + std::string{GDPP_ATTACHED_RUNTIME_HEADER_SHA256} +
            "\nattached_runtime_registry_source_sha256 " +
@@ -27,6 +42,12 @@ std::string attached_runtime_manifest_fields() {
            GDPP_ATTACHED_RUNTIME_INSTANCE_SOURCE_SHA256 +
            "\nattached_runtime_language_source_sha256 " +
            GDPP_ATTACHED_RUNTIME_LANGUAGE_SOURCE_SHA256 + "\n";
+}
+
+std::string native_abi_manifest_fields(const std::string& platform) {
+    return "cxx_standard 17\nexceptions disabled\nmsvc_runtime " +
+           std::string{platform == "windows" ? "static" : "not_applicable"} + "\n" +
+           (platform == "android" ? "android_stl c++_shared\n" : "");
 }
 
 std::filesystem::path make_sdk_fixture(const std::string& name, const std::string& library_name) {
@@ -108,7 +129,8 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
                     GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\n" + attached_runtime_manifest_fields() +
                     "integer_semantics_header_sha256 " + GDPP_INTEGER_SEMANTICS_HEADER_SHA256 +
-                    "\n" + platform_contract + web_threads + ios_contract + "compiler fixture\n");
+                    "\n" + native_abi_manifest_fields(platform) + platform_contract + web_threads +
+                    ios_contract + "compiler fixture\n");
     return root;
 }
 
@@ -216,6 +238,47 @@ TEST_CASE("native builder rejects a legacy SDK before creating compiler commands
     REQUIRE(!plan.success);
     REQUIRE(plan.commands.empty());
     REQUIRE(diagnostic_contains(plan, "reinstall the SDK packaged with this GDPP compiler"));
+}
+
+TEST_CASE("native builder rejects native ABI manifest drift before creating commands") {
+    const auto plan_for = [](const std::filesystem::path& root, const gdpp::NativePlatform platform,
+                             const std::string& architecture) {
+        gdpp::NativeBuildOptions options;
+        options.project_output_directory = root / "project";
+        options.binary_output_directory = root / "addons/gdpp/binary";
+        options.sdk_root = root / "sdk";
+        options.compiler_executable = platform == gdpp::NativePlatform::windows ? "cl" : "clang++";
+        options.platform = platform;
+        options.architecture = architecture;
+        return gdpp::NativeBuilder{}.plan(options);
+    };
+
+    const auto standard_root =
+        make_sdk_fixture("native-builder-standard-contract", "libgodot-cpp.editor.arm64.a");
+    replace_manifest_field(standard_root / "sdk/sdk.manifest", "cxx_standard 17",
+                           "cxx_standard 20");
+    const auto standard = plan_for(standard_root, gdpp::NativePlatform::macos, "arm64");
+    REQUIRE(!standard.success);
+    REQUIRE(standard.commands.empty());
+    REQUIRE(diagnostic_contains(standard, "C++ standard mismatch"));
+
+    const auto windows_root =
+        make_sdk_fixture("native-builder-windows-crt-contract", "godot-cpp.editor.x86_64.lib");
+    replace_manifest_field(windows_root / "sdk/sdk.manifest", "msvc_runtime static",
+                           "msvc_runtime dynamic");
+    const auto windows = plan_for(windows_root, gdpp::NativePlatform::windows, "x86_64");
+    REQUIRE(!windows.success);
+    REQUIRE(windows.commands.empty());
+    REQUIRE(diagnostic_contains(windows, "MSVC runtime mismatch"));
+
+    const auto android_root =
+        make_sdk_fixture("native-builder-android-stl-contract", "libgodot-cpp.editor.arm64.a");
+    replace_manifest_field(android_root / "sdk/sdk.manifest", "android_stl c++_shared",
+                           "android_stl c++_static");
+    const auto android = plan_for(android_root, gdpp::NativePlatform::android, "arm64");
+    REQUIRE(!android.success);
+    REQUIRE(android.commands.empty());
+    REQUIRE(diagnostic_contains(android, "Android SDK STL mismatch"));
 }
 
 TEST_CASE("native builder rejects a modified SDK runtime before creating compiler commands") {
@@ -728,7 +791,8 @@ TEST_CASE("native builder fails closed for incomplete iOS target contracts") {
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
                     GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\n" + attached_runtime_manifest_fields() +
                     "integer_semantics_header_sha256 " + GDPP_INTEGER_SEMANTICS_HEADER_SHA256 +
-                    "\nplatform_minimum iOS_16.0\nios_deployment_target 16.0\n"
+                    "\n" + native_abi_manifest_fields("ios") +
+                    "platform_minimum iOS_16.0\nios_deployment_target 16.0\n"
                     "ios_slices device-arm64\n"
                     "source_paths mapped\n");
     gdpp::NativeBuildOptions options;
@@ -898,7 +962,7 @@ TEST_CASE("native builder emits a macOS universal compile and link plan") {
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
                     GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\n" + attached_runtime_manifest_fields() +
                     "integer_semantics_header_sha256 " + GDPP_INTEGER_SEMANTICS_HEADER_SHA256 +
-                    "\ncompiler fixture\n");
+                    "\n" + native_abi_manifest_fields("macos") + "compiler fixture\n");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -930,7 +994,7 @@ TEST_CASE("macOS universal SDK can build a thin host development library") {
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
                     GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\n" + attached_runtime_manifest_fields() +
                     "integer_semantics_header_sha256 " + GDPP_INTEGER_SEMANTICS_HEADER_SHA256 +
-                    "\ncompiler fixture\n");
+                    "\n" + native_abi_manifest_fields("macos") + "compiler fixture\n");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
