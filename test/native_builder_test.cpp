@@ -531,6 +531,8 @@ TEST_CASE("native builder emits MSVC compile and link arguments") {
     REQUIRE(contains(plan.commands.front().arguments, "/std:c++17"));
     REQUIRE(contains(plan.commands.front().arguments, "/utf-8"));
     REQUIRE(contains(plan.commands.front().arguments, "/MT"));
+    REQUIRE(contains(plan.commands.front().arguments, "/bigobj"));
+    REQUIRE(contains(plan.commands.front().arguments, "/experimental:deterministic"));
     REQUIRE(contains(plan.commands.front().arguments, "/DWINDOWS_ENABLED"));
     REQUIRE(contains(plan.commands.front().arguments, "/DTYPED_METHOD_BIND"));
     REQUIRE(contains(plan.commands.front().arguments, "/D_HAS_EXCEPTIONS=0"));
