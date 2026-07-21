@@ -49,6 +49,18 @@ function(gdpp_add_sdk_binding target_name api_version godot_target output_variab
         list(APPEND configure_arguments
             "-DCMAKE_CXX_FLAGS=/D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00"
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=${CMAKE_MSVC_RUNTIME_LIBRARY}")
+        # ExternalProject starts a fresh CMake configure and cannot inherit tool paths cached by
+        # the parent.  Hosted toolchains normally expose rc.exe and mt.exe through PATH, but a
+        # standalone Visual Studio/Windows SDK installation may only be discoverable by the
+        # outer configure.  Preserve the exact resource and manifest tools so every packaged SDK
+        # profile uses the same complete MSVC toolchain contract.
+        if(CMAKE_RC_COMPILER)
+            list(APPEND configure_arguments
+                "-DCMAKE_RC_COMPILER=${CMAKE_RC_COMPILER}")
+        endif()
+        if(CMAKE_MT)
+            list(APPEND configure_arguments "-DCMAKE_MT=${CMAKE_MT}")
+        endif()
     elseif(WIN32)
         list(APPEND configure_arguments
             "-DCMAKE_CXX_FLAGS=-D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00")
