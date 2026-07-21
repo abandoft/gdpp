@@ -1070,31 +1070,50 @@ TEST_CASE("compiler lazily initializes and explicitly releases resource constant
                 release) != std::string::npos);
 }
 
-TEST_CASE("compiler copy assigns dictionary storage through the leak safe runtime path") {
+TEST_CASE("compiler safely assigns every reference-backed Godot storage family") {
     const gdpp::Compiler compiler;
     const auto result =
         compiler.compile("dictionary_storage.gd",
                          "extends Node\n"
                          "const STREAMS: Dictionary = {0: preload(\"res://audio/theme.wav\")}\n"
                          "var state: Dictionary = {\"ready\": true}\n"
+                         "var typed_state: Dictionary[String, int] = {\"ready\": 1}\n"
+                         "var labels: Array[String] = [\"ready\"]\n"
+                         "var bytes: PackedByteArray = PackedByteArray([1, 2])\n"
+                         "var title: String = \"ready\"\n"
+                         "var key: StringName = &\"ready\"\n"
+                         "var path: NodePath = ^\"root\"\n"
+                         "var callback: Callable = reset\n"
                          "@onready var ready_state: Dictionary = {\"node\": get_node(\".\")}\n"
                          "func reset() -> void:\n"
                          "    state = {}\n"
-                         "    state = state\n");
+                         "    state = state\n"
+                         "    typed_state = typed_state\n"
+                         "    labels = labels\n"
+                         "    bytes = bytes\n"
+                         "    title = title\n"
+                         "    key = key\n"
+                         "    path = path\n"
+                         "    callback = callback\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find(
-                "gdpp::runtime::assign_dictionary(_gdpp_constant_STREAMS_storage(),") !=
+                "gdpp::runtime::assign_native_storage(_gdpp_constant_STREAMS_storage(),") !=
             std::string::npos);
-    REQUIRE(result.unit.source.find("gdpp::runtime::assign_dictionary(state,") !=
+    REQUIRE(result.unit.source.find("gdpp::runtime::assign_native_storage(state,") !=
             std::string::npos);
-    REQUIRE(result.unit.source.find("gdpp::runtime::assign_dictionary(ready_state,") !=
+    REQUIRE(result.unit.source.find("gdpp::runtime::assign_native_storage(ready_state,") !=
             std::string::npos);
     REQUIRE(result.unit.source.find(
-                "gdpp::runtime::assign_dictionary(_gdpp_constant_STREAMS_storage(), "
+                "gdpp::runtime::assign_native_storage(_gdpp_constant_STREAMS_storage(), "
                 "std::remove_reference_t<decltype(_gdpp_constant_STREAMS_storage())>{})") !=
             std::string::npos);
-    REQUIRE(result.unit.source.find("state = godot::Dictionary") == std::string::npos);
+    for (const auto* storage :
+         {"state", "typed_state", "labels", "bytes", "title", "key", "path", "callback"}) {
+        REQUIRE(result.unit.source.find("gdpp::runtime::assign_native_storage(" +
+                                        std::string{storage} + ", " + storage + ")") !=
+                std::string::npos);
+    }
 }
 
 TEST_CASE("compiler defers instance initialization while the editor exports scenes") {
@@ -3685,7 +3704,9 @@ TEST_CASE("inferred collection types and numeric-looking strings generate native
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("count = static_cast<int64_t>(1)") != std::string::npos);
-    REQUIRE(result.unit.source.find("text = godot::String(\"123\")") != std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::assign_native_storage(text, godot::String(\"123\"))") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find("godot::Array values") != std::string::npos);
     REQUIRE(result.unit.source.find("_gdpp_dictionary_") != std::string::npos);
     REQUIRE(result.unit.source.find("godot::Variant value = _gdpp_array_iterable_") !=
@@ -3697,7 +3718,9 @@ TEST_CASE("empty strings remain empty through lexing semantic analysis and code 
     const auto result = compiler.compile("empty.gd", "var text := \"\"\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("text = godot::String(\"\")") != std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::assign_native_storage(text, godot::String(\"\"))") !=
+            std::string::npos);
 }
 
 TEST_CASE("compiler optimization can be enabled or disabled without changing the frontend") {

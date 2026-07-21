@@ -74,10 +74,41 @@ void compound_assign(godot::Variant& target, godot::Variant::Operator operation,
                      const godot::Variant& value);
 void compound_assign_integer(godot::Variant& target, godot::Variant::Operator operation,
                              std::int64_t value);
-// godot-cpp 4.x cannot move-assign Dictionary safely: its generated move operator constructs a
-// new dictionary over the live opaque handle without destroying that handle first. Always route
-// generated Dictionary storage writes through the copy operator, including self-assignment.
+// godot-cpp 4.x generated built-in copy operators do not guard exact self-assignment. Dictionary
+// additionally cannot be move-assigned safely because its move operator constructs over the live
+// opaque handle without destroying it. Generated reference-backed storage writes use these
+// helpers so self-assignment is a no-op and every Dictionary-derived target uses the copy ABI.
 void assign_dictionary(godot::Dictionary& target, const godot::Dictionary& value);
+
+template <typename Target, typename Value,
+          std::enable_if_t<std::is_base_of_v<godot::Dictionary, Target> &&
+                               std::is_base_of_v<godot::Dictionary,
+                                                 std::remove_cv_t<std::remove_reference_t<Value>>>,
+                           int> = 0>
+void assign_native_storage(Target& target, Value&& value) {
+    if constexpr (std::is_same_v<Target, std::remove_cv_t<std::remove_reference_t<Value>>>) {
+        if (std::addressof(target) == std::addressof(value))
+            return;
+    }
+    if constexpr (std::is_same_v<Target, godot::Dictionary>) {
+        assign_dictionary(target, static_cast<const godot::Dictionary&>(value));
+    } else {
+        target.operator=(static_cast<const godot::Dictionary&>(value));
+    }
+}
+
+template <typename Target, typename Value,
+          std::enable_if_t<!(std::is_base_of_v<godot::Dictionary, Target> &&
+                             std::is_base_of_v<godot::Dictionary,
+                                               std::remove_cv_t<std::remove_reference_t<Value>>>),
+                           int> = 0>
+void assign_native_storage(Target& target, Value&& value) {
+    if constexpr (std::is_same_v<Target, std::remove_cv_t<std::remove_reference_t<Value>>>) {
+        if (std::addressof(target) == std::addressof(value))
+            return;
+    }
+    target = std::forward<Value>(value);
+}
 [[nodiscard]] godot::Variant unary(godot::Variant::Operator operation,
                                    const godot::Variant& operand);
 [[nodiscard]] std::int64_t integer_divide(std::int64_t left, std::int64_t right);

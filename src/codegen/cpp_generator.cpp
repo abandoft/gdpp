@@ -1901,10 +1901,15 @@ std::string CodeGenerator::emit_subscript_store(const Type& container, std::stri
 
 std::string CodeGenerator::emit_storage_assignment(const Type& target_type, std::string target,
                                                    std::string value) const {
-    if (target_type.kind == TypeKind::dictionary) {
-        return "gdpp::runtime::assign_dictionary(" + std::move(target) + ", " + std::move(value) +
-               ")";
-    }
+    const bool reference_backed_builtin =
+        target_type.kind == TypeKind::string || target_type.kind == TypeKind::string_name ||
+        target_type.kind == TypeKind::array || target_type.kind == TypeKind::dictionary ||
+        (target_type.kind == TypeKind::builtin &&
+         (target_type.name == "NodePath" || target_type.name == "Callable" ||
+          target_type.name == "Signal" || target_type.is_packed_array()));
+    if (reference_backed_builtin)
+        return "gdpp::runtime::assign_native_storage(" + std::move(target) + ", " +
+               std::move(value) + ")";
     return std::move(target) + " = " + std::move(value);
 }
 
