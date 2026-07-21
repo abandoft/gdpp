@@ -64,6 +64,7 @@ jobs:
         shell: bash
         env:
           GODOT: ${{ steps.godot.outputs.executable }}
+          GODOT_VERSION: ${{ matrix.version }}
         run: |
           set -euo pipefail
           fixture=build/plugin/attached-extension-project
@@ -107,7 +108,7 @@ jobs:
             "$output/gdpp-attached-runtime.log"
             "$output/gdpp-attached-pck-audit.log"
           )
-          if [[ '${{ matrix.version }}' == 4.4.* ]]; then
+          if [[ "$GODOT_VERSION" == 4.4.* ]]; then
             # Godot 4.4's built-in GDScript parser does not understand typed
             # variadics. GDPP owns the source grammar, so these diagnostics are
             # non-authoritative as long as the AOT export and runtime assertions
