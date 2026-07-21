@@ -7,7 +7,7 @@ const HARNESS_FILES := {
     "res://inspect_export_pck.gd.uid": true,
 }
 const EXTENSION_REGISTRY := "res://.godot/extension_list.cfg"
-const RUNTIME_DESCRIPTOR := "res://addons/gdpp/gdpp_project.gdextension"
+const RUNTIME_DESCRIPTOR := "res://addons/gdpp/gdpp.gdextension"
 const AUDIT_DESCRIPTOR := "res://gdpp_pck_audit.gdextension"
 
 
@@ -150,7 +150,7 @@ func _collect_files(directory_path: String, output: PackedStringArray) -> bool:
 
 
 func _allowed_runtime_path(path: String) -> bool:
-    if path == "res://addons/gdpp/gdpp_project.gdextension":
+    if path == RUNTIME_DESCRIPTOR:
         return true
     if path.begins_with("res://addons/gdpp/runtime/autoload/"):
         return path.ends_with(".tscn")
@@ -176,8 +176,6 @@ func _validate_and_load_runtime_extension(
         violations.append("缺少运行时 GDExtension 注册表")
     else:
         var extension_registry := FileAccess.get_file_as_string(EXTENSION_REGISTRY)
-        if extension_registry.contains("res://addons/gdpp/gdpp.gdextension"):
-            violations.append("运行时注册表包含仅供编辑器使用的 GDPP 编译器")
         if not extension_registry.contains(RUNTIME_DESCRIPTOR):
             violations.append("运行时注册表缺少 GDPP 项目原生库")
 

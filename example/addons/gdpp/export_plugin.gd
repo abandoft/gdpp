@@ -4,7 +4,7 @@ extends EditorExportPlugin
 const OUTPUT_DIRECTORY := "res://addons/gdpp/build/project"
 const BINARY_DIRECTORY := "res://addons/gdpp/binary"
 const COMPILER_DESCRIPTOR := "res://addons/gdpp/gdpp.gdextension"
-const STABLE_DESCRIPTOR := "res://addons/gdpp/gdpp_project.gdextension"
+const LEGACY_RUNTIME_DESCRIPTOR := "res://addons/gdpp/gdpp_project.gdextension"
 const ADDON_PREFIX := "res://addons/gdpp/"
 const RUNTIME_RESOURCE_PREFIX := "res://addons/gdpp/runtime/"
 const COMPILER_SETTING := "gdpp/build/cpp_compiler"
@@ -17,9 +17,12 @@ const ALLOW_SOURCE_FALLBACK_OPTION := "gdpp/allow_source_fallback"
 const EXTENSION_REGISTRY := "res://.godot/extension_list.cfg"
 const EXTENSION_REGISTRY_BACKUP := "res://.godot/gdpp_extension_list.export-backup"
 const COMPILER_DESCRIPTOR_BACKUP := "res://.godot/gdpp_compiler_descriptor.export-backup"
+const PROVIDER_DESCRIPTORS_BACKUP := (
+    "res://.godot/gdpp_provider_descriptors.export-backup.json"
+)
 const SCRIPT_CLASS_CACHE := "res://.godot/global_script_class_cache.cfg"
 const GODOT_EXPORT_CACHE_DIRECTORY := "res://.godot/exported"
-const EXPORT_TRANSFORM_REVISION := 17
+const EXPORT_TRANSFORM_REVISION := 18
 
 var _compiler: Object
 var _ready := false
@@ -42,6 +45,7 @@ var _extension_registry_original := ""
 var _extension_registry_modified := false
 var _compiler_descriptor_original := ""
 var _compiler_descriptor_modified := false
+var _provider_descriptor_originals: Dictionary = {}
 var _has_resource_scripts := false
 var _export_output_path := ""
 var _autoload_files: Dictionary = {}
@@ -323,17 +327,17 @@ func _export_file(path: String, _type: String, _features: PackedStringArray) -> 
         skip()
         return
 
-    if path == STABLE_DESCRIPTOR and not _include_project_extension:
+    if path == LEGACY_RUNTIME_DESCRIPTOR:
         skip()
         return
 
-    # Only the compiler descriptor exists in the editable addon. During export it is
-    # transactionally rewritten so Godot discovers exactly one target library, then replaced in
-    # the package by the stable runtime descriptor path. Keeping two physical .gdextension files
-    # makes Godot scan both before skip() and either warn or package a native library twice.
+    # Keep one physical descriptor path in both editor and export. During export its contents are
+    # transactionally rewritten for native-library discovery, while the package receives the
+    # runtime descriptor bytes at that same path. Godot's forced extension-list filter only keeps
+    # physical project paths; a virtual second path is silently removed on Godot 4.6+.
     if path == COMPILER_DESCRIPTOR:
         if _include_project_extension and not _runtime_descriptor.is_empty():
-            add_file(STABLE_DESCRIPTOR, _runtime_descriptor.to_utf8_buffer(), false)
+            add_file(COMPILER_DESCRIPTOR, _runtime_descriptor.to_utf8_buffer(), false)
         skip()
         return
 
@@ -342,12 +346,19 @@ func _export_file(path: String, _type: String, _features: PackedStringArray) -> 
         skip()
         return
 
+    # macOS Universal 2 export temporarily normalizes third-party descriptors for Godot's
+    # architecture scanner. Ship the provider's byte-for-byte original runtime descriptor.
+    if _provider_descriptor_originals.has(path):
+        add_file(path, str(_provider_descriptor_originals[path]).to_utf8_buffer(), false)
+        skip()
+        return
+
     if path == SCRIPT_CLASS_CACHE and _ready and not _export_script_class_cache.is_empty():
         add_file(path, _export_script_class_cache.to_utf8_buffer(), false)
         skip()
         return
 
-    if path.begins_with(ADDON_PREFIX) and path != STABLE_DESCRIPTOR:
+    if path.begins_with(ADDON_PREFIX):
         skip()
         return
 
@@ -1737,13 +1748,15 @@ func _prepare_extension_registry(include_project_extension := true) -> bool:
             # The generated project extension may inherit or dynamically use classes registered
             # by any retained provider extension. Always place it after third-party descriptors
             # so ClassDB is populated before the project library initializes.
-            if value == STABLE_DESCRIPTOR:
+            if value == LEGACY_RUNTIME_DESCRIPTOR:
                 continue
             if value.begins_with(OUTPUT_DIRECTORY + "/"):
                 continue
             retained.append(value)
+    if not _prepare_provider_scan_descriptors(retained):
+        return false
     if include_project_extension:
-        retained.append(STABLE_DESCRIPTOR)
+        retained.append(COMPILER_DESCRIPTOR)
     _export_extension_registry = "" if retained.is_empty() else "\n".join(retained) + "\n"
     # `.godot/extension_list.cfg` is generated metadata and is not guaranteed to pass through
     # `_export_file()`. Add the sanitized registry explicitly; otherwise a virtual runtime
@@ -1821,9 +1834,140 @@ func _prepare_compiler_descriptor() -> bool:
     return true
 
 
+func _prepare_provider_scan_descriptors(descriptors: PackedStringArray) -> bool:
+    if _target_platform != "macos" or _target_architecture != "universal":
+        return true
+
+    var originals: Dictionary = {}
+    var rewritten: Dictionary = {}
+    for path: String in descriptors:
+        if path.get_extension().to_lower() != "gdextension":
+            continue
+        if not FileAccess.file_exists(path):
+            _fail_export("provider extension descriptor does not exist: %s" % path)
+            return false
+        var config := ConfigFile.new()
+        if config.load(path) != OK:
+            _fail_export("cannot parse provider extension descriptor: %s" % path)
+            return false
+        if not config.has_section("libraries"):
+            continue
+
+        var pairs: Dictionary = {}
+        var library_keys := config.get_section_keys("libraries")
+        for key: String in library_keys:
+            var parts := key.split(".", false)
+            if not parts.has("macos") or not parts.has("arm64"):
+                continue
+            var architecture_index := parts.find("arm64")
+            var sibling_parts := parts.duplicate()
+            sibling_parts[architecture_index] = "x86_64"
+            var sibling_key := ".".join(sibling_parts)
+            if not config.has_section_key("libraries", sibling_key):
+                continue
+            var arm_library := str(config.get_value("libraries", key, ""))
+            var x86_library := str(config.get_value("libraries", sibling_key, ""))
+            if arm_library.is_empty() or arm_library != x86_library:
+                continue
+            var universal_parts := parts.duplicate()
+            universal_parts[architecture_index] = "universal"
+            var universal_key := ".".join(universal_parts)
+            if (
+                config.has_section_key("libraries", universal_key)
+                and str(config.get_value("libraries", universal_key, "")) != arm_library
+            ):
+                _fail_export(
+                    (
+                        "provider extension '%s' has conflicting '%s' and dual-architecture "
+                        + "library entries"
+                    )
+                    % [path, universal_key]
+                )
+                return false
+            if not _is_universal_macos_library(arm_library):
+                _fail_export(
+                    (
+                        "provider extension '%s' maps arm64 and x86_64 to '%s', but the "
+                        + "library is not a verifiable Universal 2 Mach-O"
+                    )
+                    % [path, arm_library]
+                )
+                return false
+            pairs[universal_key] = {
+                "arm": key,
+                "x86": sibling_key,
+                "library": arm_library,
+            }
+
+        if pairs.is_empty():
+            continue
+        var original := FileAccess.get_file_as_string(path)
+        if original.is_empty():
+            _fail_export("cannot read provider extension descriptor: %s" % path)
+            return false
+        for universal_key: String in pairs:
+            var pair: Dictionary = pairs[universal_key]
+            config.erase_section_key("libraries", str(pair.arm))
+            config.erase_section_key("libraries", str(pair.x86))
+            config.set_value("libraries", universal_key, str(pair.library))
+        originals[path] = original
+        rewritten[path] = config.encode_to_text()
+
+    if rewritten.is_empty():
+        return true
+    if not _write_text_file(PROVIDER_DESCRIPTORS_BACKUP, JSON.stringify(originals)):
+        _fail_export("cannot create the provider descriptor transaction backup")
+        return false
+    _provider_descriptor_originals = originals
+    for path: String in rewritten:
+        if not _write_text_file(path, str(rewritten[path])):
+            _restore_provider_descriptors()
+            _fail_export("cannot prepare provider extension scan descriptor: %s" % path)
+            return false
+    return true
+
+
+func _is_universal_macos_library(resource_path: String) -> bool:
+    var binary_path := ProjectSettings.globalize_path(resource_path)
+    if DirAccess.dir_exists_absolute(binary_path) and resource_path.ends_with(".framework"):
+        binary_path = binary_path.path_join(resource_path.get_file().get_basename())
+    if not FileAccess.file_exists(binary_path):
+        return false
+    var output: Array = []
+    if OS.execute("/usr/bin/lipo", ["-archs", binary_path], output, true) != 0:
+        return false
+    var architectures := PackedStringArray()
+    for line: Variant in output:
+        architectures.append_array(str(line).strip_edges().split(" ", false))
+    return architectures.has("arm64") and architectures.has("x86_64")
+
+
 func _restore_export_transaction() -> void:
+    _restore_provider_descriptors()
     _restore_compiler_descriptor()
     _restore_extension_registry()
+
+
+func _restore_provider_descriptors() -> void:
+    if (
+        _provider_descriptor_originals.is_empty()
+        and FileAccess.file_exists(PROVIDER_DESCRIPTORS_BACKUP)
+    ):
+        var recovered: Variant = JSON.parse_string(
+            FileAccess.get_file_as_string(PROVIDER_DESCRIPTORS_BACKUP)
+        )
+        if not recovered is Dictionary:
+            push_error("GDPP export: cannot parse the provider descriptor transaction backup")
+            return
+        _provider_descriptor_originals = recovered
+    if _provider_descriptor_originals.is_empty():
+        return
+    for path: String in _provider_descriptor_originals:
+        if not _write_text_file(path, str(_provider_descriptor_originals[path])):
+            push_error("GDPP export: cannot restore provider descriptor '%s'" % path)
+            return
+    DirAccess.remove_absolute(ProjectSettings.globalize_path(PROVIDER_DESCRIPTORS_BACKUP))
+    _provider_descriptor_originals.clear()
 
 
 func _restore_compiler_descriptor() -> void:
@@ -1988,6 +2132,7 @@ func _reset_export_state() -> void:
     _build_profile = ""
     _export_extension_registry = ""
     _export_script_class_cache = ""
+    _provider_descriptor_originals.clear()
     _include_project_extension = false
     _has_resource_scripts = false
     _export_output_path = ""

@@ -50,7 +50,7 @@ if(NOT duplicate_descriptor_scan EQUAL -1)
 endif()
 foreach(required_runtime_export IN ITEMS
         "if not _prepare_compiler_descriptor():"
-        "add_file(STABLE_DESCRIPTOR, _runtime_descriptor.to_utf8_buffer(), false)"
+        "add_file(COMPILER_DESCRIPTOR, _runtime_descriptor.to_utf8_buffer(), false)"
         "add_file(EXTENSION_REGISTRY, _export_extension_registry.to_utf8_buffer(), false)"
         "func _clear_godot_export_cache() -> bool:"
         "func _restore_compiler_descriptor() -> void:")

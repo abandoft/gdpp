@@ -2,7 +2,7 @@ extends SceneTree
 
 const EXTENSION_REGISTRY := "res://.godot/extension_list.cfg"
 const VENDOR_DESCRIPTOR := "res://addons/vendor/vendor.gdextension"
-const PROJECT_DESCRIPTOR := "res://addons/gdpp/gdpp_project.gdextension"
+const PROJECT_DESCRIPTOR := "res://addons/gdpp/gdpp.gdextension"
 const HARNESS_FILES := {
     "res://audit_attached_export_pck.gd": true,
     "res://audit_attached_export_pck.gd.uid": true,
@@ -68,8 +68,6 @@ func _audit_extension_registry(violations: PackedStringArray) -> void:
         violations.append("export omitted the runtime extension registry")
         return
     var entries := FileAccess.get_file_as_string(EXTENSION_REGISTRY).split("\n", false)
-    if entries.has("res://addons/gdpp/gdpp.gdextension"):
-        violations.append("runtime registry contains the compiler extension")
     var vendor_index := entries.find(VENDOR_DESCRIPTOR)
     var project_index := entries.find(PROJECT_DESCRIPTOR)
     if vendor_index < 0:
@@ -78,6 +76,12 @@ func _audit_extension_registry(violations: PackedStringArray) -> void:
         violations.append("runtime registry omitted the GDPP project extension")
     if vendor_index >= 0 and project_index >= 0 and vendor_index >= project_index:
         violations.append("runtime registry loads GDPP before its vendor provider")
+    if FileAccess.file_exists(PROJECT_DESCRIPTOR):
+        var descriptor := FileAccess.get_file_as_string(PROJECT_DESCRIPTOR)
+        if not descriptor.contains("entry_symbol = \"gdpp_project_library_init\""):
+            violations.append("runtime descriptor still points to the compiler entry")
+        if descriptor.contains("gdpp_compiler"):
+            violations.append("runtime descriptor still references a compiler library")
 
 
 func _collect_files(directory_path: String, output: PackedStringArray) -> bool:
