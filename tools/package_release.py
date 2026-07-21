@@ -17,7 +17,6 @@ from pathlib import Path
 SUPPORTED_GODOT_VERSIONS = ("4.4", "4.5", "4.6", "4.7")
 SDK_SCHEMA = 6
 STATIC_ADDON_FILES = (
-    "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "export_plugin.gd",
     "gdpp.gdextension",
