@@ -4,6 +4,21 @@ if(EXISTS "${runtime_descriptor}")
         "The runtime descriptor must be generated into the export, not scanned beside the compiler")
 endif()
 
+file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/plugin.cfg" plugin_metadata)
+foreach(required_plugin_metadata IN ITEMS
+        "name=\"GDPP\""
+        "description=\"GDScript AOT & Extension\""
+        "author=\"GodotHub\""
+        "website=\"https://godothub.com\""
+        "version=\"1.7.0\""
+        "script=\"plugin.gd\"")
+    string(FIND "${plugin_metadata}" "${required_plugin_metadata}" metadata_offset)
+    if(metadata_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Plugin metadata is missing: ${required_plugin_metadata}")
+    endif()
+endforeach()
+
 set(compiler_descriptor
     "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/gdpp.gdextension")
 file(READ "${compiler_descriptor}" compiler_content)
