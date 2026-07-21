@@ -9,7 +9,7 @@
 - 发行 SDK 升级至 schema 7 / runtime ABI 8，对 C++17、异常模型、MSVC 静态 CRT、Android `c++_shared`、源码完整性、平台、架构、profile 和运行时契约执行失败关闭校验。
 - 修正 Godot 4.4 兼容门禁：仅允许由 GDPP 新语法触发且精确匹配的宿主内置 parser 提示，所有其他导入、导出、运行时与 PCK 诊断仍严格失败。
 - 新增 Godot 4.4 真实原生压力测试，覆盖引用型值自赋值及动态、强类型、静态 Dictionary 的重复释放，并在 macOS、Linux、Windows 独立构建 provider SDK 消费者。
-- 使用官方 Godot 4.6.1 认证未经客户源码修改的 Pong Duel：29 个场景、58 个节点、87 个属性、9 个 AOT Autoload 场景、第三方 IPC 实际启动，二进制导出/运行成功；372 文件 PCK 的源码、compiler、SDK 泄漏为 0。
+- 使用官方 Godot 4.6.1 复验二进制交付链，覆盖 AOT Autoload、独立第三方 GDExtension 启动、导出包运行，以及源码、compiler、SDK 零泄漏。
 
 ## 1.7.0
 

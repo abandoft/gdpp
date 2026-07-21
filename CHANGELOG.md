@@ -9,7 +9,7 @@
 - Advanced the packaged SDK to schema 7 and runtime ABI 8, with fail-closed C++17, exception model, static MSVC CRT, Android `c++_shared`, source-integrity, platform, architecture, profile, and runtime validation.
 - Corrected the Godot 4.4 compatibility gate to admit only the exact built-in parser diagnostics caused by newer GDPP-owned syntax while continuing to reject every unrelated import, export, runtime, and PCK diagnostic.
 - Added real Godot 4.4 native stress coverage for reference-backed value self-assignment and repeated dynamic, typed, and static Dictionary release, plus independent provider SDK builds on macOS, Linux, and Windows.
-- Certified the unchanged Pong Duel customer project on official Godot 4.6.1: 29 scenes, 58 nodes, 87 properties, nine AOT Autoload scenes, third-party IPC startup, successful binary export/runtime, and a 372-file PCK with zero source/compiler/SDK leakage.
+- Revalidated the binary delivery path on official Godot 4.6.1, including AOT Autoloads, independent third-party GDExtension startup, exported runtime execution, and zero source/compiler/SDK leakage.
 
 ## 1.7.0
 
