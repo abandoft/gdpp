@@ -139,6 +139,9 @@ using CallableContinuation = std::function<godot::Variant(const godot::Array&)>;
 [[nodiscard]] godot::Callable make_callable(godot::Object* owner, std::size_t required_arguments,
                                             std::size_t maximum_arguments,
                                             CallableContinuation continuation);
+[[nodiscard]] godot::Callable make_callable(godot::Object* owner, std::size_t required_arguments,
+                                            std::size_t positional_arguments, bool is_vararg,
+                                            CallableContinuation continuation);
 
 // Local lambdas remain ordinary Godot Callables when they escape, but a call made while the
 // generated C++ retains the concrete adapter type can invoke the closure directly. This removes
@@ -163,6 +166,14 @@ template <typename Callback> class LocalCallable final : public godot::Callable 
     LocalCallable(godot::Object* owner, std::size_t required_arguments,
                   std::size_t maximum_arguments, Callback callback)
         : godot::Callable(make_callable(owner, required_arguments, maximum_arguments,
+                                        [bridge = callback](const godot::Array& arguments) mutable {
+                                            return bridge(arguments);
+                                        })),
+          callback_(std::move(callback)) {}
+
+    LocalCallable(godot::Object* owner, std::size_t required_arguments,
+                  std::size_t positional_arguments, bool is_vararg, Callback callback)
+        : godot::Callable(make_callable(owner, required_arguments, positional_arguments, is_vararg,
                                         [bridge = callback](const godot::Array& arguments) mutable {
                                             return bridge(arguments);
                                         })),
@@ -216,6 +227,15 @@ template <typename Callback>
                                        std::size_t maximum_arguments, Callback&& callback) {
     using StoredCallback = std::decay_t<Callback>;
     return LocalCallable<StoredCallback>(owner, required_arguments, maximum_arguments,
+                                         std::forward<Callback>(callback));
+}
+
+template <typename Callback>
+[[nodiscard]] auto make_local_callable(godot::Object* owner, std::size_t required_arguments,
+                                       std::size_t positional_arguments, bool is_vararg,
+                                       Callback&& callback) {
+    using StoredCallback = std::decay_t<Callback>;
+    return LocalCallable<StoredCallback>(owner, required_arguments, positional_arguments, is_vararg,
                                          std::forward<Callback>(callback));
 }
 

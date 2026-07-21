@@ -165,10 +165,11 @@ class AwaitCallable final : public godot::CallableCustom {
 class LambdaCallable final : public godot::CallableCustom {
   public:
     LambdaCallable(godot::Object* owner, std::size_t required_arguments,
-                   std::size_t maximum_arguments, CallableContinuation continuation)
+                   std::size_t positional_arguments, bool is_vararg,
+                   CallableContinuation continuation)
         : owner_(owner ? owner->get_instance_id() : godot::ObjectID{}),
-          required_arguments_(required_arguments), maximum_arguments_(maximum_arguments),
-          continuation_(std::move(continuation)) {}
+          required_arguments_(required_arguments), positional_arguments_(positional_arguments),
+          is_vararg_(is_vararg), continuation_(std::move(continuation)) {}
 
     [[nodiscard]] std::uint32_t hash() const override {
         return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(this));
@@ -198,7 +199,7 @@ class LambdaCallable final : public godot::CallableCustom {
 
     [[nodiscard]] int get_argument_count(bool& valid) const override {
         valid = true;
-        return static_cast<int>(maximum_arguments_);
+        return static_cast<int>(positional_arguments_);
     }
 
     void call(const godot::Variant** arguments, int argument_count, godot::Variant& return_value,
@@ -214,9 +215,9 @@ class LambdaCallable final : public godot::CallableCustom {
             error.expected = static_cast<int32_t>(required_arguments_);
             return;
         }
-        if (argument_count > static_cast<int>(maximum_arguments_)) {
+        if (!is_vararg_ && argument_count > static_cast<int>(positional_arguments_)) {
             error.error = GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS;
-            error.expected = static_cast<int32_t>(maximum_arguments_);
+            error.expected = static_cast<int32_t>(positional_arguments_);
             return;
         }
         godot::Array values;
@@ -229,7 +230,8 @@ class LambdaCallable final : public godot::CallableCustom {
   private:
     godot::ObjectID owner_;
     std::size_t required_arguments_{0};
-    std::size_t maximum_arguments_{0};
+    std::size_t positional_arguments_{0};
+    bool is_vararg_{false};
     CallableContinuation continuation_;
 };
 
@@ -674,12 +676,19 @@ void complete_coroutine(const CoroutineStatePtr& state, const godot::Variant& re
 
 godot::Callable make_callable(godot::Object* owner, std::size_t required_arguments,
                               std::size_t maximum_arguments, CallableContinuation continuation) {
-    if (!continuation || required_arguments > maximum_arguments) {
+    return make_callable(owner, required_arguments, maximum_arguments, false,
+                         std::move(continuation));
+}
+
+godot::Callable make_callable(godot::Object* owner, std::size_t required_arguments,
+                              std::size_t positional_arguments, const bool is_vararg,
+                              CallableContinuation continuation) {
+    if (!continuation || required_arguments > positional_arguments) {
         godot::UtilityFunctions::push_error("GDPP: invalid lambda callable configuration");
         return {};
     }
-    return godot::Callable{memnew(
-        LambdaCallable(owner, required_arguments, maximum_arguments, std::move(continuation)))};
+    return godot::Callable{memnew(LambdaCallable(owner, required_arguments, positional_arguments,
+                                                 is_vararg, std::move(continuation)))};
 }
 
 godot::Variant call_dynamic_impl(godot::Variant& target, const godot::StringName& method,
