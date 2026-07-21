@@ -1995,9 +1995,10 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                      "' is not declared by Godot or project scripts; the project contains "
                      "third-party GDExtensions (" +
                      providers.str() +
-                     "). Godot can attach GDScript to that native base, but the current GDPP "
-                     "backend cannot register a cross-library GDExtension subclass; binary-only "
-                     "AOT is blocked instead of emitting an unsafe class")});
+                     "). Attached AOT requires the provider class and exact MethodBind hashes "
+                     "from the active ClassDB snapshot or gdpp_bridge.json; load the provider "
+                     "extension in the editor or supply its runtime bridge metadata. "
+                     "Binary-only AOT is blocked instead of guessing an unsafe ABI")});
     }
     if (has_project_errors(result.diagnostics))
         return result;

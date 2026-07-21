@@ -884,7 +884,7 @@ TEST_CASE("project compiler rejects missing and cyclic script bases transactiona
     REQUIRE(!std::filesystem::exists(options.output_directory / "manifest.txt"));
 }
 
-TEST_CASE("project compiler identifies unsupported third-party native base classes") {
+TEST_CASE("project compiler rejects third-party bases without runtime metadata") {
     const auto root = fixture_root("project-external-native-base");
     std::error_code error;
     std::filesystem::remove_all(root, error);
@@ -897,7 +897,7 @@ TEST_CASE("project compiler identifies unsupported third-party native base class
     REQUIRE(!result.success);
     REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(), [](const auto& item) {
         return item.diagnostic.code == "PRJ0018" &&
-               item.diagnostic.message.find("cross-library GDExtension subclass") !=
+               item.diagnostic.message.find("active ClassDB snapshot or gdpp_bridge.json") !=
                    std::string::npos;
     }));
 }
