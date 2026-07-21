@@ -114,6 +114,20 @@ foreach(required_editor_only_contract IN ITEMS
             "Editor-only runtime export guard is missing: ${required_editor_only_contract}")
     endif()
 endforeach()
+foreach(required_autoload_remap IN ITEMS
+        "add_file(script_path + \".remap\", remap.to_utf8_buffer(), false)"
+        "path=\\\"%s\\\"")
+    string(FIND "${export_plugin}" "${required_autoload_remap}" autoload_remap_offset)
+    if(autoload_remap_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Binary autoload remap is missing: ${required_autoload_remap}")
+    endif()
+endforeach()
+string(FIND "${export_plugin}" "ProjectSettings.set_setting(setting" autoload_mutation_offset)
+if(NOT autoload_mutation_offset EQUAL -1)
+    message(FATAL_ERROR
+        "Export callbacks must not mutate autoload ProjectSettings after project.binary is saved")
+endif()
 foreach(required_attached_contract IN ITEMS
         "distribution_result.get(\"attached_script_bases\", {})"
         "ClassDB.class_exists(&\"AttachedCompiledScript\")"

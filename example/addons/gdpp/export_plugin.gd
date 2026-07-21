@@ -789,15 +789,18 @@ func _prepare_autoloads() -> bool:
 func _activate_autoloads() -> void:
     for setting: String in _autoload_replacements:
         var original := str(_autoload_originals[setting])
-        var prefix := "*" if original.begins_with("*") else ""
-        ProjectSettings.set_setting(setting, prefix + str(_autoload_replacements[setting]))
+        var script_path := original.trim_prefix("*")
+        var generated_path := str(_autoload_replacements[setting])
+        # ProjectSettings has already serialized project.binary before this callback. A virtual
+        # import remap preserves the customer's original autoload setting while redirecting the
+        # stripped script path to its generated native scene inside the exported package.
+        var remap := "[remap]\n\npath=\"%s\"\n" % generated_path.c_escape()
+        add_file(script_path + ".remap", remap.to_utf8_buffer(), false)
     for path: String in _autoload_files:
         add_file(path, str(_autoload_files[path]).to_utf8_buffer(), false)
 
 
 func _restore_autoloads() -> void:
-    for setting: String in _autoload_originals:
-        ProjectSettings.set_setting(setting, _autoload_originals[setting])
     _autoload_originals.clear()
 
 
