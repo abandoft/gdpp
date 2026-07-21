@@ -21,11 +21,12 @@ namespace {
 
 class AttachedScriptInstance final {
   public:
-    AttachedScriptInstance(godot::Object* owner, godot::Ref<AttachedCompiledScript> script,
-                           AttachedScriptDescriptor descriptor,
-                           godot::Ref<AttachedScriptBehavior> behavior)
-        : owner{owner}, script{std::move(script)}, descriptor{std::move(descriptor)},
-          behavior{std::move(behavior)} {}
+    AttachedScriptInstance(godot::Object* attached_owner,
+                           godot::Ref<AttachedCompiledScript> attached_script,
+                           AttachedScriptDescriptor attached_descriptor,
+                           godot::Ref<AttachedScriptBehavior> attached_behavior)
+        : owner{attached_owner}, script{std::move(attached_script)},
+          descriptor{std::move(attached_descriptor)}, behavior{std::move(attached_behavior)} {}
 
     ~AttachedScriptInstance() {
         behavior->detach_owner();
