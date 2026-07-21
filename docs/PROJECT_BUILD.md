@@ -65,7 +65,6 @@ example/addons/gdpp/
 ├── export_plugin.gd
 ├── plugin.cfg
 ├── plugin.gd
-├── LICENSE
 └── THIRD_PARTY_NOTICES.md
 ```
 
