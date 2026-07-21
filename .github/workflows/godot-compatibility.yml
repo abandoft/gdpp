@@ -101,11 +101,43 @@ jobs:
           grep -q '^GDPP_ATTACHED_PCK_VIOLATIONS=0$' \
             "$output/gdpp-attached-pck-audit.log"
 
+          diagnostic_logs=(
+            "$output/gdpp-attached-import.log"
+            "$output/gdpp-attached-export.log"
+            "$output/gdpp-attached-runtime.log"
+            "$output/gdpp-attached-pck-audit.log"
+          )
+          if [[ '${{ matrix.version }}' == 4.4.* ]]; then
+            # Godot 4.4's built-in GDScript parser does not understand typed
+            # variadics. GDPP owns the source grammar, so these diagnostics are
+            # non-authoritative as long as the AOT export and runtime assertions
+            # above pass. Keep the allowlist exact so unrelated failures remain
+            # release blockers.
+            grep -q 'Parse Error: Expected parameter name\.' \
+              "$output/gdpp-attached-import.log"
+            grep -q 'GDScript::reload (res://vendor_child.gd:24)' \
+              "$output/gdpp-attached-import.log"
+            for log in \
+                "$output/gdpp-attached-import.log" \
+                "$output/gdpp-attached-export.log"; do
+              sed -E \
+                -e '/^SCRIPT ERROR: Parse Error: Expected parameter name\.$/d' \
+                -e '/^SCRIPT ERROR: Parse Error: Could not resolve super class inheritance from "res:\/\/vendor_(child|grandchild)\.gd"\.$/d' \
+                -e '/^[[:space:]]+at: GDScript::reload \(res:\/\/(export_main|vendor_child|vendor_grandchild)\.gd:[0-9]+\)$/d' \
+                -e '/^ERROR: Failed to load script "res:\/\/(export_main|vendor_child|vendor_grandchild)\.gd" with error "Parse error"\.$/d' \
+                -e '/^[[:space:]]+at: load \(modules\/gdscript\/gdscript\.cpp:[0-9]+\)$/d' \
+                "$log" > "$log.authoritative"
+            done
+            diagnostic_logs=(
+              "$output/gdpp-attached-import.log.authoritative"
+              "$output/gdpp-attached-export.log.authoritative"
+              "$output/gdpp-attached-runtime.log"
+              "$output/gdpp-attached-pck-audit.log"
+            )
+          fi
+
           if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|Parse Error:|WARNING:|Unable to open' \
-              "$output/gdpp-attached-import.log" \
-              "$output/gdpp-attached-export.log" \
-              "$output/gdpp-attached-runtime.log" \
-              "$output/gdpp-attached-pck-audit.log"; then
+              "${diagnostic_logs[@]}"; then
             echo 'Attached GDExtension export emitted a forbidden diagnostic.'
             exit 1
           fi
