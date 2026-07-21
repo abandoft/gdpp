@@ -480,6 +480,12 @@ godot::Variant instantiate_attached_script(const godot::String& source_path,
         (find_method(*descriptor, "_init") && !construction.consumed)) {
         if (error)
             *error = "failed to attach or initialize compiled script: " + descriptor->source_path;
+        // ClassDB returns a strong Variant for RefCounted instances, but ordinary Objects remain
+        // caller-owned. Release either ownership model before reporting construction failure.
+        if (godot::Object::cast_to<godot::RefCounted>(object))
+            instance = godot::Variant{};
+        else
+            godot::memdelete(object);
         return {};
     }
     return instance;
