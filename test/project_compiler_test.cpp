@@ -757,24 +757,40 @@ TEST_CASE("project compiler exposes preloaded scripts as typed namespaces") {
     std::filesystem::remove_all(root, error);
     write_text(root / "library.gd", "extends RefCounted\n"
                                     "const LIMIT: int = 40\n"
+                                    "static var TAG: String = \"stable\"\n"
                                     "enum State { IDLE = 0, READY = 7 }\n"
                                     "static func answer(value: int = 2) -> int:\n"
                                     "    return LIMIT + value\n"
                                     "class Item:\n"
                                     "    enum Mode { COLD = 0, HOT = 3 }\n"
                                     "    var mode: Mode = Mode.HOT\n"
+                                    "    var child: Child = null\n"
+                                    "    class Child:\n"
+                                    "        var id: int = 7\n"
                                     "    func value() -> int:\n"
-                                    "        return 42\n");
+                                    "        return 42\n"
+                                    "    func root_state() -> int:\n"
+                                    "        return State.READY\n");
     write_text(root / "consumer.gd", "extends Node\n"
                                      "const library = preload(\"library.gd\")\n"
+                                     "const LibraryScript = preload(\"library.gd\")\n"
+                                     "var root_value: LibraryScript = null\n"
                                      "var item: library.Item = null\n"
                                      "var items: Array[library.Item] = []\n"
                                      "var state: library.State = library.State.READY\n"
                                      "var mode: library.Item.Mode = library.Item.Mode.HOT\n"
                                      "func make() -> library.Item:\n"
                                      "    return library.Item.new()\n"
+                                     "func cast_root(value: Variant) -> LibraryScript:\n"
+                                     "    return value as LibraryScript\n"
+                                     "func is_root(value: LibraryScript) -> bool:\n"
+                                     "    return value is LibraryScript\n"
                                      "func total() -> int:\n"
-                                     "    return library.answer() + library.LIMIT\n");
+                                     "    return library.answer() + library.LIMIT\n"
+                                     "func tag() -> String:\n"
+                                     "    return library.TAG\n"
+                                     "func set_tag(value: String) -> void:\n"
+                                     "    library.TAG = value\n");
 
     const auto options = project_options(root);
     const auto result = gdpp::ProjectCompiler{}.compile(options);
@@ -791,18 +807,37 @@ TEST_CASE("project compiler exposes preloaded scripts as typed namespaces") {
     REQUIRE(library != result.scripts.end());
     REQUIRE(consumer != result.scripts.end());
     REQUIRE_EQ(consumer->dependencies, std::vector<std::string>{"library.gd"});
-    REQUIRE_EQ(library->inner_class_names.size(), std::size_t{1});
-    const auto& item_class = library->inner_class_names.front();
+    REQUIRE_EQ(library->inner_class_names.size(), std::size_t{2});
+    const auto item = std::find_if(library->inner_class_names.begin(),
+                                   library->inner_class_names.end(), [](const auto& name) {
+                                       return name.find("__Item__Child") == std::string::npos;
+                                   });
+    REQUIRE(item != library->inner_class_names.end());
+    const auto& item_class = *item;
+    const auto library_header =
+        read_text(options.output_directory / "generated" / library->header_file_name);
+    for (const auto& inner : library->inner_class_names)
+        REQUIRE(library_header.find("class " + inner + ";") != std::string::npos);
+    const auto library_source =
+        read_text(options.output_directory / "generated" / library->source_file_name);
+    REQUIRE(library_source.find(library->class_name + "::State::_gdpp_enum_READY") !=
+            std::string::npos);
     const auto header =
         read_text(options.output_directory / "generated" / consumer->header_file_name);
     REQUIRE(header.find("#include \"" + library->header_file_name + "\"") !=
             std::string::npos);
     REQUIRE(header.find("godot::Ref<" + item_class + "> item") != std::string::npos);
+    REQUIRE(header.find("godot::Ref<" + library->class_name + "> root_value") !=
+            std::string::npos);
     const auto source =
         read_text(options.output_directory / "generated" / consumer->source_file_name);
     REQUIRE(source.find("InternalClassResource<" + item_class + ">{}.instantiate()") !=
             std::string::npos);
     REQUIRE(source.find(library->class_name + "::answer(") != std::string::npos);
+    REQUIRE(source.find(library->class_name + "::_gdpp_get_TAG()") != std::string::npos);
+    REQUIRE(source.find(library->class_name + "::_gdpp_set_TAG(value)") != std::string::npos);
+    REQUIRE(source.find("godot::Object::cast_to<" + library->class_name + ">((value).ptr())") !=
+            std::string::npos);
     REQUIRE(source.find(library->class_name + "::LIMIT") != std::string::npos);
     REQUIRE(source.find(library->class_name + "::State::_gdpp_enum_READY") !=
             std::string::npos);
@@ -1732,6 +1767,46 @@ TEST_CASE("project coroutine ABI changes invalidate callers and require cross-sc
     REQUIRE(implementation_change.success);
     REQUIRE_EQ(implementation_change.compiled_count, std::size_t{1});
     REQUIRE_EQ(implementation_change.cache_hit_count, std::size_t{1});
+}
+
+TEST_CASE("preload alias casts preserve void coroutine ABI at call sites") {
+    const auto root = fixture_root("project-preload-alias-void-coroutine");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "producer.gd", "extends Node\n"
+                                     "signal resumed\n"
+                                     "func run() -> void:\n"
+                                     "    await resumed\n");
+    write_text(root / "consumer.gd", "extends Node\n"
+                                     "const Producer = preload(\"producer.gd\")\n"
+                                     "func consume(value: Variant) -> void:\n"
+                                     "    var producer := value as Producer\n"
+                                     "    await producer.run()\n");
+
+    const auto options = project_options(root);
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    const auto producer = std::find_if(result.scripts.begin(), result.scripts.end(),
+                                       [](const auto& script) {
+                                           return script.relative_path ==
+                                                  std::filesystem::path{"producer.gd"};
+                                       });
+    const auto consumer = std::find_if(result.scripts.begin(), result.scripts.end(),
+                                       [](const auto& script) {
+                                           return script.relative_path ==
+                                                  std::filesystem::path{"consumer.gd"};
+                                       });
+    REQUIRE(producer != result.scripts.end());
+    REQUIRE(consumer != result.scripts.end());
+    const auto producer_header =
+        read_text(options.output_directory / "generated" / producer->header_file_name);
+    const auto consumer_source =
+        read_text(options.output_directory / "generated" / consumer->source_file_name);
+    REQUIRE(producer_header.find("virtual godot::Variant run();") != std::string::npos);
+    REQUIRE(consumer_source.find("[&]() -> godot::Variant") != std::string::npos);
+    REQUIRE(consumer_source.find("return _gdpp_call_receiver_") != std::string::npos);
+    REQUIRE(consumer_source.find("->run(); }())") != std::string::npos);
 }
 
 TEST_CASE("project compiler isolates coroutine overrides behind dynamic script dispatch") {

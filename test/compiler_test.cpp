@@ -737,8 +737,9 @@ TEST_CASE("compiler preserves instance defaults and explicit null through native
     REQUIRE(result.unit.source.find("DEFVAL(gdpp::runtime::default_argument())") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("DEFVAL(godot::Variant())") == std::string::npos);
-    REQUIRE(result.unit.source.find("? nullptr : godot::Object::cast_to<godot::Control>") !=
-            std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "? static_cast<godot::Control*>(nullptr) : "
+                "godot::Object::cast_to<godot::Control>") != std::string::npos);
 }
 
 TEST_CASE("compiler gives dynamic conditional branches an unambiguous native common type") {
@@ -1731,6 +1732,17 @@ TEST_CASE("compiler applies GDScript truthiness to RefCounted objects") {
     REQUIRE(result.unit.source.find("(!((shape).is_valid()))") != std::string::npos);
 }
 
+TEST_CASE("object conditional expressions emit an explicitly typed null branch") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile("nullable_image.gd", "extends Node\n"
+                                                              "func load_image(ok: bool) -> Image:\n"
+                                                              "    var image := Image.create(1, 1, false, Image.FORMAT_RGBA8)\n"
+                                                              "    return image if ok else null\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("godot::Ref<godot::Image>{}") != std::string::npos);
+}
+
 TEST_CASE("compiler synthesizes ready for onready fields") {
     const gdpp::Compiler compiler;
     const auto result =
@@ -2281,11 +2293,17 @@ TEST_CASE("compiler lowers negated membership through the Variant operator") {
     const gdpp::Compiler compiler;
     const auto result =
         compiler.compile("membership.gd", "func missing(value: Variant, items: Array) -> bool:\n"
-                                          "    return value not in items\n");
+                                          "    return value not in items\n"
+                                          "func contains_node(value: Node, items: Array[Node]) -> bool:\n"
+                                          "    return value in items\n"
+                                          "func sibling_material(value: CanvasItemMaterial) -> ShaderMaterial:\n"
+                                          "    return value as ShaderMaterial\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find(
                 "!(static_cast<bool>(gdpp::runtime::binary(godot::Variant::OP_IN") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::ShaderMaterial>") !=
             std::string::npos);
 }
 
@@ -2824,7 +2842,11 @@ TEST_CASE("compiler lowers dynamic calls properties and keyed access through the
         "func write_key(target: Variant, key: Variant, value: Variant) -> void:\n"
         "    target[key] = value\n"
         "func increment_key(target: Variant, key: Variant, value: Variant) -> void:\n"
-        "    target[key] += value\n");
+        "    target[key] += value\n"
+        "class Payload:\n"
+        "    func dynamic_surface() -> Variant:\n"
+        "        self.missing_method()\n"
+        "        return self.missing_property\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("gdpp::runtime::call_dynamic") != std::string::npos);
@@ -3468,6 +3490,34 @@ TEST_CASE("Godot numeric class names map to their actual header names") {
             std::string::npos);
 }
 
+TEST_CASE("Godot ClassDB maps to the collision-safe godot-cpp singleton") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile("core_types.gd", "extends Node\n"
+                                                          "func available(name: StringName) -> bool:\n"
+                                                          "    return ClassDB.class_exists(name)\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("#include <godot_cpp/classes/class_db_singleton.hpp>") !=
+            std::string::npos);
+    REQUIRE(result.unit.header.find("#include <godot_cpp/classes/class_db.hpp>") ==
+            std::string::npos);
+    REQUIRE(result.unit.source.find("godot::ClassDBSingleton::get_singleton()") !=
+            std::string::npos);
+}
+
+TEST_CASE("Godot properties include concrete native getter result classes") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile("scene_root.gd", "extends Node\n"
+                                                          "func scene_root() -> Node:\n"
+                                                          "    return get_tree().root\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("#include <godot_cpp/classes/scene_tree.hpp>") !=
+            std::string::npos);
+    REQUIRE(result.unit.header.find("#include <godot_cpp/classes/window.hpp>") !=
+            std::string::npos);
+}
+
 TEST_CASE("semantic analysis rejects duplicate declarations and invalid typed initializers") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("invalid.gd", "var count: int = \"not a number\"\n"
@@ -3950,6 +4000,19 @@ TEST_CASE("compiler matches zero-arity varargs constant preload and warning rang
                             return diagnostic.severity == gdpp::DiagnosticSeverity::warning &&
                                    diagnostic.code == "GDS4130";
                         }));
+}
+
+TEST_CASE("compiler lowers GDScript debug stack queries on the 4.4 baseline") {
+    gdpp::CompileOptions options;
+    options.target_version = gdpp::GodotVersion::v4_4;
+    const auto result = gdpp::Compiler{}.compile(
+        "stack.gd", "func caller() -> Dictionary:\n"
+                    "    var stack := get_stack()\n"
+                    "    return stack[0] if not stack.is_empty() else {}\n",
+        options);
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("gdpp::runtime::get_stack()") != std::string::npos);
 }
 
 TEST_CASE("warning ignores scope every semantic warning on a function") {
