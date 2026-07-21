@@ -246,6 +246,31 @@ ScriptSymbolTable::find_inner(const ScriptClassSymbol& owner,
     return unique;
 }
 
+const ScriptInnerClassSymbol*
+ScriptSymbolTable::find_inner_native(const std::string& name) const noexcept {
+    for (const auto& owner : classes_) {
+        const auto found = std::find_if(
+            owner.inner_classes.begin(), owner.inner_classes.end(),
+            [&](const ScriptInnerClassSymbol& inner) { return inner.native_class_name == name; });
+        if (found != owner.inner_classes.end())
+            return &*found;
+    }
+    return nullptr;
+}
+
+const ScriptClassSymbol*
+ScriptSymbolTable::owner_of(const ScriptInnerClassSymbol& inner) const noexcept {
+    for (const auto& owner : classes_) {
+        const auto found = std::find_if(owner.inner_classes.begin(), owner.inner_classes.end(),
+                                        [&](const ScriptInnerClassSymbol& candidate) {
+                                            return &candidate == &inner;
+                                        });
+        if (found != owner.inner_classes.end())
+            return &owner;
+    }
+    return nullptr;
+}
+
 const ScriptMemberSymbol*
 ScriptSymbolTable::find_inner_member(const ScriptInnerClassSymbol& owner,
                                      const std::string& name) const noexcept {

@@ -99,4 +99,26 @@ TEST_CASE("attached script declarations shadow external members") {
     REQUIRE_EQ(resolved->type, override.type);
 }
 
+TEST_CASE("script symbols resolve project-wide internal native identities") {
+    gdpp::ScriptSymbolTable symbols;
+    gdpp::ScriptClassSymbol script;
+    script.path = "messages.gd";
+    script.script_name = "messages";
+    script.native_class_name = "GDPPNative_Messages";
+    script.header_file_name = "messages.gd.hpp";
+    gdpp::ScriptInnerClassSymbol message;
+    message.name = "Message";
+    message.native_class_name = "GDPPNative_Messages__Message";
+    script.inner_classes.push_back(message);
+    symbols.add(std::move(script));
+
+    const auto* inner = symbols.find_inner_native("GDPPNative_Messages__Message");
+    REQUIRE(inner != nullptr);
+    REQUIRE_EQ(inner->name, std::string{"Message"});
+    const auto* owner = symbols.owner_of(*inner);
+    REQUIRE(owner != nullptr);
+    REQUIRE_EQ(owner->path, std::string{"messages.gd"});
+    REQUIRE(symbols.find_inner_native("Message") == nullptr);
+}
+
 } // namespace

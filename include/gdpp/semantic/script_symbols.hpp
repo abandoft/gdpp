@@ -135,6 +135,10 @@ class ScriptSymbolTable final {
                                                     const std::string& name) const noexcept;
     [[nodiscard]] const ScriptInnerClassSymbol* find_inner(const ScriptClassSymbol& owner,
                                                            const std::string& name) const noexcept;
+    [[nodiscard]] const ScriptInnerClassSymbol*
+    find_inner_native(const std::string& name) const noexcept;
+    [[nodiscard]] const ScriptClassSymbol*
+    owner_of(const ScriptInnerClassSymbol& inner) const noexcept;
     [[nodiscard]] const ScriptMemberSymbol*
     find_inner_member(const ScriptInnerClassSymbol& owner, const std::string& name) const noexcept;
     [[nodiscard]] std::vector<const ScriptMemberSymbol*>
