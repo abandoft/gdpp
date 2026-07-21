@@ -381,6 +381,13 @@ std::int64_t length(const godot::Variant& value) {
     return static_cast<std::int64_t>(result);
 }
 
+godot::Array get_stack() {
+    // Godot exposes GDScript stack frames only while its language debugger is active. Native AOT
+    // frames do not have GDScript VM stack records, so the compatible non-debug result is empty.
+    // Callers already use this contract to fall back to an unknown source location.
+    return {};
+}
+
 godot::Variant convert_value(const godot::Variant& value, const std::int64_t type) {
     if (type < 0 || type >= static_cast<std::int64_t>(godot::Variant::VARIANT_MAX)) {
         godot::UtilityFunctions::push_error(

@@ -83,6 +83,7 @@ void compound_assign_integer(godot::Variant& target, godot::Variant::Operator op
 [[nodiscard]] godot::Array make_range(std::int64_t start, std::int64_t stop);
 [[nodiscard]] godot::Array make_range(std::int64_t start, std::int64_t stop, std::int64_t step);
 [[nodiscard]] std::int64_t length(const godot::Variant& value);
+[[nodiscard]] godot::Array get_stack();
 [[nodiscard]] godot::Variant convert_value(const godot::Variant& value, std::int64_t type);
 [[nodiscard]] bool type_exists(const godot::Variant& name);
 [[nodiscard]] godot::String character(std::int64_t code);

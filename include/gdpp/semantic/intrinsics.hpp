@@ -14,6 +14,7 @@ enum class IntrinsicKind : std::uint8_t {
     preload,
     range,
     length,
+    get_stack,
     convert,
     type_exists,
     character,
@@ -36,6 +37,7 @@ enum class IntrinsicResultRule : std::uint8_t {
     integer,
     string,
     color,
+    array,
     integer_array,
     resource,
 };

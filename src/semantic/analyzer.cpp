@@ -654,6 +654,15 @@ SemanticAnalyzer::find_inner_class(const std::string& name) const noexcept {
     return script_symbols_ ? script_symbols_->find_inner_native(name) : nullptr;
 }
 
+const ScriptClassSymbol*
+SemanticAnalyzer::find_script_class(const std::string& name) const noexcept {
+    if (!script_symbols_)
+        return nullptr;
+    if (const auto* script = script_symbols_->find_class(name))
+        return script;
+    return script_symbols_->find_native_class(name);
+}
+
 const ScriptInnerClassSymbol*
 SemanticAnalyzer::inner_base_of(const ScriptInnerClassSymbol& owner) const noexcept {
     if (owner.base_class_name.empty())
@@ -815,6 +824,11 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
         canonical += ']';
         return {parsed_type.kind, std::move(canonical)};
     }
+    if (const auto alias = script_resource_aliases_.find(name);
+        alias != script_resource_aliases_.end()) {
+        record_script_dependency(alias->second);
+        return {TypeKind::object, alias->second->native_class_name};
+    }
     if (enum_types_.find(name) != enum_types_.end()) {
         if (current_inner_class_) {
             const auto owner = current_inner_class_->native_class_name.empty()
@@ -912,7 +926,7 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
         return {TypeKind::enumeration, name};
     }
     const auto type = parsed_type;
-    const auto* project_type = script_symbols_ ? script_symbols_->find_global(name) : nullptr;
+    const auto* project_type = find_script_class(name);
     const auto* external_type = script_symbols_ ? script_symbols_->find_external(name) : nullptr;
     if (external_type)
         model_.referenced_extension_abis_.insert(external_type->provider_abi);
@@ -936,10 +950,15 @@ bool SemanticAnalyzer::object_type_inherits(const Type& derived, const Type& bas
     if (script_symbols_) {
         const auto* derived_script = script_symbols_->find_class(derived.name);
         base_script = script_symbols_->find_class(base.name);
+        if (!derived_script)
+            derived_script = script_symbols_->find_native_class(derived.name);
+        if (!base_script)
+            base_script = script_symbols_->find_native_class(base.name);
         if (!derived_script && current_script_ && derived.name == current_script_->script_name)
             derived_script = current_script_;
         if (derived_script && base_script)
-            return script_symbols_->inherits(*derived_script, base.name);
+            return derived_script == base_script ||
+                   script_symbols_->inherits(*derived_script, base_script->script_name);
         if (derived_script && api_.find_class(base.name))
             return api_.inherits(derived_script->godot_base_type, base.name);
 
@@ -1060,7 +1079,7 @@ std::optional<Type> SemanticAnalyzer::object_iteration_element_type(const Type& 
         return validate_protocol(
             [&](const std::string& name) { return find_inner_member(*inner, name); });
     }
-    if (const auto* script = script_symbols_ ? script_symbols_->find_class(object.name) : nullptr) {
+    if (const auto* script = find_script_class(object.name)) {
         record_script_dependency(script);
         return validate_protocol(
             [&](const std::string& name) { return script_symbols_->find_member(*script, name); });
@@ -1099,6 +1118,20 @@ Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expressi
                                                  const Type& left, const Type& right) {
     const auto& operation = expression.value();
     if (operation == "is" || operation == "is not") {
+        auto target_type = right;
+        if (expression.operand(1)->kind() == ast::ExpressionKind::identifier) {
+            const auto alias = script_resource_aliases_.find(expression.operand(1)->value());
+            if (alias != script_resource_aliases_.end()) {
+                target_type = {TypeKind::object, alias->second->native_class_name};
+                model_.expression_types_.insert_or_assign(expression.operand(1).get(), target_type);
+                model_.api_resolutions_.insert_or_assign(
+                    expression.operand(1).get(),
+                    ApiResolution{ApiResolutionKind::script_type_reference,
+                                  alias->second->native_class_name, "", "", target_type, 0, 0,
+                                  false, true});
+                record_script_dependency(alias->second);
+            }
+        }
         const auto* target = model_.api_resolution_of(*expression.operand(1));
         const bool valid_target = target &&
                                   (target->kind == ApiResolutionKind::type_reference ||
@@ -1107,7 +1140,7 @@ Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expressi
                                    target->kind == ApiResolutionKind::inner_type_reference ||
                                    target->kind == ApiResolutionKind::script_enum_type ||
                                    target->kind == ApiResolutionKind::global_enum_type) &&
-                                  right.kind != TypeKind::void_type;
+                                  target_type.kind != TypeKind::void_type;
         if (!valid_target) {
             diagnostics_.error("GDS4067", "the right operand of 'is' must be a type",
                                expression.operand(1)->span);
@@ -1124,6 +1157,20 @@ Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expressi
         return {TypeKind::boolean, "bool"};
     }
     if (operation == "as") {
+        auto target_type = right;
+        if (expression.operand(1)->kind() == ast::ExpressionKind::identifier) {
+            const auto alias = script_resource_aliases_.find(expression.operand(1)->value());
+            if (alias != script_resource_aliases_.end()) {
+                target_type = {TypeKind::object, alias->second->native_class_name};
+                model_.expression_types_.insert_or_assign(expression.operand(1).get(), target_type);
+                model_.api_resolutions_.insert_or_assign(
+                    expression.operand(1).get(),
+                    ApiResolution{ApiResolutionKind::script_type_reference,
+                                  alias->second->native_class_name, "", "", target_type, 0, 0,
+                                  false, true});
+                record_script_dependency(alias->second);
+            }
+        }
         const auto* target = model_.api_resolution_of(*expression.operand(1));
         const bool valid_target = target &&
                                   (target->kind == ApiResolutionKind::type_reference ||
@@ -1132,38 +1179,38 @@ Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expressi
                                    target->kind == ApiResolutionKind::inner_type_reference ||
                                    target->kind == ApiResolutionKind::script_enum_type ||
                                    target->kind == ApiResolutionKind::global_enum_type) &&
-                                  right.kind != TypeKind::void_type;
+                                  target_type.kind != TypeKind::void_type;
         if (!valid_target) {
             diagnostics_.error("GDS4074", "the right operand of 'as' must be a type",
                                expression.operand(1)->span);
             return unknown_type;
         }
         bool valid_conversion = false;
-        if (left.is_dynamic() || right.is_dynamic()) {
+        if (left.is_dynamic() || target_type.is_dynamic()) {
             valid_conversion = true;
-        } else if (right.kind == TypeKind::object) {
-            valid_conversion =
-                left.kind == TypeKind::nil ||
-                (left.kind == TypeKind::object &&
-                 (object_type_inherits(left, right) || object_type_inherits(right, left)));
+        } else if (target_type.kind == TypeKind::object) {
+            // GDScript object casts are runtime-checked and return null for unrelated object
+            // classes. Requiring a statically provable inheritance relationship would reject
+            // legal downcasts from broad engine properties such as Material.
+            valid_conversion = left.kind == TypeKind::nil || left.kind == TypeKind::object;
         } else {
-            valid_conversion = is_explicitly_convertible(right, left);
+            valid_conversion = is_explicitly_convertible(target_type, left);
         }
         if (valid_conversion && is_constant_expression(*expression.operand(0))) {
             const auto constant_source = constant_value_type_of(*expression.operand(0), left);
             if (!constant_source.is_dynamic()) {
-                const auto conversion = classify_conversion(right, constant_source);
+                const auto conversion = classify_conversion(target_type, constant_source);
                 valid_conversion = conversion == ConversionKind::identity ||
                                    conversion == ConversionKind::implicit;
             }
         }
         const bool deterministic_runtime_failure =
-            valid_conversion && !is_explicit_runtime_constructible(right, left);
+            valid_conversion && !is_explicit_runtime_constructible(target_type, left);
         if (deterministic_runtime_failure) {
             diagnostics_.error(
                 "GDS4156",
                 "cast is accepted by Godot's analyzer but has no runtime constructor from " +
-                    left.display_name() + " to " + right.display_name(),
+                    left.display_name() + " to " + target_type.display_name(),
                 expression.span);
             valid_conversion = false;
         }
@@ -1171,11 +1218,11 @@ Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expressi
             if (!deterministic_runtime_failure) {
                 diagnostics_.error("GDS4075",
                                    "invalid cast: cannot convert " + left.display_name() + " to " +
-                                       right.display_name(),
+                                       target_type.display_name(),
                                    expression.span);
             }
         }
-        return right;
+        return target_type;
     }
     if (operation == "and" || operation == "or") {
         require_truthy_value(left, expression.operand(0)->span,
@@ -1195,6 +1242,12 @@ Type SemanticAnalyzer::resolve_binary_expression(const ast::Expression& expressi
         ((left.kind == TypeKind::object && right.kind == TypeKind::object) ||
          (left.kind == TypeKind::object && right.kind == TypeKind::nil) ||
          (left.kind == TypeKind::nil && right.kind == TypeKind::object))) {
+        return {TypeKind::boolean, "bool"};
+    }
+    if ((operation == "in" || operation == "not in") &&
+        (right.kind == TypeKind::array || right.kind == TypeKind::dictionary)) {
+        // Membership is a Variant operation in Godot even for typed containers. The runtime
+        // constraint governs stored values, not the type of a lookup probe.
         return {TypeKind::boolean, "bool"};
     }
 
@@ -1233,8 +1286,7 @@ std::optional<Type> SemanticAnalyzer::narrowed_flow_type(const Type& current,
             return true;
         if (script_symbols_ && script_symbols_->inherits(derived.name, base.name))
             return true;
-        const auto* derived_script =
-            script_symbols_ ? script_symbols_->find_class(derived.name) : nullptr;
+        const auto* derived_script = find_script_class(derived.name);
         return derived_script && api_.inherits(derived_script->godot_base_type, base.name);
     };
     if (inherits(target, current))
@@ -1582,7 +1634,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             if (symbol->kind == SymbolKind::enum_type) {
                 model_.api_resolutions_.emplace(&expression,
                                                 ApiResolution{ApiResolutionKind::script_enum_type,
-                                                              expression.value(), "", "", result, 0,
+                                                              result.name, "", "", result, 0,
                                                               0, false, true});
             }
         } else if (const auto alias = script_resource_aliases_.find(expression.value());
@@ -2058,6 +2110,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             case IntrinsicResultRule::color:
                 result = {TypeKind::builtin, "Color"};
                 break;
+            case IntrinsicResultRule::array:
+                result = {TypeKind::array, "Array"};
+                break;
             case IntrinsicResultRule::integer_array:
                 result = {TypeKind::array, "Array[int]"};
                 break;
@@ -2505,6 +2560,13 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     break;
                 }
                 const auto* member = find_inner_member(*inner, callee.value());
+                if (!member && !called_on_type) {
+                    result = variant_type;
+                    model_.api_resolutions_.emplace(
+                        &callee, ApiResolution{ApiResolutionKind::dynamic_method, "", "", "",
+                                               result, 0, 0, true, false});
+                    break;
+                }
                 if (!member || member->kind != ScriptMemberKind::function) {
                     diagnostics_.error("GDS4055",
                                        "internal class '" + inner->name + "' has no method '" +
@@ -2556,7 +2618,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                             (object_resolution->kind == ApiResolutionKind::script_autoload ||
                              object_resolution->kind == ApiResolutionKind::script_type_reference)
                         ? script_symbols_->find_native_class(object_resolution->owner)
-                        : script_symbols_->find_class(object_type.name);
+                        : find_script_class(object_type.name);
                 if (!script_owner && callee.operand(0)->kind() == ast::ExpressionKind::identifier &&
                     callee.operand(0)->value() == "self") {
                     script_owner = current_script_;
@@ -3103,11 +3165,19 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             }
             const auto* found = find_inner_member(*inner, expression.value());
             if (!found) {
-                diagnostics_.error("GDS4055",
-                                   "internal class '" + inner->name + "' has no member '" +
-                                       expression.value() + "'",
-                                   expression.span);
-                result = unknown_type;
+                if (accessed_on_type) {
+                    diagnostics_.error("GDS4055",
+                                       "internal class '" + inner->name + "' has no member '" +
+                                           expression.value() + "'",
+                                       expression.span);
+                    result = unknown_type;
+                } else {
+                    result = variant_type;
+                    model_.api_resolutions_.emplace(
+                        &expression,
+                        ApiResolution{ApiResolutionKind::dynamic_property, "", "", "", result, 0,
+                                      0, false, false});
+                }
                 break;
             }
             if (found->kind == ScriptMemberKind::function) {
@@ -3178,7 +3248,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         (object_resolution->kind == ApiResolutionKind::script_autoload ||
                          object_resolution->kind == ApiResolutionKind::script_type_reference)
                     ? script_symbols_->find_native_class(object_resolution->owner)
-                    : script_symbols_->find_class(object_type.name);
+                    : find_script_class(object_type.name);
             if (!script_owner && expression.operand(0)->kind() == ast::ExpressionKind::identifier &&
                 expression.operand(0)->value() == "self") {
                 script_owner = current_script_;
