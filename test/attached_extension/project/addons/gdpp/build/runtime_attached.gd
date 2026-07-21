@@ -56,6 +56,23 @@ func _run() -> void:
     if int(node.call("compute", 3)) != 32:
         _fail("script-to-script and native super dispatch returned the wrong value")
         return
+    if int(node.call("combine", 5)) != 7 or int(node.call("combine", 5, 6, 7, 8)) != 13:
+        _fail("attached variadic method did not preserve defaults or rest arguments")
+        return
+    var combine_method := {}
+    for method: Dictionary in script.get_script_method_list():
+        if method.get(&"name", &"") == &"combine":
+            combine_method = method
+            break
+    if combine_method.is_empty():
+        _fail("attached variadic method is absent from script reflection")
+        return
+    if (int(combine_method.get(&"flags", 0)) & METHOD_FLAG_VARARG) == 0:
+        _fail("attached variadic method lost METHOD_FLAG_VARARG")
+        return
+    if Array(combine_method.get(&"args", [])).size() != 2:
+        _fail("attached variadic method reflected the wrong fixed argument count")
+        return
     if int(node.call("invoke_hook", 4)) != 30:
         _fail("provider-to-script virtual dispatch returned the wrong value")
         return

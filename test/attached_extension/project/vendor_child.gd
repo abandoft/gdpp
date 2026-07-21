@@ -21,6 +21,10 @@ func compute(value: int) -> int:
     return super.native_compute(value) + bonus
 
 
+func combine(base: int, optional: int = 2, ...values: Array) -> int:
+    return base + optional + values.size()
+
+
 func hook(value: int) -> int:
     return value * 3 + bonus
 
