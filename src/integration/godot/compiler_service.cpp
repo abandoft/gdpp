@@ -1077,18 +1077,24 @@ godot::Dictionary GDPPCompiler::compile_project(
     godot::PackedStringArray scripts;
     godot::PackedStringArray abstract_scripts;
     godot::Dictionary script_classes;
+    godot::Dictionary attached_script_bases;
     for (const auto& script : result.scripts) {
         const auto relative_path = generic_path_to_utf8(script.relative_path);
         scripts.push_back(godot::String::utf8(relative_path.c_str()));
         const auto resource_path = "res://" + relative_path;
         script_classes[godot::String{resource_path.c_str()}] =
             godot::String{script.class_name.c_str()};
+        if (script.is_attached) {
+            attached_script_bases[godot::String{resource_path.c_str()}] =
+                godot::String{script.external_base_name.c_str()};
+        }
         if (script.is_abstract)
             abstract_scripts.push_back(godot::String{resource_path.c_str()});
     }
     output["scripts"] = scripts;
     output["abstract_scripts"] = abstract_scripts;
     output["script_classes"] = script_classes;
+    output["attached_script_bases"] = attached_script_bases;
     godot::PackedStringArray diagnostics;
     for (const auto& item : result.diagnostics) {
         const auto message = generic_path_to_utf8(item.path) + ":" +
