@@ -215,6 +215,7 @@ class AttachedCompiledScript : public godot::ScriptExtension {
     [[nodiscard]] godot::String get_source_path() const;
 
     bool _editor_can_reload_from_file() override;
+    void _placeholder_erased(void* placeholder) override;
     bool _can_instantiate() const override;
     godot::Ref<godot::Script> _get_base_script() const override;
     godot::StringName _get_global_name() const override;
@@ -227,7 +228,11 @@ class AttachedCompiledScript : public godot::ScriptExtension {
     godot::String _get_source_code() const override;
     void _set_source_code(const godot::String& code) override;
     godot::Error _reload(bool keep_state) override;
+    godot::StringName _get_doc_class_name() const override;
+    godot::TypedArray<godot::Dictionary> _get_documentation() const override;
+    godot::String _get_class_icon_path() const override;
     bool _has_method(const godot::StringName& method) const override;
+    bool _has_static_method(const godot::StringName& method) const override;
     godot::Variant
     _get_script_method_argument_count(const godot::StringName& method) const override;
     godot::Dictionary _get_method_info(const godot::StringName& method) const override;
@@ -239,10 +244,13 @@ class AttachedCompiledScript : public godot::ScriptExtension {
     godot::TypedArray<godot::Dictionary> _get_script_signal_list() const override;
     bool _has_property_default_value(const godot::StringName& property) const override;
     godot::Variant _get_property_default_value(const godot::StringName& property) const override;
+    void _update_exports() override;
     godot::TypedArray<godot::Dictionary> _get_script_method_list() const override;
     godot::TypedArray<godot::Dictionary> _get_script_property_list() const override;
+    std::int32_t _get_member_line(const godot::StringName& member) const override;
     godot::Dictionary _get_constants() const override;
     godot::TypedArray<godot::StringName> _get_members() const override;
+    bool _is_placeholder_fallback_enabled() const override;
     godot::Variant _get_rpc_config() const override;
 
   protected:

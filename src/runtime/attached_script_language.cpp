@@ -258,6 +258,8 @@ std::optional<AttachedScriptDescriptor> AttachedCompiledScript::descriptor() con
 
 bool AttachedCompiledScript::_editor_can_reload_from_file() { return false; }
 
+void AttachedCompiledScript::_placeholder_erased(void*) {}
+
 bool AttachedCompiledScript::_can_instantiate() const {
     const auto value = descriptor();
     return value && !value->abstract && value->factory;
@@ -303,9 +305,23 @@ godot::Error AttachedCompiledScript::_reload(bool) {
     return descriptor() ? godot::OK : godot::ERR_FILE_NOT_FOUND;
 }
 
+godot::StringName AttachedCompiledScript::_get_doc_class_name() const { return _get_global_name(); }
+
+godot::TypedArray<godot::Dictionary> AttachedCompiledScript::_get_documentation() const {
+    return {};
+}
+
+godot::String AttachedCompiledScript::_get_class_icon_path() const { return {}; }
+
 bool AttachedCompiledScript::_has_method(const godot::StringName& method) const {
     const auto value = descriptor();
     return value && find_method(*value, method);
+}
+
+bool AttachedCompiledScript::_has_static_method(const godot::StringName& method) const {
+    const auto value = descriptor();
+    const auto* info = value ? find_method(*value, method) : nullptr;
+    return info && (info->flags & godot::METHOD_FLAG_STATIC) != 0;
 }
 
 godot::Variant
@@ -362,6 +378,7 @@ AttachedCompiledScript::_get_property_default_value(const godot::StringName& pro
     const auto* info = find_property(*value, property);
     return info && info->has_default ? info->default_value : godot::Variant{};
 }
+void AttachedCompiledScript::_update_exports() {}
 godot::TypedArray<godot::Dictionary> AttachedCompiledScript::_get_script_method_list() const {
     const auto value = descriptor();
     return value ? method_list(value->methods) : godot::TypedArray<godot::Dictionary>{};
@@ -375,6 +392,7 @@ godot::TypedArray<godot::Dictionary> AttachedCompiledScript::_get_script_propert
         result.push_back(static_cast<godot::Dictionary>(property.info));
     return result;
 }
+std::int32_t AttachedCompiledScript::_get_member_line(const godot::StringName&) const { return -1; }
 godot::Dictionary AttachedCompiledScript::_get_constants() const {
     const auto value = descriptor();
     return value ? value->constants : godot::Dictionary{};
@@ -395,6 +413,7 @@ godot::TypedArray<godot::StringName> AttachedCompiledScript::_get_members() cons
         result.push_back(godot::StringName{constant_names[index]});
     return result;
 }
+bool AttachedCompiledScript::_is_placeholder_fallback_enabled() const { return false; }
 godot::Variant AttachedCompiledScript::_get_rpc_config() const {
     const auto value = descriptor();
     return value ? value->rpc_config : godot::Variant{};
