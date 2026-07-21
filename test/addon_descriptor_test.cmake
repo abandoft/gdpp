@@ -51,6 +51,13 @@ if(attached_metadata_offset EQUAL -1)
     message(FATAL_ERROR
         "Compiler service does not expose third-party attachment metadata to the exporter")
 endif()
+string(FIND "${compiler_service}"
+    "output[\"editor_only_scripts\"] = editor_only_scripts;"
+    editor_only_metadata_offset)
+if(editor_only_metadata_offset EQUAL -1)
+    message(FATAL_ERROR
+        "Compiler service does not expose editor-only script metadata to the exporter")
+endif()
 string(FIND "${export_plugin}" "add_shared_object(\n        library_path" duplicate_registration)
 if(NOT duplicate_registration EQUAL -1)
     message(FATAL_ERROR
@@ -93,6 +100,18 @@ foreach(required_abstract_contract IN ITEMS
     if(abstract_contract_offset EQUAL -1)
         message(FATAL_ERROR
             "Abstract native export validation is missing: ${required_abstract_contract}")
+    endif()
+endforeach()
+foreach(required_editor_only_contract IN ITEMS
+        "\"editor_only_scripts\", PackedStringArray()"
+        "if _editor_only_scripts.has(script_path):"
+        "autoload '%s' uses an editor-only script"
+        "runtime scene '%s' uses editor-only script '%s'"
+        "runtime resource graph '%s' uses editor-only script '%s'")
+    string(FIND "${export_plugin}" "${required_editor_only_contract}" editor_only_contract_offset)
+    if(editor_only_contract_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Editor-only runtime export guard is missing: ${required_editor_only_contract}")
     endif()
 endforeach()
 foreach(required_attached_contract IN ITEMS

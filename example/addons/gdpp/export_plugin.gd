@@ -30,6 +30,7 @@ var _script_classes: Dictionary = {}
 var _attached_script_bases: Dictionary = {}
 var _compiled_scripts: Dictionary = {}
 var _abstract_scripts: Dictionary = {}
+var _editor_only_scripts: Dictionary = {}
 var _runtime_descriptor := ""
 var _export_scan_descriptor := ""
 var _output_library := ""
@@ -278,6 +279,9 @@ func _transform_scene_with_state(
 func _customize_resource(resource: Resource, path: String) -> Resource:
     var script_path := _script_path(resource)
     if script_path.is_empty():
+        return null
+    if _editor_only_scripts.has(script_path):
+        _fail_export("runtime resource '%s' uses editor-only script '%s'" % [path, script_path])
         return null
     if not _script_classes.has(script_path):
         _fail_export("resource '%s' uses an uncompiled script '%s'" % [path, script_path])
@@ -569,6 +573,11 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
     _abstract_scripts.clear()
     for script_path: String in distribution_result.get("abstract_scripts", PackedStringArray()):
         _abstract_scripts[script_path] = true
+    _editor_only_scripts.clear()
+    for script_path: String in distribution_result.get(
+        "editor_only_scripts", PackedStringArray()
+    ):
+        _editor_only_scripts[script_path] = true
     _build_id = str(distribution_result.get("build_id", ""))
     _output_library = str(distribution_result.get("output_library", ""))
     if not _native_artifact_exists(_output_library):
@@ -672,6 +681,8 @@ func _validate_native_classes() -> bool:
             _fail_export("attached script runtime class is unavailable")
             return false
     for script_path: String in _script_classes:
+        if _editor_only_scripts.has(script_path):
+            continue
         var native_class_name := StringName(_script_classes[script_path])
         if not ClassDB.class_exists(native_class_name):
             _fail_export(
@@ -736,6 +747,9 @@ func _prepare_autoloads() -> bool:
         var script_path := original.trim_prefix("*")
         if not _compiled_scripts.has(script_path):
             continue
+        if _editor_only_scripts.has(script_path):
+            _fail_export("autoload '%s' uses an editor-only script" % setting)
+            return false
         var native_class := StringName(_script_classes[script_path])
         var attached_base := StringName(_attached_script_bases.get(script_path, ""))
         # Export preparation must not construct customer autoloads: their field
@@ -994,6 +1008,12 @@ func _collect_scene_replacement_plan(
             var script_path := _script_path(node)
             if script_path.is_empty():
                 script_path = (script_value as Script).resource_path
+            if _editor_only_scripts.has(script_path):
+                push_error(
+                    "GDPP: runtime scene '%s' uses editor-only script '%s'"
+                    % [scene_path, script_path]
+                )
+                return false
             if not _script_classes.has(script_path):
                 push_error(
                     "GDPP: scene '%s' uses uncompiled script '%s'" % [scene_path, script_path]
@@ -1527,6 +1547,12 @@ func _transform_resource_graph(
 
     var script_path := _script_path(resource)
     if not script_path.is_empty():
+        if _editor_only_scripts.has(script_path):
+            _fail_export(
+                "runtime resource graph '%s' uses editor-only script '%s'"
+                % [context_path, script_path]
+            )
+            return null
         if not _script_classes.has(script_path):
             _fail_export(
                 "resource graph '%s' uses an uncompiled script '%s'"
@@ -2123,6 +2149,7 @@ func _reset_export_state() -> void:
     _attached_script_bases.clear()
     _compiled_scripts.clear()
     _abstract_scripts.clear()
+    _editor_only_scripts.clear()
     _runtime_descriptor = ""
     _export_scan_descriptor = ""
     _output_library = ""
