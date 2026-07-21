@@ -60,6 +60,55 @@ jobs:
         run: cmake --build --preset plugin --parallel
       - name: Run compiler and Godot integration tests
         run: ctest --preset plugin
+      - name: Export and run independent GDExtension inheritance project
+        shell: bash
+        env:
+          GODOT: ${{ steps.godot.outputs.executable }}
+        run: |
+          set -euo pipefail
+          fixture=build/plugin/attached-extension-project
+          output="$fixture/export"
+          mkdir -p "$output"
+          cp "$fixture/extension_list.compiler.cfg" \
+            "$fixture/.godot/extension_list.cfg"
+
+          "$GODOT" --headless --editor --path "$fixture" --import \
+            2>&1 | tee "$output/gdpp-attached-import.log"
+          "$GODOT" --headless --editor --path "$fixture" \
+            --export-release 'Linux x86_64' \
+            "$GITHUB_WORKSPACE/$output/gdpp-attached.x86_64" \
+            2>&1 | tee "$output/gdpp-attached-export.log"
+
+          test -x "$output/gdpp-attached.x86_64"
+          test -f "$output/gdpp-attached.pck"
+          test -f "$fixture/addons/vendor/binary/libgdpp_test_vendor.release.linux.x86_64.so"
+          test -f "$fixture/addons/gdpp/binary/libgdpp_project.release.linux.x86_64.so"
+          timeout 15s "$output/gdpp-attached.x86_64" --headless \
+            2>&1 | tee "$output/gdpp-attached-runtime.log"
+          grep -q '^GDPP_ATTACHED_EXPORT_RUNTIME_OK$' \
+            "$output/gdpp-attached-runtime.log"
+          grep -q 'GDPP_AOT_SUMMARY scenes=' "$output/gdpp-attached-export.log"
+
+          audit=build/attached-pck-audit
+          mkdir -p "$audit"
+          cp tools/audit_attached_export_pck.gd "$audit/audit_attached_export_pck.gd"
+          printf '[application]\nconfig/name="GDPP Attached PCK Audit"\n' \
+            > "$audit/project.godot"
+          "$GODOT" --headless --path "$audit" \
+            --script "$GITHUB_WORKSPACE/$audit/audit_attached_export_pck.gd" -- \
+            "$GITHUB_WORKSPACE/$output/gdpp-attached.pck" \
+            2>&1 | tee "$output/gdpp-attached-pck-audit.log"
+          grep -q '^GDPP_ATTACHED_PCK_VIOLATIONS=0$' \
+            "$output/gdpp-attached-pck-audit.log"
+
+          if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|Parse Error:|WARNING:|Unable to open' \
+              "$output/gdpp-attached-import.log" \
+              "$output/gdpp-attached-export.log" \
+              "$output/gdpp-attached-runtime.log" \
+              "$output/gdpp-attached-pck-audit.log"; then
+            echo 'Attached GDExtension export emitted a forbidden diagnostic.'
+            exit 1
+          fi
       - name: Preflight project and export plugin
         shell: bash
         env:
@@ -182,6 +231,7 @@ jobs:
           path: |
             example/addons/gdpp/build/export/*.log
             example/addons/gdpp/build/export/runtime-matrix.json
+            build/plugin/attached-extension-project/export/*.log
           if-no-files-found: warn
           retention-days: 14
 
