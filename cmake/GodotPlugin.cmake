@@ -306,10 +306,20 @@ if(GDPP_BUILD_TESTS)
             "macos.editor.arm64 = \"res://addons/vendor/binary/"
             "$<TARGET_FILE_NAME:gdpp_test_vendor>\"\n"
             "macos.editor.x86_64 = \"res://addons/vendor/binary/"
-            "$<TARGET_FILE_NAME:gdpp_test_vendor>\"")
+            "$<TARGET_FILE_NAME:gdpp_test_vendor>\"\n"
+            "macos.release.arm64 = \"res://addons/vendor/binary/"
+            "${CMAKE_SHARED_LIBRARY_PREFIX}gdpp_test_vendor.release.macos.universal"
+            "${CMAKE_SHARED_LIBRARY_SUFFIX}\"\n"
+            "macos.release.x86_64 = \"res://addons/vendor/binary/"
+            "${CMAKE_SHARED_LIBRARY_PREFIX}gdpp_test_vendor.release.macos.universal"
+            "${CMAKE_SHARED_LIBRARY_SUFFIX}\"")
     else()
-        set(GDPP_ATTACHED_TEST_VENDOR_LIBRARIES
-            "${GDPP_PLATFORM}.editor.${GDPP_ARCH} = \"res://addons/vendor/binary/$<TARGET_FILE_NAME:gdpp_test_vendor>\"")
+        string(CONCAT GDPP_ATTACHED_TEST_VENDOR_LIBRARIES
+            "${GDPP_PLATFORM}.editor.${GDPP_ARCH} = \"res://addons/vendor/binary/"
+            "$<TARGET_FILE_NAME:gdpp_test_vendor>\"\n"
+            "${GDPP_PLATFORM}.release.${GDPP_ARCH} = \"res://addons/vendor/binary/"
+            "${CMAKE_SHARED_LIBRARY_PREFIX}gdpp_test_vendor.release.${GDPP_PLATFORM}."
+            "${GDPP_ARCH}${CMAKE_SHARED_LIBRARY_SUFFIX}\"")
     endif()
     file(GENERATE
         OUTPUT "${GDPP_ATTACHED_TEST_GENERATED}/vendor.gdextension"
@@ -506,6 +516,63 @@ add_custom_target(
     DEPENDS ${GDPP_PACKAGED_SDK_TARGETS}
 )
 
+if(GDPP_BUILD_TESTS)
+    list(GET GDPP_PACKAGE_GODOT_VERSIONS 0 GDPP_ATTACHED_TEST_SDK_VERSION)
+    string(REPLACE "." "_" GDPP_ATTACHED_TEST_SDK_SUFFIX
+        "${GDPP_ATTACHED_TEST_SDK_VERSION}")
+    set(GDPP_ATTACHED_TEST_SDK
+        "${GDPP_PACKAGED_SDK_${GDPP_ATTACHED_TEST_SDK_SUFFIX}}")
+    set(GDPP_ATTACHED_TEST_RELEASE_BUILD
+        "${CMAKE_BINARY_DIR}/attached-extension-vendor-release-build")
+    string(CONCAT GDPP_ATTACHED_TEST_RELEASE_LIBRARY
+        "${GDPP_ATTACHED_TEST_VENDOR_OUTPUT}/${CMAKE_SHARED_LIBRARY_PREFIX}"
+        "gdpp_test_vendor.release.${GDPP_PLATFORM}.${GDPP_ARCH}${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    set(GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
+        -S "${CMAKE_SOURCE_DIR}/test/attached_extension/provider_release"
+        -B "${GDPP_ATTACHED_TEST_RELEASE_BUILD}"
+        -G "${CMAKE_GENERATOR}"
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+        -DGDPP_SDK_DIR=${GDPP_ATTACHED_TEST_SDK}
+        -DGDPP_VENDOR_SOURCE_DIR=${CMAKE_SOURCE_DIR}/test/attached_extension
+        -DGDPP_OUTPUT_DIR=${GDPP_ATTACHED_TEST_VENDOR_OUTPUT}
+        -DGDPP_PLATFORM=${GDPP_PLATFORM}
+        -DGDPP_ARCH=${GDPP_ARCH}
+    )
+    if(CMAKE_GENERATOR_PLATFORM)
+        list(APPEND GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
+            -A "${CMAKE_GENERATOR_PLATFORM}")
+    endif()
+    if(CMAKE_GENERATOR_TOOLSET)
+        list(APPEND GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
+            -T "${CMAKE_GENERATOR_TOOLSET}")
+    endif()
+    if(CMAKE_OSX_ARCHITECTURES)
+        list(APPEND GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
+            "-DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}")
+    endif()
+    if(CMAKE_OSX_DEPLOYMENT_TARGET)
+        list(APPEND GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
+            "-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    endif()
+    add_custom_command(
+        OUTPUT "${GDPP_ATTACHED_TEST_RELEASE_LIBRARY}"
+        COMMAND "${CMAKE_COMMAND}" ${GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS}
+        COMMAND "${CMAKE_COMMAND}" --build "${GDPP_ATTACHED_TEST_RELEASE_BUILD}"
+                --config Release --parallel
+        DEPENDS
+            gdpp_packaged_sdk
+            "${CMAKE_SOURCE_DIR}/test/attached_extension/provider_release/CMakeLists.txt"
+            "${CMAKE_SOURCE_DIR}/test/attached_extension/vendor_base.cpp"
+            "${CMAKE_SOURCE_DIR}/test/attached_extension/vendor_base.hpp"
+            "${CMAKE_SOURCE_DIR}/test/attached_extension/register_types.cpp"
+        COMMENT "Building independent template_release vendor GDExtension"
+        VERBATIM
+    )
+    add_custom_target(gdpp_test_vendor_release
+        DEPENDS "${GDPP_ATTACHED_TEST_RELEASE_LIBRARY}")
+endif()
+
 set(GDPP_SMOKE_DIR "${CMAKE_BINARY_DIR}/generated-smoke")
 add_custom_command(
     OUTPUT
@@ -612,6 +679,9 @@ if(GDPP_BUILD_TESTS)
                 "$<TARGET_FILE:gdpp_test_vendor>"
                 "${GDPP_ATTACHED_TEST_ROOT}/addons/vendor/binary/$<TARGET_FILE_NAME:gdpp_test_vendor>"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ATTACHED_TEST_RELEASE_LIBRARY}"
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/vendor/binary"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${GDPP_ADDON_DIRECTORY}/gdpp.gdextension"
                 "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/gdpp.gdextension"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -620,7 +690,7 @@ if(GDPP_BUILD_TESTS)
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${GDPP_ADDON_DIRECTORY}/sdk"
                 "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/sdk"
-        DEPENDS gdpp_addon gdpp_test_vendor
+        DEPENDS gdpp_addon gdpp_test_vendor gdpp_test_vendor_release
         COMMENT "Preparing independent GDExtension attachment integration project"
         VERBATIM
     )
