@@ -90,11 +90,13 @@ compiler/project             → integration/godot、cli
   分组、parser 递归和详细诊断上限由 `CompileOptions` 注入 lexer/parser/diagnostic，避免各阶段
   采用互相矛盾的常量。超限属于事务失败，不允许提交翻译单元、项目清单或局部生成物。
 - `src/runtime`：生成代码使用的动态 `Variant` 兼容层，集中实现动态运算、受检方法调用、
-  命名属性、键/下标读写、三阶段迭代协议，以及只保存 `ObjectID` 的原生 Autoload 启动注册表。
+  命名属性、键/下标读写、三阶段迭代协议、只保存 `ObjectID` 的原生 Autoload 启动注册表，以及
+  基于 `ScriptLanguageExtension`/`ScriptExtension`/`ScriptInstance` 的第三方原生对象附着运行时。
 - `ProjectCompiler`：确定性脚本发现、项目继承图与拓扑排序、区分实现哈希和公开 ABI 哈希的
   v3 SHA-256 清单、事务式多脚本生成、重名/缺失父类/循环检查与陈旧翻译单元清理。
-- `ExtensionBridge`：解析项目内第三方 `gdpp_bridge.json`，校验 runtime/native 模式、成员契约、
-  Godot 基类、目标库和 canonical 路径边界，并把实际引用的供应商 ABI 加入精确失效图。
+- `ExtensionBridge`：合并运行中 ClassDB 的第三方类型快照与项目内 `gdpp_bridge.json`，校验成员、
+  外部 MethodBind 哈希、Godot 基类、供应商描述符和 canonical 路径边界，并把实际引用的供应商
+  ABI 加入精确失效图；生成项目库不包含供应商头文件或链接输入。
 - `ScriptSymbolTable`：保存全局脚本类型、路径稳定的原生类映射、字段/函数签名、静态成员、常量、
   命名枚举、匿名枚举值、Autoload、资源路径与继承关系，为语义分析、C++ 类型选择和跨翻译单元
   头文件依赖提供同一事实来源；不同目录的同名脚本不会复用原生身份。
@@ -111,8 +113,8 @@ compiler/project             → integration/godot、cli
   描述符由当前 target 路径生成，禁止集成测试误加载发行目录中的陈旧 compiler；`src` 子目录
   不维护分散的 `CMakeLists.txt`。
 - `example/addons/gdpp/export_plugin.gd`：导出预检、目标库构建、基于序列化存储图的
-  PackedScene/Resource 与脚本 Autoload 原生替换、注册表事务恢复、Godot 4.5 缓存隔离、
-  严格失败阻断和源码剥离。
+  PackedScene/Resource 与脚本 Autoload 原生或附着式替换、项目/供应商描述符及注册表事务恢复、
+  Universal 2 供应商切片验证、Godot 4.5 缓存隔离、严格失败阻断和源码剥离。
 - `example/addons/gdpp`：插件源码唯一位置，也是当前平台二进制和 SDK 的直接输出与发行取件
   位置。
 - `example/addons/gdpp/binary`：compiler、fallback 和项目最终原生库的统一输出目录。
@@ -262,9 +264,10 @@ GDPP 自身使用 CMake、Python 和 godot-cpp 生成器，以保证开发构建
   隐式窄化。
 - debug/release 库使用稳定名称，运行时描述符和原生库进入导出包，compiler 插件、SDK、生成 C++
   与 `.gd` 不进入成功的二进制导出包。
-- 编辑态只允许 compiler 一个物理描述符；导出事务临时改写它用于目标扫描，并向包内虚拟写入
-  稳定运行描述符，结束或异常恢复后还原。fallback 只为显式 GDScript/失败扫描提供可加载入口；
-  成功 AOT 导出不得携带它。
+- 编辑态只允许 compiler 一个物理描述符 `addons/gdpp/gdpp.gdextension`；导出事务先把同一路径
+  改写为目标扫描内容，再通过 `add_file()` 让成品中的同一路径承载项目运行描述符，结束或异常
+  恢复后还原编辑态文件。fallback 只为显式 GDScript/失败扫描提供可加载入口；成功 AOT 导出
+  不得携带它。不能依赖虚拟的第二描述符路径，因为 Godot 会用实际扫描路径过滤扩展注册表。
 - compiler、fallback 与项目动态库的公开符号必须由平台白名单收敛到各自唯一 GDExtension
   入口；静态 godot-cpp/C++ 运行时符号不得泄漏或在 ELF 多扩展之间发生符号抢占。
 - 同一运行架构只能匹配一个 fallback 动态库。Godot 导出器用 `universal` 表示 macOS 通用导出
@@ -280,11 +283,14 @@ GDPP 自身使用 CMake、Python 和 godot-cpp 生成器，以保证开发构建
   退出码、日志和导出后黑盒审计共同决定交付成功，不能只信任单一信号。
 - 第三方二进制 GDExtension 默认由 Godot 原样加载，无需再次 AOT；其 addon 内的 GDScript 与
   其他项目脚本使用同一编译、替换和剥离规则。编辑器内的 Runtime 静态类型由 ClassDB 自动
-  采集，包括强类型命名枚举、bitfield、方法枚举签名和 Inspector hint；CLI 可读取
-  `gdpp_bridge.json` 离线清单。Godot 能让 GDScript 附着到供应商原生类，
-  但当前不能安全注册跨动态库 GDExtension C++ 子类，因此 Native 清单和供应商 SDK 不作为
-  `extends` 的解决方案；未知或跨扩展原生基类以 `PRJ0018`/`PRJ0022` 阻断严格无源码交付。
-  完整边界见[第三方原生类型的编译信息](GDEXTENSION_BRIDGE.md)。
+  采集，包括强类型命名枚举、bitfield、方法签名、精确 MethodBind 哈希和 Inspector hint；CLI
+  可读取 `gdpp_bridge.json` 离线清单。`extends VendorNode` 使用附着式 AOT：供应商拥有原生对象，
+  生成行为由 `ScriptInstance` 持有，因此既不注册跨动态库 C++ 子类，也不要求供应商 SDK 或源码
+  改动。未知类、未加载 provider 或外部 `super` 缺失精确 ABI 时以 `PRJ0018` 等诊断阻断严格
+  无源码交付。完整边界见[第三方原生类型的编译信息](GDEXTENSION_BRIDGE.md)。
+- 所有被保留的供应商描述符必须先于项目运行描述符进入扩展注册表。macOS arm64/x86_64 指向
+  同一动态库时，导出扫描事务只在验证其确为 Universal 2 后临时归一化为 `universal`；成品写入
+  供应商原始描述符字节，源工程描述符在成功、失败和下次启动恢复路径中都必须还原。
 
 ## 目标版本策略
 
