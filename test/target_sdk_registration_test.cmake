@@ -34,7 +34,10 @@ foreach(GDPP_TEST_PACKAGER IN ITEMS build_android_sdk.py build_web_sdk.py build_
             "class_db_patch = source_root / \"cmake/PatchGodotCppClassDB.cmake\""
             "-DGDPP_CLASS_DB_INPUT="
             "-DGDPP_CLASS_DB_OUTPUT="
-            "str(class_db_patch)")
+            "str(class_db_patch)"
+            "cxx_standard 17"
+            "exceptions disabled"
+            "msvc_runtime not_applicable")
         string(FIND "${GDPP_TEST_PACKAGER_SOURCE}" "${GDPP_TEST_CONTRACT}" GDPP_TEST_OFFSET)
         if(GDPP_TEST_OFFSET EQUAL -1)
             message(FATAL_ERROR
@@ -47,6 +50,18 @@ endforeach()
 # Both independent CMake consumers of packaged godot-cpp archives must inherit one centralized
 # parent toolchain contract: the SDK profile builders and the release vendor GDExtension fixture.
 file(READ "${GDPP_TEST_SOURCE_DIR}/cmake/GodotPlugin.cmake" GDPP_TEST_PLUGIN_CMAKE)
+foreach(GDPP_TEST_HOST_ABI_FIELD IN ITEMS
+        "cxx_standard 17"
+        "exceptions disabled"
+        "msvc_runtime \${GDPP_SDK_MSVC_RUNTIME}")
+    string(FIND "${GDPP_TEST_PLUGIN_CMAKE}"
+        "${GDPP_TEST_HOST_ABI_FIELD}"
+        GDPP_TEST_HOST_ABI_FIELD_OFFSET)
+    if(GDPP_TEST_HOST_ABI_FIELD_OFFSET EQUAL -1)
+        message(FATAL_ERROR
+            "Host SDK manifest omits ${GDPP_TEST_HOST_ABI_FIELD}")
+    endif()
+endforeach()
 foreach(GDPP_TEST_CONTRACT_FIELD IN ITEMS
         CMAKE_CXX_COMPILER
         CMAKE_TOOLCHAIN_FILE
