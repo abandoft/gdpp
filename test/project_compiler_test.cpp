@@ -751,6 +751,64 @@ TEST_CASE("project compiler lowers internal classes derived from preloaded scrip
     REQUIRE(base_position < inner_position);
 }
 
+TEST_CASE("project compiler exposes preloaded scripts as typed namespaces") {
+    const auto root = fixture_root("project-script-resource-namespaces");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "library.gd", "extends RefCounted\n"
+                                    "const LIMIT: int = 40\n"
+                                    "enum State { IDLE = 0, READY = 7 }\n"
+                                    "static func answer(value: int = 2) -> int:\n"
+                                    "    return LIMIT + value\n"
+                                    "class Item:\n"
+                                    "    enum Mode { COLD = 0, HOT = 3 }\n"
+                                    "    var mode: Mode = Mode.HOT\n"
+                                    "    func value() -> int:\n"
+                                    "        return 42\n");
+    write_text(root / "consumer.gd", "extends Node\n"
+                                     "const library = preload(\"library.gd\")\n"
+                                     "var item: library.Item = null\n"
+                                     "var items: Array[library.Item] = []\n"
+                                     "var state: library.State = library.State.READY\n"
+                                     "var mode: library.Item.Mode = library.Item.Mode.HOT\n"
+                                     "func make() -> library.Item:\n"
+                                     "    return library.Item.new()\n"
+                                     "func total() -> int:\n"
+                                     "    return library.answer() + library.LIMIT\n");
+
+    const auto options = project_options(root);
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    const auto library =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path == std::filesystem::path{"library.gd"};
+        });
+    const auto consumer =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path == std::filesystem::path{"consumer.gd"};
+        });
+    REQUIRE(library != result.scripts.end());
+    REQUIRE(consumer != result.scripts.end());
+    REQUIRE_EQ(consumer->dependencies, std::vector<std::string>{"library.gd"});
+    REQUIRE_EQ(library->inner_class_names.size(), std::size_t{1});
+    const auto& item_class = library->inner_class_names.front();
+    const auto header =
+        read_text(options.output_directory / "generated" / consumer->header_file_name);
+    REQUIRE(header.find("#include \"" + library->header_file_name + "\"") !=
+            std::string::npos);
+    REQUIRE(header.find("godot::Ref<" + item_class + "> item") != std::string::npos);
+    const auto source =
+        read_text(options.output_directory / "generated" / consumer->source_file_name);
+    REQUIRE(source.find("InternalClassResource<" + item_class + ">{}.instantiate()") !=
+            std::string::npos);
+    REQUIRE(source.find(library->class_name + "::answer(") != std::string::npos);
+    REQUIRE(source.find(library->class_name + "::LIMIT") != std::string::npos);
+    REQUIRE(source.find(library->class_name + "::State::_gdpp_enum_READY") !=
+            std::string::npos);
+    REQUIRE(source.find(item_class + "::Mode::_gdpp_enum_HOT") != std::string::npos);
+}
+
 TEST_CASE("project compiler rejects cross-script native class collisions transactionally") {
     const auto root = fixture_root("project-collision");
     std::error_code error;
@@ -1905,7 +1963,7 @@ TEST_CASE("project script resource loading rejects dynamic missing and unsupport
     };
     REQUIRE(has_code("GDS4060"));
     REQUIRE(has_code("GDS4061"));
-    REQUIRE(has_code("GDS4062"));
+    REQUIRE(has_code("GDS4055"));
     REQUIRE(has_code("GDS4063"));
 }
 
