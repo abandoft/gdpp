@@ -227,7 +227,7 @@ ProjectEnumLookup find_project_enum(const ScriptSymbolTable* symbols, const std:
     const auto separator = name.find('.');
     if (separator == std::string::npos || name.find('.', separator + 1) != std::string::npos)
         return {};
-    const auto* owner = symbols->find_global(name.substr(0, separator));
+    const auto* owner = symbols->find_class(name.substr(0, separator));
     if (!owner)
         return {};
     return {owner, nullptr, symbols->find_enum(*owner, name.substr(separator + 1)),
@@ -816,10 +816,18 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
         return {parsed_type.kind, std::move(canonical)};
     }
     if (enum_types_.find(name) != enum_types_.end()) {
-        if (current_inner_class_)
-            return {TypeKind::enumeration, current_inner_class_->name + "." + name};
-        if (current_script_)
-            return {TypeKind::enumeration, current_script_->script_name + "." + name};
+        if (current_inner_class_) {
+            const auto owner = current_inner_class_->native_class_name.empty()
+                                   ? current_inner_class_->name
+                                   : current_inner_class_->native_class_name;
+            return {TypeKind::enumeration,
+                    owner + (current_inner_class_->native_class_name.empty() ? "." : "::") +
+                        name};
+        }
+        if (current_script_) {
+            return {TypeKind::enumeration,
+                    current_script_->native_class_name + "::" + name};
+        }
         return {TypeKind::enumeration, name};
     }
     if (api_.has_global_enum(name))
@@ -834,7 +842,8 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
     if (const auto project_enum = find_project_enum(script_symbols_, name);
         project_enum.enumeration) {
         record_script_dependency(project_enum.owner);
-        return {TypeKind::enumeration, name};
+        return {TypeKind::enumeration,
+                project_enum.native_owner + "::" + project_enum.enumeration->name};
     }
     if (const auto separator = name.find('.'); separator != std::string::npos) {
         const auto alias = script_resource_aliases_.find(name.substr(0, separator));
@@ -874,7 +883,8 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
     }
     if (current_script_ && name.find('.') == std::string::npos) {
         if (const auto* enumeration = script_symbols_->find_enum(*current_script_, name)) {
-            return {TypeKind::enumeration, current_script_->script_name + "." + enumeration->name};
+            return {TypeKind::enumeration,
+                    current_script_->native_class_name + "::" + enumeration->name};
         }
     }
     if (current_inner_class_ && name.find('.') == std::string::npos) {
@@ -3182,7 +3192,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             if (const auto* enumeration =
                     script_symbols_->find_enum(*script_owner, expression.value())) {
                 result = {TypeKind::enumeration,
-                          script_owner->script_name + "." + enumeration->name};
+                          script_owner->native_class_name + "::" + enumeration->name};
                 model_.api_resolutions_.emplace(
                     &expression,
                     ApiResolution{ApiResolutionKind::script_enum_type,
@@ -4759,7 +4769,8 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     // resolve to the same canonical enum identity as code at script scope.
     if (current_script_) {
         for (const auto& enumeration : current_script_->enums) {
-            const auto qualified = current_script_->script_name + "." + enumeration.name;
+            const auto qualified =
+                current_script_->native_class_name + "::" + enumeration.name;
             scopes_.front().insert_or_assign(enumeration.name,
                                              Symbol{SymbolKind::enum_type,
                                                     enumeration.name,
@@ -5146,9 +5157,14 @@ void SemanticAnalyzer::analyze_enums(const std::vector<ast::EnumDeclaration>& de
                                    declaration.span);
             } else {
                 const auto qualified_name =
-                    current_inner_class_ ? current_inner_class_->name + "." + *declaration.name
-                    : current_script_    ? current_script_->script_name + "." + *declaration.name
-                                         : *declaration.name;
+                    current_inner_class_
+                        ? (current_inner_class_->native_class_name.empty()
+                               ? current_inner_class_->name + "." + *declaration.name
+                               : current_inner_class_->native_class_name + "::" +
+                                     *declaration.name)
+                    : current_script_ ? current_script_->native_class_name + "::" +
+                                            *declaration.name
+                                      : *declaration.name;
                 declare({SymbolKind::enum_type,
                          *declaration.name,
                          {TypeKind::enumeration, qualified_name},
@@ -5202,9 +5218,12 @@ void SemanticAnalyzer::analyze_enums(const std::vector<ast::EnumDeclaration>& de
         }
         if (declaration.name) {
             const auto qualified_name =
-                current_inner_class_ ? current_inner_class_->name + "." + *declaration.name
-                : current_script_    ? current_script_->script_name + "." + *declaration.name
-                                     : *declaration.name;
+                current_inner_class_
+                    ? (current_inner_class_->native_class_name.empty()
+                           ? current_inner_class_->name + "." + *declaration.name
+                           : current_inner_class_->native_class_name + "::" + *declaration.name)
+                : current_script_ ? current_script_->native_class_name + "::" + *declaration.name
+                                  : *declaration.name;
             enum_members_[qualified_name] = std::move(values);
         }
     }
