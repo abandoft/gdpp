@@ -28,6 +28,14 @@ if(invalid_compiler_feature)
 endif()
 
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/export_plugin.gd" export_plugin)
+file(READ "${GDPP_TEST_SOURCE_DIR}/src/integration/godot/compiler_service.cpp" compiler_service)
+string(FIND "${compiler_service}"
+    "output[\"attached_script_bases\"] = attached_script_bases;"
+    attached_metadata_offset)
+if(attached_metadata_offset EQUAL -1)
+    message(FATAL_ERROR
+        "Compiler service does not expose third-party attachment metadata to the exporter")
+endif()
 string(FIND "${export_plugin}" "add_shared_object(\n        library_path" duplicate_registration)
 if(NOT duplicate_registration EQUAL -1)
     message(FATAL_ERROR
@@ -70,6 +78,18 @@ foreach(required_abstract_contract IN ITEMS
     if(abstract_contract_offset EQUAL -1)
         message(FATAL_ERROR
             "Abstract native export validation is missing: ${required_abstract_contract}")
+    endif()
+endforeach()
+foreach(required_attached_contract IN ITEMS
+        "distribution_result.get(\"attached_script_bases\", {})"
+        "ClassDB.class_exists(&\"AttachedCompiledScript\")"
+        "func _install_attached_script("
+        "object.set_script(script)"
+        "[sub_resource type=\\\"AttachedCompiledScript\\\" id=\\\"AttachedScript\\\"]")
+    string(FIND "${export_plugin}" "${required_attached_contract}" attached_contract_offset)
+    if(attached_contract_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Third-party GDExtension export attachment is missing: ${required_attached_contract}")
     endif()
 endforeach()
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/plugin.gd" editor_plugin)
