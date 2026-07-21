@@ -54,8 +54,7 @@ struct Symbol {
            std::optional<std::string> string_value = std::nullopt,
            SymbolStorage symbol_storage = SymbolStorage::class_member,
            std::optional<std::int64_t> integer_value = std::nullopt,
-           FlowSymbolId symbol_identity = 0,
-           std::optional<Type> reduced_type = std::nullopt)
+           FlowSymbolId symbol_identity = 0, std::optional<Type> reduced_type = std::nullopt)
         : kind(symbol_kind), name(std::move(symbol_name)), type(std::move(symbol_type)),
           declaration(declaration_span), read_only(symbol_read_only),
           constant_string_value(std::move(string_value)),
@@ -84,6 +83,7 @@ enum class ApiResolutionKind {
     script_constructor,
     external_constructor,
     external_static_method,
+    external_super_method,
     external_callable,
     external_signal,
     script_super,
@@ -238,8 +238,7 @@ class SemanticAnalyzer final {
     void analyze_match_pattern(const ast::MatchPattern& pattern, const Type& matched_type);
     [[nodiscard]] bool is_assignment_target(const ast::Expression& expression) const noexcept;
     [[nodiscard]] Type type_from_name(const std::string& name, SourceSpan span = {});
-    [[nodiscard]] bool object_type_inherits(const Type& derived,
-                                            const Type& base) const noexcept;
+    [[nodiscard]] bool object_type_inherits(const Type& derived, const Type& base) const noexcept;
     [[nodiscard]] bool override_type_accepts(const Type& target, const Type& source) const noexcept;
     [[nodiscard]] Type container_element_type(const Type& container, SourceSpan span = {});
     [[nodiscard]] Type iteration_element_type(const Type& container, SourceSpan span = {});

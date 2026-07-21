@@ -13,8 +13,10 @@
 #include <godot_cpp/variant/typed_array.hpp>
 #include <godot_cpp/variant/variant.hpp>
 
+#include <array>
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace gdpp::runtime {
@@ -87,6 +89,26 @@ resolve_attached_script(const godot::String& source_path, godot::String* error =
 [[nodiscard]] godot::Variant instantiate_attached_script(const godot::String& source_path,
                                                          const godot::Array& arguments = {},
                                                          godot::String* error = nullptr);
+
+[[nodiscard]] godot::Variant
+call_attached_native_base_raw(godot::Object* owner, const godot::StringName& native_class,
+                              const godot::StringName& method, std::uint32_t compatibility_hash,
+                              const godot::Variant** arguments, std::int64_t argument_count);
+
+template <typename... Arguments>
+[[nodiscard]] godot::Variant
+call_attached_native_base(godot::Object* owner, const godot::StringName& native_class,
+                          const godot::StringName& method, std::uint32_t compatibility_hash,
+                          Arguments&&... arguments) {
+    std::array<godot::Variant, sizeof...(Arguments)> values{
+        godot::Variant(std::forward<Arguments>(arguments))...};
+    std::array<const godot::Variant*, sizeof...(Arguments)> pointers{};
+    for (std::size_t index = 0; index < values.size(); ++index)
+        pointers[index] = &values[index];
+    return call_attached_native_base_raw(owner, native_class, method, compatibility_hash,
+                                         pointers.data(),
+                                         static_cast<std::int64_t>(pointers.size()));
+}
 
 class AttachedCompiledScript;
 

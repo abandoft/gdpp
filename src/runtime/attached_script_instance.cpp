@@ -5,6 +5,7 @@
 #include <godot_cpp/templates/vector.hpp>
 #include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/signal.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 
 #include <gdextension_interface.h>
 
@@ -55,6 +56,26 @@ struct PendingConstruction {
 };
 
 thread_local PendingConstruction* pending_construction{nullptr};
+
+std::mutex& native_bind_mutex() {
+    static std::mutex value;
+    return value;
+}
+
+std::unordered_map<std::string, GDExtensionMethodBindPtr>& native_bind_cache() {
+    static std::unordered_map<std::string, GDExtensionMethodBindPtr> value;
+    return value;
+}
+
+std::string native_bind_key(const godot::StringName& native_class, const godot::StringName& method,
+                            const std::uint32_t compatibility_hash) {
+    const godot::CharString class_utf8 = godot::String{native_class}.utf8();
+    const godot::CharString method_utf8 = godot::String{method}.utf8();
+    return std::string{class_utf8.get_data(), static_cast<std::size_t>(class_utf8.length())} +
+           "\n" +
+           std::string{method_utf8.get_data(), static_cast<std::size_t>(method_utf8.length())} +
+           "\n" + std::to_string(compatibility_hash);
+}
 
 const AttachedScriptProperty* find_property(const AttachedScriptInstance* instance,
                                             const godot::StringName& name) {
@@ -462,6 +483,52 @@ godot::Variant instantiate_attached_script(const godot::String& source_path,
         return {};
     }
     return instance;
+}
+
+godot::Variant call_attached_native_base_raw(godot::Object* owner,
+                                             const godot::StringName& native_class,
+                                             const godot::StringName& method,
+                                             const std::uint32_t compatibility_hash,
+                                             const godot::Variant** arguments,
+                                             const std::int64_t argument_count) {
+    if (!owner || !owner->is_class(native_class) || argument_count < 0) {
+        godot::UtilityFunctions::push_error(
+            "GDPP: invalid owner or argument count for an attached native super call");
+        return {};
+    }
+    GDExtensionMethodBindPtr method_bind{nullptr};
+    {
+        std::lock_guard<std::mutex> lock{native_bind_mutex()};
+        const auto key = native_bind_key(native_class, method, compatibility_hash);
+        const auto found = native_bind_cache().find(key);
+        if (found != native_bind_cache().end()) {
+            method_bind = found->second;
+        } else {
+            method_bind = godot::gdextension_interface::classdb_get_method_bind(
+                native_class._native_ptr(), method._native_ptr(), compatibility_hash);
+            if (method_bind)
+                native_bind_cache().emplace(key, method_bind);
+        }
+    }
+    if (!method_bind) {
+        godot::UtilityFunctions::push_error(
+            godot::String{"GDPP: cannot resolve attached native super method "} +
+            godot::String{native_class} + "." + godot::String{method});
+        return {};
+    }
+
+    godot::Variant result;
+    GDExtensionCallError error{};
+    godot::gdextension_interface::object_method_bind_call(
+        method_bind, owner->_owner, reinterpret_cast<GDExtensionConstVariantPtr*>(arguments),
+        argument_count, result._native_ptr(), &error);
+    if (error.error != GDEXTENSION_CALL_OK) {
+        godot::UtilityFunctions::push_error(
+            godot::String{"GDPP: attached native super call failed for "} +
+            godot::String{native_class} + "." + godot::String{method});
+        return {};
+    }
+    return result;
 }
 
 } // namespace gdpp::runtime

@@ -1963,6 +1963,42 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 const auto* base_script = !base_inner && script_symbols_ && current_script_
                                               ? script_symbols_->base_of(*current_script_)
                                               : nullptr;
+                const auto* external_base =
+                    !base_inner && !base_script && script_symbols_ && current_script_ &&
+                            current_script_->attached
+                        ? script_symbols_->external_base_of(*current_script_)
+                        : nullptr;
+                const auto* external_member =
+                    external_base ? script_symbols_->find_external_member(*external_base,
+                                                                          current_function_name_)
+                                  : nullptr;
+                if (external_member && external_member->kind == ScriptMemberKind::function) {
+                    if (!external_member->has_method_hash) {
+                        diagnostics_.error("GDS4160",
+                                           "external super method '" + external_base->name + "." +
+                                               current_function_name_ +
+                                               "' has no reflected MethodBind compatibility hash",
+                                           expression.span);
+                        result = unknown_type;
+                        break;
+                    }
+                    validate_script_call(*external_member, argument_types, expression,
+                                         expression.span);
+                    result = external_member->type;
+                    model_.referenced_extension_abis_.insert(external_base->provider_abi);
+                    model_.api_resolutions_[&callee] = ApiResolution{
+                        ApiResolutionKind::external_super_method,
+                        external_base->name,
+                        "",
+                        current_function_name_,
+                        result,
+                        static_cast<std::uint16_t>(external_member->required_arguments),
+                        static_cast<std::uint16_t>(external_member->parameters.size()),
+                        external_member->is_vararg,
+                        true,
+                        static_cast<std::int64_t>(external_member->method_hash)};
+                    break;
+                }
                 const auto* member =
                     base_inner ? find_inner_member(*base_inner, current_function_name_)
                     : base_script
@@ -2092,6 +2128,40 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             const auto* object_resolution = model_.api_resolution_of(*callee.operand(0));
             const bool called_on_super =
                 object_resolution && object_resolution->kind == ApiResolutionKind::script_super;
+            const auto* project_super = called_on_super && script_symbols_ && current_script_
+                                            ? script_symbols_->base_of(*current_script_)
+                                            : nullptr;
+            const auto* external_super = called_on_super && !project_super && script_symbols_ &&
+                                                 current_script_ && current_script_->attached
+                                             ? script_symbols_->external_base_of(*current_script_)
+                                             : nullptr;
+            if (external_super) {
+                const auto* member =
+                    script_symbols_->find_external_member(*external_super, callee.value());
+                if (member && member->kind == ScriptMemberKind::function) {
+                    if (!member->has_method_hash) {
+                        diagnostics_.error("GDS4160",
+                                           "external super method '" + external_super->name + "." +
+                                               callee.value() +
+                                               "' has no reflected MethodBind compatibility hash",
+                                           expression.span);
+                        result = unknown_type;
+                        break;
+                    }
+                    validate_script_call(*member, argument_types, expression, expression.span);
+                    result = member->type;
+                    model_.referenced_extension_abis_.insert(external_super->provider_abi);
+                    model_.api_resolutions_.emplace(
+                        &callee,
+                        ApiResolution{ApiResolutionKind::external_super_method,
+                                      external_super->name, "", callee.value(), result,
+                                      static_cast<std::uint16_t>(member->required_arguments),
+                                      static_cast<std::uint16_t>(member->parameters.size()),
+                                      member->is_vararg, true,
+                                      static_cast<std::int64_t>(member->method_hash)});
+                    break;
+                }
+            }
             if (object_resolution &&
                 object_resolution->kind == ApiResolutionKind::external_type_reference) {
                 if (callee.value() == "new") {

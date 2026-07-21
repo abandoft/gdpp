@@ -919,14 +919,16 @@ TEST_CASE("project compiler attaches scripts to third-party GDExtension instance
                "  \"godot_minimum\": \"4.4\",\n"
                "  \"classes\": [{\"gdscript_name\": \"VendorBase\", "
                "\"cpp_type\": \"vendor::VendorBase\", "
-               "\"header\": \"include/vendor_base.hpp\", \"godot_base\": \"Node\"}],\n"
+               "\"header\": \"include/vendor_base.hpp\", \"godot_base\": \"Node\", "
+               "\"methods\": [{\"name\": \"answer\", \"return_type\": \"int\", "
+               "\"hash\": 305419896}]}],\n"
                "  \"targets\": [{\"platform\": \"macos\", "
                "\"architecture\": \"arm64\", \"profile\": \"development\", "
                "\"include_dirs\": [\".\"], "
                "\"link_libraries\": [\"lib/libvendor.a\"]}]\n"
                "}\n");
     write_text(root / "derived.gd", "extends VendorBase\nclass_name BridgedDerived\n"
-                                    "func answer() -> int:\n    return 42\n");
+                                    "func answer() -> int:\n    return super.answer() + 1\n");
 
     const auto options = project_options(root);
     const auto result = gdpp::ProjectCompiler{}.compile(options);
@@ -944,6 +946,8 @@ TEST_CASE("project compiler attaches scripts to third-party GDExtension instance
     REQUIRE(header.find("vendor_base.hpp") == std::string::npos);
     REQUIRE(source.find("descriptor.native_base_type = godot::StringName(\"VendorBase\")") !=
             std::string::npos);
+    REQUIRE(source.find("call_attached_native_base") != std::string::npos);
+    REQUIRE(source.find("static_cast<std::uint32_t>(305419896)") != std::string::npos);
     REQUIRE(cmake.find("attached_script_instance.cpp") != std::string::npos);
     REQUIRE(cmake.find("libvendor") == std::string::npos);
     REQUIRE(registration.find("register_attached_script") != std::string::npos);

@@ -2426,6 +2426,28 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             return "gdpp::runtime::instantiate_external_class(" +
                    godot_string_name(callee.resolved_owner) + ")";
         }
+        if (callee.resolution == ir::ResolutionKind::external_super_method) {
+            const auto suffix = std::to_string(temporary_counter_++);
+            std::string invocation = "([&]() -> godot::Variant { ";
+            for (std::size_t index = 1; index < expression.operands.size(); ++index) {
+                invocation += "const godot::Variant _gdpp_super_argument_" + suffix + "_" +
+                              std::to_string(index - 1) + " = " +
+                              emit_expression(*expression.operands[index]) + "; ";
+            }
+            invocation +=
+                "return gdpp::runtime::call_attached_native_base(" + self_object_expression() +
+                ", " + godot_string_name(callee.resolved_owner) + ", " +
+                godot_string_name(callee.setter.empty() ? callee.value : callee.setter) +
+                ", static_cast<std::uint32_t>(" + std::to_string(callee.indexed_argument) + ")";
+            for (std::size_t index = 1; index < expression.operands.size(); ++index) {
+                invocation += ", _gdpp_super_argument_" + suffix + "_" + std::to_string(index - 1);
+            }
+            invocation += "); }())";
+            return expression.type.is_dynamic()
+                       ? invocation
+                       : emit_conversion(expression.type, {TypeKind::variant, "Variant"},
+                                         invocation);
+        }
         if (callee.resolution == ir::ResolutionKind::external_static_method) {
             const auto suffix = std::to_string(temporary_counter_++);
             std::string invocation = "([&]() -> godot::Variant { ";
@@ -5409,6 +5431,21 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
             !current_script_) {
             return false;
         }
+        if (attached_script) {
+            auto* base_script = script_symbols_->base_of(*current_script_);
+            bool generated_base_declares_method = false;
+            while (base_script && !generated_base_declares_method) {
+                generated_base_declares_method =
+                    std::any_of(base_script->members.begin(), base_script->members.end(),
+                                [&](const auto& member) {
+                                    return member.kind == ScriptMemberKind::function &&
+                                           member.name == function.name;
+                                });
+                base_script = script_symbols_->base_of(*base_script);
+            }
+            if (!generated_base_declares_method)
+                return false;
+        }
         const auto inherited = script_symbols_->inherited_members(*current_script_);
         return std::any_of(inherited.begin(), inherited.end(), [&](const auto* member) {
             if (member->kind != ScriptMemberKind::function || member->is_static ||
@@ -5593,8 +5630,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
            << "    inline static constexpr bool _gdpp_attached_ref_counted = "
            << (attached_script && api_.inherits(godot_base_type, "RefCounted") ? "true" : "false")
            << ";\n"
-           << "    inline static constexpr const char *_gdpp_source_path = \"res://"
-           << escaped_string(current_source_path_) << "\";\n";
+           << "    inline static constexpr const char *_gdpp_source_path = "
+           << escaped_string("res://" + current_source_path_) << ";\n";
     for (const auto& enumeration : module.enums) {
         if (enumeration.name.empty()) {
             for (const auto& entry : enumeration.entries) {

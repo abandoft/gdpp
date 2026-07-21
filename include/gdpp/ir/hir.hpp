@@ -53,6 +53,7 @@ enum class ResolutionKind {
     script_constructor,
     external_constructor,
     external_static_method,
+    external_super_method,
     external_callable,
     external_signal,
     inner_constructor,

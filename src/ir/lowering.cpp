@@ -456,6 +456,8 @@ ir::ExpressionPtr IrLowerer::lower_expression(const ast::Expression& expression)
             lowered->resolution = ir::ResolutionKind::external_constructor;
         else if (resolution->kind == ApiResolutionKind::external_static_method)
             lowered->resolution = ir::ResolutionKind::external_static_method;
+        else if (resolution->kind == ApiResolutionKind::external_super_method)
+            lowered->resolution = ir::ResolutionKind::external_super_method;
         else if (resolution->kind == ApiResolutionKind::external_callable)
             lowered->resolution = ir::ResolutionKind::external_callable;
         else if (resolution->kind == ApiResolutionKind::external_signal)
