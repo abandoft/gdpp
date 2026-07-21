@@ -186,20 +186,27 @@ Release 的实际 C++ 预处理门禁会验证两类表达式、错误报告和 
 `binary/libgdpp_fallback.<platform>.<arch>` 是不注册任何项目类的极小 GDExtension。编辑态插件
 目录只保留 `gdpp.gdextension` 这一份物理描述符，避免 Godot 在扫描目标平台时同时发现
 compiler、fallback 和项目库。导出开始时，插件备份并暂时把该描述符改写为目标项目库或
-fallback 的扫描描述符；处理文件列表时跳过 compiler 描述符，并通过 `add_file()` 向成品写入
-稳定虚拟路径 `res://addons/gdpp/gdpp_project.gdextension`。导出结束或下次启动时恢复原文件，
-因此项目目录不会长期处于导出态，游戏包又始终得到稳定运行入口。
+fallback 的扫描描述符；处理文件列表时跳过编辑态内容，并通过 `add_file()` 向成品中的同一
+物理路径 `res://addons/gdpp/gdpp.gdextension` 写入项目运行描述符。导出结束或下次启动时恢复
+原文件，因此项目目录不会长期处于导出态，Godot 的扩展注册表也始终引用一个真实存在的稳定
+运行入口，而不是会被导出器过滤掉的虚拟第二路径。
 
 启用二进制源码保护时，AOT 编译、原生类加载或导出替换失败会保留
 原 `.gd` 但默认阻断导出，不能把 fallback 当作静默交付源码的理由。只有显式打开
 `gdpp/allow_source_fallback` 才允许失败后交付普通脚本包。成功导出时，包内描述符只引用当前
 debug/release 项目库，fallback 不进入成品；fallback 不包含 compiler、SDK 或用户项目逻辑。
-包内虚拟运行描述符的发布条目按运行架构唯一匹配：Windows/Linux 使用目标架构；macOS 通用包使用
+包内运行描述符的发布条目按运行架构唯一匹配：Windows/Linux 使用目标架构；macOS 通用包使用
 `arm64` 与 `x86_64` 两个 Godot feature key，并让二者指向同一个 Universal 2 动态库。
 Godot 导出阶段会把 `universal` 作为目标架构扫描 `.gdextension`，因此导出器临时生成只含
 `macos.*.universal` 的扫描描述符，避免同一双切片库被识别两次；写入 PCK 的运行描述符恢复为
-`arm64`/`x86_64`。compiler 扫描描述符、虚拟项目描述符和 GDExtension 注册表都由同一事务保存、改写并
-恢复，异常退出时也通过备份恢复，不把扫描态留在客户工程。
+`arm64`/`x86_64`。compiler 扫描描述符、包内项目描述符和 GDExtension 注册表都由同一事务保存、
+改写并恢复，异常退出时也通过备份恢复，不把扫描态留在客户工程。
+
+项目中存在第三方 GDExtension 时，事务还会确保供应商描述符先于 GDPP 项目运行描述符登记。
+Godot 4.6 在同一 Universal 2 dylib 同时列为 arm64/x86_64 时会错误报告缺失切片；GDPP 先用
+`lipo` 验证两套切片，再只为导出扫描临时把该供应商条目归一化为 `universal`。成品仍写入供应商
+原描述符的逐字节内容，供应商源码、动态库和项目设置均不修改；成功、失败和下次启动恢复路径
+共同清理事务备份。
 
 ## 自动导出
 
@@ -210,14 +217,16 @@ Godot 开始桌面导出后，`EditorExportPlugin` 在打包文件前执行：
     -> 加载内部 GDPPNative_* 类供导出定制使用
     -> 按导出平台、架构和 debug/release 构建 template 库
     -> 校验稳定目标动态库存在
-    -> 按 SceneState/Resource 序列化存储图替换 GDScript 实例
+    -> 保留供应商描述符与动态库，并让 provider 在项目运行时之前加载
+    -> 按 SceneState/Resource 序列化存储图替换普通或附着式 GDScript 实例
     -> 递归转换内嵌 Resource、Array/Dictionary 与 PackedScene，保留共享/循环引用
+    -> 第三方 Node/Resource 保留供应商原生类型并附着 AttachedCompiledScript
     -> 原子保留存储属性、动态 metadata、节点层级、owner、分组及信号 flags/binds/unbind
     -> 写入只引用项目 template 库的运行时描述符
     -> 从包中排除项目 .gd、编译器、SDK 和全部 AOT 中间文件
 ```
 
-导出期生成的 Autoload 原生场景只作为包内虚拟资源写入
+导出期生成的 Autoload 原生或附着式场景只作为包内虚拟资源写入
 `res://addons/gdpp/runtime/autoload/`，不会复用或暴露 `build/` 工作区路径。
 生成类在实例字段初始化前将自身 `ObjectID` 登记到启动注册表；运行时查找正常优先走
 SceneTree，仅在节点尚未命名或挂入树的构造窗口使用注册表。因此按 Godot 项目设置顺序创建的

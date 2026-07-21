@@ -32,9 +32,16 @@ target pack。iOS 构建仍要求 Xcode，只能从 macOS 宿主执行。Web tar
 或生成 C++。
 
 编辑态插件目录只有 `gdpp.gdextension` 一个物理 GDExtension 描述符。导出事务临时用目标
-项目库或 fallback 内容替换它参与 Godot 扫描，成品则写入虚拟的
-`gdpp_project.gdextension` 运行描述符，最后恢复编辑态文件。该模型消除“两个描述符同时扫描、
-同一项目库重复装包”的歧义，异常退出也由 `.godot` 下的事务备份在下次启动恢复。
+项目库或 fallback 内容替换它参与 Godot 扫描，成品中的同一
+`addons/gdpp/gdpp.gdextension` 路径则写入项目运行描述符，最后恢复编辑态文件。该模型消除
+“两个描述符同时扫描、同一项目库重复装包”的歧义，也避免 Godot 用物理扫描路径过滤扩展注册表
+时丢失虚拟描述符；异常退出由 `.godot` 下的事务备份在下次启动恢复。
+
+第三方 GDExtension 原生父类采用附着式 AOT。客户现有 GDScript、场景、资源、Autoload 与供应商
+插件均无需修改：供应商动态库继续拥有真实 Node/Resource，GDPP 项目库通过
+`ScriptLanguageExtension`/`ScriptExtension`/`ScriptInstance` 附着生成行为。供应商描述符和动态库
+原样进入游戏并先于项目运行时加载；macOS Universal 2 描述符只在验证双切片后为导出扫描临时
+规范化，成品保留原始字节，导出结束后恢复源工程文件。
 
 Release 项目库和 compiler/fallback 正式库执行死代码删除、局部符号裁剪和入口白名单。ELF
 使用 version script 与 `--exclude-libs`，Mach-O 使用 exported-symbol list，Windows 依赖
