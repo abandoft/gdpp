@@ -33,6 +33,8 @@ struct ScriptMemberSymbol {
     std::int64_t constant_value{0};
     bool is_coroutine{false};
     bool is_abstract{false};
+    std::uint32_t method_hash{0};
+    bool has_method_hash{false};
 };
 
 struct ScriptEnumEntrySymbol {

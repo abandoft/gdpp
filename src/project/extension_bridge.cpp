@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <set>
 #include <sstream>
@@ -461,6 +462,19 @@ bool parse_bridge_member_field(const JsonObject& object, const std::string& clas
                 continue;
             }
             bridge_member.is_static = *flag;
+        }
+        if (kind == ExtensionBridgeMemberKind::method && field(*member, "hash")) {
+            const auto* hash = integer_field(*member, "hash");
+            if (!hash || *hash < 0 ||
+                static_cast<std::uint64_t>(*hash) >
+                    static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) {
+                diagnostics.push_back(path_to_utf8(manifest) + ": bridge method '" + *name +
+                                      "' field 'hash' must be an unsigned 32-bit integer");
+                valid = false;
+                continue;
+            }
+            bridge_member.method_hash = static_cast<std::uint32_t>(*hash);
+            bridge_member.has_method_hash = true;
         }
         output.push_back(std::move(bridge_member));
     }

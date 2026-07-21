@@ -27,6 +27,8 @@ struct ExtensionBridgeMember {
     bool vararg{false};
     bool is_static{false};
     std::int64_t constant_value{0};
+    std::uint32_t method_hash{0};
+    bool has_method_hash{false};
 };
 
 struct ExtensionBridgeEnumEntry {

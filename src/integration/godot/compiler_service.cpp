@@ -13,6 +13,7 @@
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/templates/hashfuncs.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
@@ -299,6 +300,37 @@ std::string reflected_name(const godot::Dictionary& info) {
     return native_string(godot::String{value});
 }
 
+std::uint32_t reflected_method_compatibility_hash(const godot::Dictionary& method_dictionary) {
+    const auto method = godot::MethodInfo::from_dict(method_dictionary);
+    const bool has_return = method.return_val.type != godot::Variant::NIL ||
+                            (method.return_val.usage & godot::PROPERTY_USAGE_NIL_IS_VARIANT) != 0;
+    auto hash = godot::hash_murmur3_one_32(has_return ? 1U : 0U);
+    hash = godot::hash_murmur3_one_32(static_cast<std::uint32_t>(method.arguments.size()), hash);
+    if (has_return) {
+        hash = godot::hash_murmur3_one_32(static_cast<std::uint32_t>(method.return_val.type), hash);
+        if (!method.return_val.class_name.is_empty()) {
+            hash = godot::hash_murmur3_one_32(
+                static_cast<std::uint32_t>(method.return_val.class_name.hash()), hash);
+        }
+    }
+    for (const auto& argument : method.arguments) {
+        hash = godot::hash_murmur3_one_32(static_cast<std::uint32_t>(argument.type), hash);
+        if (!argument.class_name.is_empty()) {
+            hash = godot::hash_murmur3_one_32(
+                static_cast<std::uint32_t>(argument.class_name.hash()), hash);
+        }
+    }
+    hash = godot::hash_murmur3_one_32(static_cast<std::uint32_t>(method.default_arguments.size()),
+                                      hash);
+    for (const auto& default_argument : method.default_arguments)
+        hash = godot::hash_murmur3_one_32(default_argument.hash(), hash);
+    hash =
+        godot::hash_murmur3_one_32((method.flags & godot::METHOD_FLAG_CONST) != 0 ? 1U : 0U, hash);
+    hash =
+        godot::hash_murmur3_one_32((method.flags & godot::METHOD_FLAG_VARARG) != 0 ? 1U : 0U, hash);
+    return godot::hash_fmix32(hash);
+}
+
 std::vector<ExtensionBridge> reflect_extension_contracts() {
     auto* class_db = godot::ClassDBSingleton::get_singleton();
     if (!class_db)
@@ -346,6 +378,8 @@ std::vector<ExtensionBridge> reflect_extension_contracts() {
                         : std::uint64_t{0};
                 member.is_static = (flags & godot::METHOD_FLAG_STATIC) != 0;
                 member.vararg = (flags & godot::METHOD_FLAG_VARARG) != 0;
+                member.method_hash = reflected_method_compatibility_hash(method);
+                member.has_method_hash = true;
                 if (method.has("return")) {
                     const godot::Dictionary return_info = method["return"];
                     member.type = reflected_type_name(return_info, true);
@@ -503,7 +537,9 @@ std::vector<ExtensionBridge> reflect_extension_contracts() {
                         member.type + ":" + (member.read_only ? "ro" : "rw") + ":" +
                         (member.vararg ? "vararg" : "fixed") + ":" +
                         (member.is_static ? "static" : "instance") + ":" +
-                        std::to_string(member.constant_value) + "\n";
+                        std::to_string(member.constant_value) + ":" +
+                        (member.has_method_hash ? std::to_string(member.method_hash) : "no-hash") +
+                        "\n";
             for (const auto& parameter : member.parameters)
                 identity += "arg:" + parameter.name + ":" + parameter.type + ":" +
                             (parameter.has_default ? "default" : "required") + "\n";

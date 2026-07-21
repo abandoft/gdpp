@@ -2312,6 +2312,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                 member.is_static = bridge_member.is_static;
                 member.read_only = bridge_member.read_only;
                 member.constant_value = bridge_member.constant_value;
+                member.method_hash = bridge_member.method_hash;
+                member.has_method_hash = bridge_member.has_method_hash;
                 member.has_accessor = bridge_member.kind == ExtensionBridgeMemberKind::property;
                 if (bridge_member.kind == ExtensionBridgeMemberKind::method)
                     member.kind = ScriptMemberKind::function;
