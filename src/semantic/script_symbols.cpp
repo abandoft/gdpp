@@ -193,6 +193,13 @@ const ScriptMemberSymbol* ScriptSymbolTable::find_member(const ScriptClassSymbol
     return nullptr;
 }
 
+bool ScriptSymbolTable::member_is_external(const ScriptClassSymbol& owner,
+                                           const std::string& name) const noexcept {
+    const auto* external = external_base_of(owner);
+    const auto* external_member = external ? find_external_member(*external, name) : nullptr;
+    return external_member && find_member(owner, name) == external_member;
+}
+
 const ScriptEnumSymbol* ScriptSymbolTable::find_enum(const ScriptClassSymbol& owner,
                                                      const std::string& name) const noexcept {
     const ScriptClassSymbol* current = &owner;

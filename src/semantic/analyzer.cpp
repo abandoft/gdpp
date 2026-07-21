@@ -1313,7 +1313,38 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     model_.non_null_expressions_.insert(&expression);
             }
             model_.referenced_symbols_.emplace(&expression, *symbol);
-            if (symbol->kind == SymbolKind::function) {
+            const bool external_member =
+                script_symbols_ && current_script_ &&
+                script_symbols_->member_is_external(*current_script_, expression.value());
+            const auto* external_base =
+                external_member ? script_symbols_->external_base_of(*current_script_) : nullptr;
+            if (external_base)
+                model_.referenced_extension_abis_.insert(external_base->provider_abi);
+            if (external_base && symbol->kind == SymbolKind::function) {
+                model_.api_resolutions_.emplace(&expression,
+                                                ApiResolution{ApiResolutionKind::external_callable,
+                                                              external_base->name, "", "", result,
+                                                              0, 0, false, false});
+            } else if (external_base && symbol->kind == SymbolKind::signal) {
+                model_.api_resolutions_.emplace(&expression,
+                                                ApiResolution{ApiResolutionKind::external_signal,
+                                                              external_base->name, "", "", result,
+                                                              0, 0, false, false});
+            } else if (external_base && symbol->kind == SymbolKind::field) {
+                model_.api_resolutions_.emplace(&expression,
+                                                ApiResolution{ApiResolutionKind::dynamic_property,
+                                                              external_base->name, "", "", result,
+                                                              0, 0, false, false});
+            } else if (external_base && (symbol->kind == SymbolKind::constant ||
+                                         symbol->kind == SymbolKind::enum_value)) {
+                const auto* member =
+                    script_symbols_->find_external_member(*external_base, expression.value());
+                model_.api_resolutions_.emplace(
+                    &expression,
+                    ApiResolution{ApiResolutionKind::global_constant,
+                                  member ? std::to_string(member->constant_value) : "0", "", "",
+                                  result, 0, 0, false, true});
+            } else if (symbol->kind == SymbolKind::function) {
                 const bool is_static = script_function_is_static(expression.value());
                 model_.api_resolutions_.emplace(
                     &expression, ApiResolution{is_static ? ApiResolutionKind::script_static_callable
@@ -2004,8 +2035,23 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                             script_symbols_->find_member(*current_script_, callee.value())) {
                         validate_script_call(*member, argument_types, expression, expression.span);
                         result = member->type;
-                        if (!member->is_static && script_symbols_->requires_dynamic_dispatch(
-                                                      *current_script_, callee.value())) {
+                        const bool external_member =
+                            script_symbols_->member_is_external(*current_script_, callee.value());
+                        if (external_member) {
+                            if (const auto* external =
+                                    script_symbols_->external_base_of(*current_script_)) {
+                                model_.referenced_extension_abis_.insert(external->provider_abi);
+                                model_.api_resolutions_.insert_or_assign(
+                                    &callee,
+                                    ApiResolution{
+                                        ApiResolutionKind::dynamic_method, external->name, "", "",
+                                        result,
+                                        static_cast<std::uint16_t>(member->required_arguments),
+                                        static_cast<std::uint16_t>(member->parameters.size()),
+                                        member->is_vararg, false});
+                            }
+                        } else if (!member->is_static && script_symbols_->requires_dynamic_dispatch(
+                                                             *current_script_, callee.value())) {
                             mark_coroutine_call(script_symbols_->may_dispatch_coroutine(
                                 *current_script_, callee.value()));
                             model_.api_resolutions_.emplace(
@@ -2251,6 +2297,16 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         const auto* method =
                             api_.find_method(script_owner->godot_base_type, callee.value());
                         if (resolve_method(method)) {
+                            if (script_owner->attached && !called_on_super) {
+                                model_.api_resolutions_.insert_or_assign(
+                                    &callee,
+                                    ApiResolution{
+                                        ApiResolutionKind::dynamic_method,
+                                        script_owner->godot_base_type, "", "", result,
+                                        method ? method->required_arguments : std::uint16_t{0},
+                                        method ? method->maximum_arguments : std::uint16_t{0},
+                                        method && method->is_vararg, false});
+                            }
                             if (called_on_super && method && !method->is_static)
                                 diagnose_static_instance_access("method", callee.value(),
                                                                 expression.span);
@@ -2731,9 +2787,11 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         result = type_from_godot_api(property->type);
                         model_.api_resolutions_.emplace(
                             &expression,
-                            ApiResolution{ApiResolutionKind::property, property->owner,
-                                          property->getter, property->setter, result, 0, 0, false,
-                                          property->direct, property->index});
+                            ApiResolution{script_owner->attached
+                                              ? ApiResolutionKind::dynamic_property
+                                              : ApiResolutionKind::property,
+                                          property->owner, property->getter, property->setter,
+                                          result, 0, 0, false, property->direct, property->index});
                         break;
                     }
                 }
@@ -2825,11 +2883,14 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             const bool runtime_static_field = current_script_ && current_script_->is_tool &&
                                               !script_owner->is_tool && accessed_on_type &&
                                               member->is_static;
+            const bool attached_instance_field =
+                script_owner->attached && !accessed_on_type && !member->is_static;
             result = runtime_static_field ? variant_type : member->type;
             model_.api_resolutions_.emplace(
                 &expression,
                 ApiResolution{runtime_static_field ? ApiResolutionKind::script_runtime_static_field
-                                                   : ApiResolutionKind::script_property,
+                              : attached_instance_field ? ApiResolutionKind::dynamic_property
+                                                        : ApiResolutionKind::script_property,
                               script_owner->native_class_name, "_gdpp_get_" + expression.value(),
                               "_gdpp_set_" + expression.value(), result, 0, 0, false, false});
             break;

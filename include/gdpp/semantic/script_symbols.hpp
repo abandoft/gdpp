@@ -122,6 +122,8 @@ class ScriptSymbolTable final {
     [[nodiscard]] const ScriptClassSymbol* base_of(const ScriptClassSymbol& owner) const noexcept;
     [[nodiscard]] const ScriptMemberSymbol* find_member(const ScriptClassSymbol& owner,
                                                         const std::string& name) const noexcept;
+    [[nodiscard]] bool member_is_external(const ScriptClassSymbol& owner,
+                                          const std::string& name) const noexcept;
     [[nodiscard]] const ScriptEnumSymbol* find_enum(const ScriptClassSymbol& owner,
                                                     const std::string& name) const noexcept;
     [[nodiscard]] const ScriptInnerClassSymbol* find_inner(const ScriptClassSymbol& owner,
