@@ -737,9 +737,8 @@ TEST_CASE("compiler preserves instance defaults and explicit null through native
     REQUIRE(result.unit.source.find("DEFVAL(gdpp::runtime::default_argument())") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("DEFVAL(godot::Variant())") == std::string::npos);
-    REQUIRE(result.unit.source.find(
-                "? static_cast<godot::Control*>(nullptr) : "
-                "godot::Object::cast_to<godot::Control>") != std::string::npos);
+    REQUIRE(result.unit.source.find("? static_cast<godot::Control*>(nullptr) : "
+                                    "godot::Object::cast_to<godot::Control>") != std::string::npos);
 }
 
 TEST_CASE("compiler gives dynamic conditional branches an unambiguous native common type") {
@@ -1734,10 +1733,11 @@ TEST_CASE("compiler applies GDScript truthiness to RefCounted objects") {
 
 TEST_CASE("object conditional expressions emit an explicitly typed null branch") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile("nullable_image.gd", "extends Node\n"
-                                                              "func load_image(ok: bool) -> Image:\n"
-                                                              "    var image := Image.create(1, 1, false, Image.FORMAT_RGBA8)\n"
-                                                              "    return image if ok else null\n");
+    const auto result = compiler.compile(
+        "nullable_image.gd", "extends Node\n"
+                             "func load_image(ok: bool) -> Image:\n"
+                             "    var image := Image.create(1, 1, false, Image.FORMAT_RGBA8)\n"
+                             "    return image if ok else null\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("godot::Ref<godot::Image>{}") != std::string::npos);
@@ -2291,13 +2291,13 @@ TEST_CASE("compiler resolves versioned builtin value constants") {
 
 TEST_CASE("compiler lowers negated membership through the Variant operator") {
     const gdpp::Compiler compiler;
-    const auto result =
-        compiler.compile("membership.gd", "func missing(value: Variant, items: Array) -> bool:\n"
-                                          "    return value not in items\n"
-                                          "func contains_node(value: Node, items: Array[Node]) -> bool:\n"
-                                          "    return value in items\n"
-                                          "func sibling_material(value: CanvasItemMaterial) -> ShaderMaterial:\n"
-                                          "    return value as ShaderMaterial\n");
+    const auto result = compiler.compile(
+        "membership.gd", "func missing(value: Variant, items: Array) -> bool:\n"
+                         "    return value not in items\n"
+                         "func contains_node(value: Node, items: Array[Node]) -> bool:\n"
+                         "    return value in items\n"
+                         "func sibling_material(value: CanvasItemMaterial) -> ShaderMaterial:\n"
+                         "    return value as ShaderMaterial\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find(
@@ -3492,9 +3492,10 @@ TEST_CASE("Godot numeric class names map to their actual header names") {
 
 TEST_CASE("Godot ClassDB maps to the collision-safe godot-cpp singleton") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile("core_types.gd", "extends Node\n"
-                                                          "func available(name: StringName) -> bool:\n"
-                                                          "    return ClassDB.class_exists(name)\n");
+    const auto result =
+        compiler.compile("core_types.gd", "extends Node\n"
+                                          "func available(name: StringName) -> bool:\n"
+                                          "    return ClassDB.class_exists(name)\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.header.find("#include <godot_cpp/classes/class_db_singleton.hpp>") !=
@@ -4005,11 +4006,12 @@ TEST_CASE("compiler matches zero-arity varargs constant preload and warning rang
 TEST_CASE("compiler lowers GDScript debug stack queries on the 4.4 baseline") {
     gdpp::CompileOptions options;
     options.target_version = gdpp::GodotVersion::v4_4;
-    const auto result = gdpp::Compiler{}.compile(
-        "stack.gd", "func caller() -> Dictionary:\n"
-                    "    var stack := get_stack()\n"
-                    "    return stack[0] if not stack.is_empty() else {}\n",
-        options);
+    const auto result =
+        gdpp::Compiler{}.compile("stack.gd",
+                                 "func caller() -> Dictionary:\n"
+                                 "    var stack := get_stack()\n"
+                                 "    return stack[0] if not stack.is_empty() else {}\n",
+                                 options);
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find("gdpp::runtime::get_stack()") != std::string::npos);

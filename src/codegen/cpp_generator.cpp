@@ -541,9 +541,8 @@ void collect_type(const Type& type, NativeTypeIncludes& includes, const GodotApi
             if (const auto* owner = script_symbols->owner_of(*inner))
                 includes.complete_script_resources.insert(owner->path);
         }
-    }
-    else if (type.kind == TypeKind::script_resource && script_symbols &&
-             script_symbols->find_path(type.name))
+    } else if (type.kind == TypeKind::script_resource && script_symbols &&
+               script_symbols->find_path(type.name))
         includes.script_resources.insert(type.name);
 }
 
@@ -583,8 +582,7 @@ void collect_expression_types(const ir::Expression& expression, NativeTypeInclud
     // A GDScript property can intentionally publish a broader type than its native getter. For
     // example, SceneTree.root is a Node property while godot-cpp returns Window*. Include the
     // concrete getter result so C++ can see the inheritance needed for the implicit upcast.
-    if (expression.resolution == ir::ResolutionKind::godot_property &&
-        !expression.getter.empty()) {
+    if (expression.resolution == ir::ResolutionKind::godot_property && !expression.getter.empty()) {
         if (const auto* getter = api.find_method(expression.resolved_owner, expression.getter)) {
             if (std::string_view{getter->return_type}.size() != 0) {
                 collect_type(type_from_godot_api(getter->return_type), includes, api,
@@ -791,11 +789,10 @@ std::string property_hint(const ir::Field& field, const GodotApi& api,
                         return "godot::PROPERTY_HINT_FLAGS";
                     }
                 } else if (const auto* inner = script_symbols->find_inner_native(owner_name)) {
-                    const auto enumeration = std::find_if(
-                        inner->enums.begin(), inner->enums.end(),
-                        [&](const ScriptEnumSymbol& candidate) {
-                            return candidate.name == enum_name;
-                        });
+                    const auto enumeration = std::find_if(inner->enums.begin(), inner->enums.end(),
+                                                          [&](const ScriptEnumSymbol& candidate) {
+                                                              return candidate.name == enum_name;
+                                                          });
                     if (enumeration != inner->enums.end() && enumeration->is_bitfield)
                         return "godot::PROPERTY_HINT_FLAGS";
                 }
@@ -875,13 +872,11 @@ std::string property_hint_string(const ir::Field& field, const ScriptSymbolTable
                 const ScriptEnumSymbol* enumeration = nullptr;
                 if (const auto* owner = script_symbols->find_native_class(owner_name)) {
                     enumeration = script_symbols->find_enum(*owner, enum_name);
-                } else if (const auto* inner =
-                               script_symbols->find_inner_native(owner_name)) {
-                    const auto found = std::find_if(
-                        inner->enums.begin(), inner->enums.end(),
-                        [&](const ScriptEnumSymbol& candidate) {
-                            return candidate.name == enum_name;
-                        });
+                } else if (const auto* inner = script_symbols->find_inner_native(owner_name)) {
+                    const auto found = std::find_if(inner->enums.begin(), inner->enums.end(),
+                                                    [&](const ScriptEnumSymbol& candidate) {
+                                                        return candidate.name == enum_name;
+                                                    });
                     if (found != inner->enums.end())
                         enumeration = &*found;
                 }
@@ -2535,12 +2530,11 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                                      emitted_value + "), " +
                                      godot_string_name(target.resolved_owner) + ")");
                 }
-                const auto target_cpp = target.resolution == ir::ResolutionKind::script_type
-                                            ? target.resolved_owner
-                                        : target.resolution == ir::ResolutionKind::inner_type
-                                            ? inner_cpp_type(target.resolved_owner)
-                                            : "godot::" +
-                                                  godot_cpp_class_name(target.resolved_owner);
+                const auto target_cpp =
+                    target.resolution == ir::ResolutionKind::script_type ? target.resolved_owner
+                    : target.resolution == ir::ResolutionKind::inner_type
+                        ? inner_cpp_type(target.resolved_owner)
+                        : "godot::" + godot_cpp_class_name(target.resolved_owner);
                 std::string object_value;
                 if (value.type.kind == TypeKind::nil) {
                     object_value = "nullptr";
@@ -2595,12 +2589,11 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 (target.resolution == ir::ResolutionKind::godot_type ||
                  target.resolution == ir::ResolutionKind::script_type ||
                  target.resolution == ir::ResolutionKind::inner_type)) {
-                const auto target_cpp = target.resolution == ir::ResolutionKind::script_type
-                                            ? target.resolved_owner
-                                        : target.resolution == ir::ResolutionKind::inner_type
-                                            ? inner_cpp_type(target.resolved_owner)
-                                            : "godot::" +
-                                                  godot_cpp_class_name(target.resolved_owner);
+                const auto target_cpp =
+                    target.resolution == ir::ResolutionKind::script_type ? target.resolved_owner
+                    : target.resolution == ir::ResolutionKind::inner_type
+                        ? inner_cpp_type(target.resolved_owner)
+                        : "godot::" + godot_cpp_class_name(target.resolved_owner);
                 auto object = value.type.is_dynamic()
                                   ? "(" + emitted_value + ").get_validated_object()"
                                   : emitted_value;
@@ -2796,8 +2789,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                     if (!owner && current_script_ && !current_inner_script_)
                         owner = script_symbols_->base_of(*current_script_);
                 }
-                if (!owner &&
-                    callee.resolution == ir::ResolutionKind::script_static_callable &&
+                if (!owner && callee.resolution == ir::ResolutionKind::script_static_callable &&
                     !callee.resolved_owner.empty()) {
                     owner = script_symbols_->find_native_class(callee.resolved_owner);
                 }
@@ -2839,8 +2831,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             }
             if (!script_method && callee.resolution == ir::ResolutionKind::inner_constructor &&
                 current_script_) {
-                const auto* inner_owner =
-                    script_symbols_->find_inner_native(callee.resolved_owner);
+                const auto* inner_owner = script_symbols_->find_inner_native(callee.resolved_owner);
                 if (!inner_owner)
                     inner_owner =
                         script_symbols_->find_inner(*current_script_, callee.resolved_owner);
@@ -3147,7 +3138,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 : callee.resolution == ir::ResolutionKind::script_super && !callee.setter.empty()
                     ? native_super_owner(callee.resolved_owner) + "::" + script_native_name
                 : callee.resolution == ir::ResolutionKind::script_static_callable &&
-                          !callee.resolved_owner.empty()
+                        !callee.resolved_owner.empty()
                     ? callee.resolved_owner + "::" + script_native_name
                     : emit_expression(callee);
             if (callee.resolution == ir::ResolutionKind::godot_method &&
@@ -3263,8 +3254,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                                               "' on a null or freed object at " + location);
             result +=
                 "if (!gdpp::runtime::is_instance_valid(godot::Variant(" + receiver_name + "))) { ";
-            result += !expression.coroutine_call &&
-                              expression.type.kind == TypeKind::void_type
+            result += !expression.coroutine_call && expression.type.kind == TypeKind::void_type
                           ? "ERR_FAIL_EDMSG(" + message + "); "
                           : "ERR_FAIL_V_EDMSG({}, " + message + "); ";
             result += "} ";
@@ -4965,10 +4955,9 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
                                          ? script_symbols_->base_of(*current_inner_script_)
                                          : nullptr;
     const auto base_cpp = !native_inner_base.empty() ? native_inner_base
-                          : native_script_base       ? native_script_base->native_class_name
-                                                     : "godot::" +
-                                                           godot_cpp_class_name(
-                                                               declaration.base_type);
+                          : native_script_base
+                              ? native_script_base->native_class_name
+                              : "godot::" + godot_cpp_class_name(declaration.base_type);
     const auto godot_base = inner_godot_base_type(source_name);
     current_godot_base_type_ = godot_base;
     const auto engine_virtual_for = [&](const ir::Function& function) {
@@ -5908,8 +5897,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     }
     const auto base_cpp = attached_script && native_base_class.empty()
                               ? std::string{"gdpp::runtime::AttachedScriptBehavior"}
-                          : native_base_class.empty()
-                              ? "godot::" + godot_cpp_class_name(base)
+                          : native_base_class.empty() ? "godot::" + godot_cpp_class_name(base)
                                                       : native_base_class;
     const auto initializer =
         std::find_if(module.functions.begin(), module.functions.end(),

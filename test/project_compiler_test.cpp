@@ -808,10 +808,9 @@ TEST_CASE("project compiler exposes preloaded scripts as typed namespaces") {
     REQUIRE(consumer != result.scripts.end());
     REQUIRE_EQ(consumer->dependencies, std::vector<std::string>{"library.gd"});
     REQUIRE_EQ(library->inner_class_names.size(), std::size_t{2});
-    const auto item = std::find_if(library->inner_class_names.begin(),
-                                   library->inner_class_names.end(), [](const auto& name) {
-                                       return name.find("__Item__Child") == std::string::npos;
-                                   });
+    const auto item = std::find_if(
+        library->inner_class_names.begin(), library->inner_class_names.end(),
+        [](const auto& name) { return name.find("__Item__Child") == std::string::npos; });
     REQUIRE(item != library->inner_class_names.end());
     const auto& item_class = *item;
     const auto library_header =
@@ -824,11 +823,9 @@ TEST_CASE("project compiler exposes preloaded scripts as typed namespaces") {
             std::string::npos);
     const auto header =
         read_text(options.output_directory / "generated" / consumer->header_file_name);
-    REQUIRE(header.find("#include \"" + library->header_file_name + "\"") !=
-            std::string::npos);
+    REQUIRE(header.find("#include \"" + library->header_file_name + "\"") != std::string::npos);
     REQUIRE(header.find("godot::Ref<" + item_class + "> item") != std::string::npos);
-    REQUIRE(header.find("godot::Ref<" + library->class_name + "> root_value") !=
-            std::string::npos);
+    REQUIRE(header.find("godot::Ref<" + library->class_name + "> root_value") != std::string::npos);
     const auto source =
         read_text(options.output_directory / "generated" / consumer->source_file_name);
     REQUIRE(source.find("InternalClassResource<" + item_class + ">{}.instantiate()") !=
@@ -839,8 +836,7 @@ TEST_CASE("project compiler exposes preloaded scripts as typed namespaces") {
     REQUIRE(source.find("godot::Object::cast_to<" + library->class_name + ">((value).ptr())") !=
             std::string::npos);
     REQUIRE(source.find(library->class_name + "::LIMIT") != std::string::npos);
-    REQUIRE(source.find(library->class_name + "::State::_gdpp_enum_READY") !=
-            std::string::npos);
+    REQUIRE(source.find(library->class_name + "::State::_gdpp_enum_READY") != std::string::npos);
     REQUIRE(source.find(item_class + "::Mode::_gdpp_enum_HOT") != std::string::npos);
 }
 
@@ -1787,16 +1783,14 @@ TEST_CASE("preload alias casts preserve void coroutine ABI at call sites") {
     const auto result = gdpp::ProjectCompiler{}.compile(options);
 
     REQUIRE(result.success);
-    const auto producer = std::find_if(result.scripts.begin(), result.scripts.end(),
-                                       [](const auto& script) {
-                                           return script.relative_path ==
-                                                  std::filesystem::path{"producer.gd"};
-                                       });
-    const auto consumer = std::find_if(result.scripts.begin(), result.scripts.end(),
-                                       [](const auto& script) {
-                                           return script.relative_path ==
-                                                  std::filesystem::path{"consumer.gd"};
-                                       });
+    const auto producer =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path == std::filesystem::path{"producer.gd"};
+        });
+    const auto consumer =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path == std::filesystem::path{"consumer.gd"};
+        });
     REQUIRE(producer != result.scripts.end());
     REQUIRE(consumer != result.scripts.end());
     const auto producer_header =

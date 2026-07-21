@@ -814,8 +814,8 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
             }
             arguments.push_back(std::move(argument_type));
         }
-        std::string canonical = container->kind == ContainerTypeKind::array ? "Array["
-                                                                            : "Dictionary[";
+        std::string canonical =
+            container->kind == ContainerTypeKind::array ? "Array[" : "Dictionary[";
         for (std::size_t index = 0; index < arguments.size(); ++index) {
             if (index != 0)
                 canonical += ", ";
@@ -835,12 +835,10 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
                                    ? current_inner_class_->name
                                    : current_inner_class_->native_class_name;
             return {TypeKind::enumeration,
-                    owner + (current_inner_class_->native_class_name.empty() ? "." : "::") +
-                        name};
+                    owner + (current_inner_class_->native_class_name.empty() ? "." : "::") + name};
         }
         if (current_script_) {
-            return {TypeKind::enumeration,
-                    current_script_->native_class_name + "::" + name};
+            return {TypeKind::enumeration, current_script_->native_class_name + "::" + name};
         }
         return {TypeKind::enumeration, name};
     }
@@ -868,8 +866,7 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
             if (const auto* inner = script_symbols_->find_inner(*owner, member_name))
                 return {TypeKind::object, inner->native_class_name};
             if (const auto* enumeration = script_symbols_->find_enum(*owner, member_name)) {
-                return {TypeKind::enumeration,
-                        owner->native_class_name + "::" + enumeration->name};
+                return {TypeKind::enumeration, owner->native_class_name + "::" + enumeration->name};
             }
             if (const auto inner_separator = member_name.rfind('.');
                 inner_separator != std::string::npos) {
@@ -877,11 +874,10 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
                     script_symbols_->find_inner(*owner, member_name.substr(0, inner_separator));
                 if (inner) {
                     const auto enum_name = member_name.substr(inner_separator + 1);
-                    const auto enumeration = std::find_if(
-                        inner->enums.begin(), inner->enums.end(),
-                        [&](const ScriptEnumSymbol& candidate) {
-                            return candidate.name == enum_name;
-                        });
+                    const auto enumeration = std::find_if(inner->enums.begin(), inner->enums.end(),
+                                                          [&](const ScriptEnumSymbol& candidate) {
+                                                              return candidate.name == enum_name;
+                                                          });
                     if (enumeration != inner->enums.end()) {
                         return {TypeKind::enumeration,
                                 inner->native_class_name + "::" + enumeration->name};
@@ -902,9 +898,9 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
         }
     }
     if (current_inner_class_ && name.find('.') == std::string::npos) {
-        const auto enumeration = std::find_if(
-            current_inner_class_->enums.begin(), current_inner_class_->enums.end(),
-            [&](const ScriptEnumSymbol& candidate) { return candidate.name == name; });
+        const auto enumeration =
+            std::find_if(current_inner_class_->enums.begin(), current_inner_class_->enums.end(),
+                         [&](const ScriptEnumSymbol& candidate) { return candidate.name == name; });
         if (enumeration != current_inner_class_->enums.end()) {
             const auto owner = current_inner_class_->native_class_name.empty()
                                    ? current_inner_class_->name
@@ -1477,10 +1473,10 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             if (const auto project_enum = find_project_enum(script_symbols_, expression.value());
                 project_enum.enumeration) {
                 model_.api_resolutions_.emplace(
-                    &expression, ApiResolution{ApiResolutionKind::script_enum_type,
-                                               project_enum.native_owner +
-                                                   "::" + project_enum.enumeration->name,
-                                               "", "", result, 0, 0, false, true});
+                    &expression,
+                    ApiResolution{ApiResolutionKind::script_enum_type,
+                                  project_enum.native_owner + "::" + project_enum.enumeration->name,
+                                  "", "", result, 0, 0, false, true});
             } else if (const auto external_enum =
                            find_external_enum(script_symbols_, expression.value());
                        external_enum.enumeration) {
@@ -1632,20 +1628,18 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                                               "", "", result, 0, 0, false, false});
             }
             if (symbol->kind == SymbolKind::enum_type) {
-                model_.api_resolutions_.emplace(&expression,
-                                                ApiResolution{ApiResolutionKind::script_enum_type,
-                                                              result.name, "", "", result, 0,
-                                                              0, false, true});
+                model_.api_resolutions_.emplace(
+                    &expression, ApiResolution{ApiResolutionKind::script_enum_type, result.name, "",
+                                               "", result, 0, 0, false, true});
             }
         } else if (const auto alias = script_resource_aliases_.find(expression.value());
                    alias != script_resource_aliases_.end()) {
             result = {TypeKind::script_resource, alias->second->path};
             record_script_dependency(alias->second);
-            model_.api_resolutions_.emplace(
-                &expression,
-                ApiResolution{ApiResolutionKind::script_resource,
-                              alias->second->native_class_name, "", "", result, 0, 0, false,
-                              true});
+            model_.api_resolutions_.emplace(&expression,
+                                            ApiResolution{ApiResolutionKind::script_resource,
+                                                          alias->second->native_class_name, "", "",
+                                                          result, 0, 0, false, true});
         } else if (expression.value() == "PI" || expression.value() == "TAU" ||
                    expression.value() == "INF" || expression.value() == "NAN") {
             result = {TypeKind::floating, "float"};
@@ -2549,13 +2543,11 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                             "internal class new() received arguments but target has no _init",
                             expression.span);
                     }
-                    const auto& inner_identity = inner->native_class_name.empty()
-                                                     ? inner->name
-                                                     : inner->native_class_name;
+                    const auto& inner_identity =
+                        inner->native_class_name.empty() ? inner->name : inner->native_class_name;
                     result = {TypeKind::object, inner_identity};
                     model_.api_resolutions_.emplace(
-                        &callee, ApiResolution{ApiResolutionKind::inner_constructor,
-                                               inner_identity,
+                        &callee, ApiResolution{ApiResolutionKind::inner_constructor, inner_identity,
                                                "", "", result, 0, 0, false, true});
                     break;
                 }
@@ -3048,43 +3040,41 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 result = {TypeKind::object, inner->native_class_name};
                 model_.api_resolutions_.emplace(
                     &expression,
-                    ApiResolution{ApiResolutionKind::inner_type_reference,
-                                  inner->native_class_name, "", "", result, 0, 0, false, true});
+                    ApiResolution{ApiResolutionKind::inner_type_reference, inner->native_class_name,
+                                  "", "", result, 0, 0, false, true});
                 break;
             }
-            if (const auto* enumeration =
-                    script_symbols_->find_enum(*target, expression.value())) {
+            if (const auto* enumeration = script_symbols_->find_enum(*target, expression.value())) {
                 result = {TypeKind::enumeration,
                           target->native_class_name + "::" + enumeration->name};
                 model_.api_resolutions_.emplace(
-                    &expression,
-                    ApiResolution{ApiResolutionKind::script_enum_type, result.name, "", "", result,
-                                  0, 0, false, true});
+                    &expression, ApiResolution{ApiResolutionKind::script_enum_type, result.name, "",
+                                               "", result, 0, 0, false, true});
                 break;
             }
             const auto* member = script_symbols_->find_member(*target, expression.value());
             if (!member) {
                 diagnostics_.error("GDS4055",
-                                   "script resource '" + target->script_name +
-                                       "' has no member '" + expression.value() + "'",
+                                   "script resource '" + target->script_name + "' has no member '" +
+                                       expression.value() + "'",
                                    expression.span);
                 result = unknown_type;
                 break;
             }
             if (member->kind == ScriptMemberKind::constant) {
                 result = member->type;
-                model_.api_resolutions_.emplace(
-                    &expression,
-                    ApiResolution{ApiResolutionKind::script_constant,
-                                  target->native_class_name, "", "", result, 0, 0, false, true});
+                model_.api_resolutions_.emplace(&expression,
+                                                ApiResolution{ApiResolutionKind::script_constant,
+                                                              target->native_class_name, "", "",
+                                                              result, 0, 0, false, true});
                 break;
             }
             if (member->kind == ScriptMemberKind::enum_value) {
                 result = member->type;
-                model_.api_resolutions_.emplace(
-                    &expression,
-                    ApiResolution{ApiResolutionKind::enum_member, target->native_class_name, "", "",
-                                  result, 0, 0, false, true});
+                model_.api_resolutions_.emplace(&expression,
+                                                ApiResolution{ApiResolutionKind::enum_member,
+                                                              target->native_class_name, "", "",
+                                                              result, 0, 0, false, true});
                 break;
             }
             if (member->kind == ScriptMemberKind::field && member->is_static) {
@@ -3096,8 +3086,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     ApiResolution{runtime_static_field
                                       ? ApiResolutionKind::script_runtime_static_field
                                       : ApiResolutionKind::script_property,
-                                  target->native_class_name,
-                                  "_gdpp_get_" + expression.value(),
+                                  target->native_class_name, "_gdpp_get_" + expression.value(),
                                   "_gdpp_set_" + expression.value(), result, 0, 0, false, true});
                 break;
             }
@@ -3135,11 +3124,10 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                       "", result, 0, 0, false, true});
                     break;
                 }
-                if (const auto enumeration =
-                        find_inner_enum((inner->native_class_name.empty()
-                                             ? inner->name
-                                             : inner->native_class_name) +
-                                        "." + expression.value());
+                if (const auto enumeration = find_inner_enum((inner->native_class_name.empty()
+                                                                  ? inner->name
+                                                                  : inner->native_class_name) +
+                                                             "." + expression.value());
                     enumeration.enumeration) {
                     auto native_owner = enumeration.owner->native_class_name;
                     if (native_owner.empty() && script_symbols_ && current_script_) {
@@ -3174,9 +3162,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 } else {
                     result = variant_type;
                     model_.api_resolutions_.emplace(
-                        &expression,
-                        ApiResolution{ApiResolutionKind::dynamic_property, "", "", "", result, 0,
-                                      0, false, false});
+                        &expression, ApiResolution{ApiResolutionKind::dynamic_property, "", "", "",
+                                                   result, 0, 0, false, false});
                 }
                 break;
             }
@@ -4839,8 +4826,7 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     // resolve to the same canonical enum identity as code at script scope.
     if (current_script_) {
         for (const auto& enumeration : current_script_->enums) {
-            const auto qualified =
-                current_script_->native_class_name + "::" + enumeration.name;
+            const auto qualified = current_script_->native_class_name + "::" + enumeration.name;
             scopes_.front().insert_or_assign(enumeration.name,
                                              Symbol{SymbolKind::enum_type,
                                                     enumeration.name,
@@ -5230,11 +5216,10 @@ void SemanticAnalyzer::analyze_enums(const std::vector<ast::EnumDeclaration>& de
                     current_inner_class_
                         ? (current_inner_class_->native_class_name.empty()
                                ? current_inner_class_->name + "." + *declaration.name
-                               : current_inner_class_->native_class_name + "::" +
-                                     *declaration.name)
-                    : current_script_ ? current_script_->native_class_name + "::" +
-                                            *declaration.name
-                                      : *declaration.name;
+                               : current_inner_class_->native_class_name + "::" + *declaration.name)
+                    : current_script_
+                        ? current_script_->native_class_name + "::" + *declaration.name
+                        : *declaration.name;
                 declare({SymbolKind::enum_type,
                          *declaration.name,
                          {TypeKind::enumeration, qualified_name},
@@ -5601,8 +5586,7 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
             if (!variable.is_constant || !variable.initializer)
                 continue;
             const auto* call = variable.initializer->get_if<ast::CallExpression>();
-            if (!call || !call->callee ||
-                call->callee->kind() != ast::ExpressionKind::identifier ||
+            if (!call || !call->callee || call->callee->kind() != ast::ExpressionKind::identifier ||
                 call->callee->value() != "preload" || call->arguments.size() != 1 ||
                 !call->arguments.front() ||
                 call->arguments.front()->literal_kind() != ast::LiteralKind::string) {
