@@ -400,7 +400,7 @@ void* AttachedCompiledScript::_instance_create(godot::Object* object) const {
         return nullptr;
     }
 
-    godot::Ref<AttachedScriptBehavior> behavior{metadata->factory()};
+    godot::Ref<AttachedScriptBehavior> behavior = metadata->factory();
     if (behavior.is_null())
         return nullptr;
     behavior->attach_owner(object);

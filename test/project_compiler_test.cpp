@@ -946,6 +946,7 @@ TEST_CASE("project compiler attaches scripts to third-party GDExtension instance
     REQUIRE(header.find("vendor_base.hpp") == std::string::npos);
     REQUIRE(source.find("descriptor.native_base_type = godot::StringName(\"VendorBase\")") !=
             std::string::npos);
+    REQUIRE(source.find("godot::Ref<gdpp::runtime::AttachedScriptBehavior>") != std::string::npos);
     REQUIRE(source.find("call_attached_native_base") != std::string::npos);
     REQUIRE(source.find("static_cast<std::uint32_t>(305419896)") != std::string::npos);
     REQUIRE(cmake.find("attached_script_instance.cpp") != std::string::npos);

@@ -116,9 +116,11 @@ godot::Dictionary AttachedCompiledLanguage::_validate(const godot::String&, cons
 }
 
 godot::String AttachedCompiledLanguage::_validate_path(const godot::String&) const { return {}; }
-godot::Object* AttachedCompiledLanguage::_create_script() const {
-    return memnew(AttachedCompiledScript);
-}
+// This deprecated compatibility callback cannot safely transfer a newly constructed RefCounted
+// object through its raw Object* return type on Godot 4.7. Attached scripts are serialized
+// AttachedCompiledScript resources and are instantiated through ClassDB, so no runtime path
+// depends on this legacy factory.
+godot::Object* AttachedCompiledLanguage::_create_script() const { return nullptr; }
 bool AttachedCompiledLanguage::_has_named_classes() const { return true; }
 bool AttachedCompiledLanguage::_supports_builtin_mode() const { return true; }
 bool AttachedCompiledLanguage::_supports_documentation() const { return false; }

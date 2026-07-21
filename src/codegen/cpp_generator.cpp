@@ -6263,7 +6263,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                << "    descriptor.tool = " << (module.is_tool ? "true" : "false") << ";\n"
                << "    descriptor.abstract = " << (module.is_abstract ? "true" : "false") << ";\n";
         if (!module.is_abstract)
-            source << "    descriptor.factory = []() -> gdpp::runtime::AttachedScriptBehavior* "
+            source << "    descriptor.factory = []() -> "
+                      "godot::Ref<gdpp::runtime::AttachedScriptBehavior> "
                       "{ return memnew("
                    << unit.class_name << "); };\n";
         for (const auto& variable : module.fields) {

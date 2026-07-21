@@ -1,5 +1,6 @@
 #pragma once
 
+#include <godot_cpp/classes/ref.hpp>
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language_extension.hpp>
@@ -46,7 +47,10 @@ class AttachedScriptBehavior : public godot::RefCounted {
     godot::Object* owner_{nullptr};
 };
 
-using AttachedBehaviorFactory = AttachedScriptBehavior* (*)();
+// RefCounted construction changed in godot-cpp 4.7: memnew(T) now returns Ref<T> instead of a
+// raw pointer. Keep the factory ownership explicit so generated code has one contract on every
+// supported Godot release and never depends on the include order of ref.hpp.
+using AttachedBehaviorFactory = godot::Ref<AttachedScriptBehavior> (*)();
 
 struct AttachedScriptProperty {
     godot::PropertyInfo info;
