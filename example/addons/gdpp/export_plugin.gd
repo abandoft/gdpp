@@ -1745,14 +1745,15 @@ func _prepare_extension_registry(include_project_extension := true) -> bool:
                 continue
             if value == COMPILER_DESCRIPTOR:
                 continue
-            # The generated project extension may inherit or dynamically use classes registered
-            # by any retained provider extension. Always place it after third-party descriptors
-            # so ClassDB is populated before the project library initializes.
+            # Prefer providers before the generated project extension for engines that preserve
+            # this file's order. Godot may regenerate the registry from a HashSet, so the attached
+            # runtime is also required to initialize correctly in the opposite order.
             if value == LEGACY_RUNTIME_DESCRIPTOR:
                 continue
             if value.begins_with(OUTPUT_DIRECTORY + "/"):
                 continue
-            retained.append(value)
+            if not retained.has(value):
+                retained.append(value)
     if not _prepare_provider_scan_descriptors(retained):
         return false
     if include_project_extension:
