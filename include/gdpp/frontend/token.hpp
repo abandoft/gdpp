@@ -59,6 +59,8 @@ enum class TokenKind {
     at_sign,
     comma,
     dot,
+    dot_dot,
+    ellipsis,
     colon,
     colon_equal,
     semicolon,

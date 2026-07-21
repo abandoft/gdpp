@@ -887,10 +887,8 @@ std::unique_ptr<ast::MatchPattern> Parser::parse_match_pattern() {
         pattern->span = advance().span;
         return pattern;
     }
-    if (check(TokenKind::dot) && position_ + 1 < tokens_.size() &&
-        tokens_[position_ + 1].kind == TokenKind::dot) {
-        advance();
-        const auto end = advance().span;
+    if (match(TokenKind::dot_dot)) {
+        const auto end = previous().span;
         pattern->node = ast::RestPattern{};
         pattern->span = joined(begin, end);
         return pattern;
@@ -909,8 +907,7 @@ std::unique_ptr<ast::MatchPattern> Parser::parse_match_pattern() {
     if (match(TokenKind::left_brace)) {
         pattern->node = ast::DictionaryPattern{};
         while (!check(TokenKind::right_brace) && !at_end()) {
-            if (check(TokenKind::dot) && position_ + 1 < tokens_.size() &&
-                tokens_[position_ + 1].kind == TokenKind::dot) {
+            if (check(TokenKind::dot_dot)) {
                 pattern->keys.push_back(nullptr);
                 pattern->elements.push_back(parse_match_pattern());
             } else {

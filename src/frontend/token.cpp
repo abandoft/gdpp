@@ -59,6 +59,8 @@ const char* token_kind_name(TokenKind kind) noexcept {
         GDPP_TOKEN_NAME(at_sign);
         GDPP_TOKEN_NAME(comma);
         GDPP_TOKEN_NAME(dot);
+        GDPP_TOKEN_NAME(dot_dot);
+        GDPP_TOKEN_NAME(ellipsis);
         GDPP_TOKEN_NAME(colon);
         GDPP_TOKEN_NAME(colon_equal);
         GDPP_TOKEN_NAME(semicolon);

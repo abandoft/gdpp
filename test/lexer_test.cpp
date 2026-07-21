@@ -215,6 +215,38 @@ TEST_CASE("lexer accepts compact floats and compound unique-node paths") {
             }) != tokens.end());
 }
 
+TEST_CASE("lexer distinguishes member dots match rest and parameter ellipsis") {
+    const gdpp::SourceFile source{"periods.gd", "var compact := .5\n"
+                                               "var member := owner.value\n"
+                                               "match values:\n"
+                                               "    [var first, ..]: pass\n"
+                                               "func collect(...args):\n"
+                                               "    pass\n"};
+    gdpp::DiagnosticBag diagnostics;
+    const auto tokens = gdpp::Lexer{source, diagnostics}.scan();
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(std::count_if(tokens.begin(), tokens.end(), [](const gdpp::Token& token) {
+                   return token.kind == gdpp::TokenKind::dot;
+               }),
+               std::ptrdiff_t{1});
+    REQUIRE_EQ(std::count_if(tokens.begin(), tokens.end(), [](const gdpp::Token& token) {
+                   return token.kind == gdpp::TokenKind::dot_dot;
+               }),
+               std::ptrdiff_t{1});
+    REQUIRE_EQ(std::count_if(tokens.begin(), tokens.end(), [](const gdpp::Token& token) {
+                   return token.kind == gdpp::TokenKind::ellipsis;
+               }),
+               std::ptrdiff_t{1});
+    REQUIRE(std::find_if(tokens.begin(), tokens.end(), [](const gdpp::Token& token) {
+                return token.kind == gdpp::TokenKind::floating && token.lexeme == "0.5";
+            }) != tokens.end());
+    REQUIRE_EQ(std::string{gdpp::token_kind_name(gdpp::TokenKind::dot_dot)},
+               std::string{"dot_dot"});
+    REQUIRE_EQ(std::string{gdpp::token_kind_name(gdpp::TokenKind::ellipsis)},
+               std::string{"ellipsis"});
+}
+
 TEST_CASE("node shorthand validates and joins quoted unique path segments") {
     const gdpp::SourceFile valid{"node_segments.gd", "var first := $%\"Hey\"/%\"Howdy\"\n"
                                                      "var second := %\"Hey\"/%\"Howdy\"\n"

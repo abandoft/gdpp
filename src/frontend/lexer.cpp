@@ -890,10 +890,13 @@ std::vector<Token> Lexer::scan() {
             emit(TokenKind::comma, begin);
             break;
         case '.':
-            if (std::isdigit(static_cast<unsigned char>(peek())) != 0)
+            if (std::isdigit(static_cast<unsigned char>(peek())) != 0) {
                 scan_number(begin);
-            else
+            } else if (match('.')) {
+                emit(match('.') ? TokenKind::ellipsis : TokenKind::dot_dot, begin);
+            } else {
                 emit(TokenKind::dot, begin);
+            }
             break;
         case ':':
             if (match('=')) {
