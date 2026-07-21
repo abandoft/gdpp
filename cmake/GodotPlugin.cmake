@@ -559,6 +559,12 @@ if(GDPP_BUILD_TESTS)
         list(APPEND GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
             -T "${CMAKE_GENERATOR_TOOLSET}")
     endif()
+    if(MSVC)
+        # This is an independent SDK consumer, so it cannot inherit the parent cache. Match the
+        # packaged godot-cpp CRT exactly or MSVC rejects the release DLL with LNK2038.
+        list(APPEND GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=${CMAKE_MSVC_RUNTIME_LIBRARY}")
+    endif()
     if(CMAKE_OSX_ARCHITECTURES)
         string(REPLACE ";" "\\;" GDPP_ATTACHED_TEST_OSX_ARCHITECTURES
             "${CMAKE_OSX_ARCHITECTURES}")

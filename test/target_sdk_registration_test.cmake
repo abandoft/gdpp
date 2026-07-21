@@ -43,3 +43,16 @@ foreach(GDPP_TEST_PACKAGER IN ITEMS build_android_sdk.py build_web_sdk.py build_
         endif()
     endforeach()
 endforeach()
+
+# Both independent CMake consumers of the packaged Windows SDK must inherit the parent's static
+# MSVC CRT contract: the godot-cpp profile builders and the release vendor GDExtension fixture.
+file(READ "${GDPP_TEST_SOURCE_DIR}/cmake/GodotPlugin.cmake" GDPP_TEST_PLUGIN_CMAKE)
+string(REGEX MATCHALL
+    "-DCMAKE_MSVC_RUNTIME_LIBRARY=\\$\\{CMAKE_MSVC_RUNTIME_LIBRARY\\}"
+    GDPP_TEST_MSVC_RUNTIME_PROPAGATIONS
+    "${GDPP_TEST_PLUGIN_CMAKE}")
+list(LENGTH GDPP_TEST_MSVC_RUNTIME_PROPAGATIONS GDPP_TEST_MSVC_RUNTIME_PROPAGATION_COUNT)
+if(GDPP_TEST_MSVC_RUNTIME_PROPAGATION_COUNT LESS 2)
+    message(FATAL_ERROR
+        "Independent target SDK consumers do not preserve the MSVC CRT contract")
+endif()
