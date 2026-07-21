@@ -1898,6 +1898,17 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                 type = {TypeKind::enumeration, input.script_class_name + "." + local->name};
                 return;
             }
+            const auto inner = std::find_if(
+                input.inner_classes.begin(), input.inner_classes.end(), [&](const auto& owner) {
+                    return std::any_of(owner.enums.begin(), owner.enums.end(),
+                                       [&](const auto& enumeration) {
+                                           return owner.name + "." + enumeration.name == type.name;
+                                       });
+                });
+            if (inner != input.inner_classes.end()) {
+                type.kind = TypeKind::enumeration;
+                return;
+            }
             const auto separator = type.name.find('.');
             if (separator == std::string::npos)
                 return;

@@ -568,6 +568,29 @@ TEST_CASE("project compiler registers internal classes and includes complete enu
     REQUIRE_EQ(cached_consumer->inner_class_names, consumer->inner_class_names);
 }
 
+TEST_CASE("project compiler resolves script and nested internal enum identities") {
+    const auto root = fixture_root("project-nested-internal-enums");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "messages.gd", "extends RefCounted\n"
+                                     "enum Shared { UNKNOWN = 0, ACTIVE = 3 }\n"
+                                     "class Packet:\n"
+                                     "    enum Status { EMPTY = 0, READY = 7 }\n"
+                                     "    var shared: Shared = Shared.ACTIVE\n"
+                                     "    var status: Packet.Status = Packet.Status.READY\n"
+                                     "    func select(value: Packet.Status) -> Packet.Status:\n"
+                                     "        return value\n");
+    const auto options = project_options(root);
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.scripts.size(), std::size_t{1});
+    const auto source =
+        read_text(options.output_directory / "generated" / result.scripts.front().source_file_name);
+    REQUIRE(source.find("Shared::_gdpp_enum_ACTIVE") != std::string::npos);
+    REQUIRE(source.find("Status::_gdpp_enum_READY") != std::string::npos);
+}
+
 TEST_CASE("project compiler preserves nested internal class identities across cache hits") {
     const auto root = fixture_root("project-nested-internal-classes");
     std::error_code error;

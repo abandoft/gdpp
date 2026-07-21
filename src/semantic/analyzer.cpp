@@ -522,8 +522,7 @@ void SemanticAnalyzer::validate_local_call(const ast::FunctionDeclaration& funct
         diagnostics_.error(
             "GDS4054",
             "script method '" + function.name + "' expects " + std::to_string(required) +
-                (function.rest_parameter
-                     ? " or more argument(s)"
+                (function.rest_parameter ? " or more argument(s)"
                  : required == function.parameters.size()
                      ? " argument(s)"
                      : " to " + std::to_string(function.parameters.size()) + " argument(s)") +
@@ -546,15 +545,13 @@ void SemanticAnalyzer::analyze_rest_parameter(const ast::Parameter& parameter) {
     if (parameter.type) {
         const auto specified = type_from_name(*parameter.type, parameter.span);
         if (specified.kind != TypeKind::array) {
-            diagnostics_.error("GDS4162",
-                               "the rest parameter type must be Array, got " +
-                                   specified.display_name(),
-                               parameter.span);
+            diagnostics_.error(
+                "GDS4162", "the rest parameter type must be Array, got " + specified.display_name(),
+                parameter.span);
         } else if (const auto descriptor = describe_container_type(specified);
                    descriptor && !descriptor->arguments.empty() &&
                    descriptor->arguments.front() != "Variant") {
-            diagnostics_.error("GDS4163",
-                               "typed arrays are not supported for a rest parameter",
+            diagnostics_.error("GDS4163", "typed arrays are not supported for a rest parameter",
                                parameter.span);
         } else {
             type = specified;
@@ -670,6 +667,33 @@ SemanticAnalyzer::find_nested_inner_class(const ScriptInnerClassSymbol& owner,
     return nullptr;
 }
 
+SemanticAnalyzer::InnerEnumLookup
+SemanticAnalyzer::find_inner_enum(const std::string& name) const noexcept {
+    const auto separator = name.rfind('.');
+    if (separator == std::string::npos)
+        return {};
+    const auto owner_name = name.substr(0, separator);
+    const auto enum_name = name.substr(separator + 1);
+    const auto search = [&](const ScriptInnerClassSymbol* owner) -> InnerEnumLookup {
+        std::unordered_set<const ScriptInnerClassSymbol*> visited;
+        for (auto* current = owner; current && visited.insert(current).second;
+             current = inner_base_of(*current)) {
+            const auto found = std::find_if(
+                current->enums.begin(), current->enums.end(),
+                [&](const auto& enumeration) { return enumeration.name == enum_name; });
+            if (found != current->enums.end())
+                return {current, &*found};
+        }
+        return {};
+    };
+    if (const auto local = search(find_inner_class(owner_name)); local.enumeration)
+        return local;
+    if (script_symbols_ && current_script_) {
+        return search(script_symbols_->find_inner(*current_script_, owner_name));
+    }
+    return {};
+}
+
 const ScriptMemberSymbol*
 SemanticAnalyzer::find_inner_member(const ScriptInnerClassSymbol& owner,
                                     const std::string& name) const noexcept {
@@ -744,6 +768,13 @@ Type SemanticAnalyzer::type_from_name(const std::string& name, SourceSpan span) 
         record_script_dependency(project_enum.owner);
         return {TypeKind::enumeration, name};
     }
+    if (current_script_ && name.find('.') == std::string::npos) {
+        if (const auto* enumeration = script_symbols_->find_enum(*current_script_, name)) {
+            return {TypeKind::enumeration, current_script_->script_name + "." + enumeration->name};
+        }
+    }
+    if (const auto inner_enum = find_inner_enum(name); inner_enum.enumeration)
+        return {TypeKind::enumeration, inner_enum.owner->name + "." + inner_enum.enumeration->name};
     if (const auto external_enum = find_external_enum(script_symbols_, name);
         external_enum.enumeration) {
         model_.referenced_extension_abis_.insert(external_enum.owner->provider_abi);
@@ -2476,11 +2507,11 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 if (called_on_super) {
                     model_.api_resolutions_.emplace(
                         &callee,
-                        ApiResolution{
-                            ApiResolutionKind::script_super, object_resolution->owner, "", "",
-                            result, static_cast<std::uint16_t>(member->required_arguments),
-                            static_cast<std::uint16_t>(member->parameters.size()),
-                            member->is_vararg, true});
+                        ApiResolution{ApiResolutionKind::script_super, object_resolution->owner, "",
+                                      "", result,
+                                      static_cast<std::uint16_t>(member->required_arguments),
+                                      static_cast<std::uint16_t>(member->parameters.size()),
+                                      member->is_vararg, true});
                 } else if (dynamic_dispatch) {
                     model_.api_resolutions_.emplace(
                         &callee, ApiResolution{ApiResolutionKind::dynamic_method, "", "", "",
@@ -2651,6 +2682,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             }
             const auto enumeration = enum_members_.find(object_type.name);
             const auto project_enum = find_project_enum(script_symbols_, object_type.name);
+            const auto inner_enum = find_inner_enum(object_type.name);
             const auto external_enum = find_external_enum(script_symbols_, object_type.name);
             if (external_enum.enumeration) {
                 const auto found =
@@ -2671,6 +2703,34 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         &expression, ApiResolution{ApiResolutionKind::global_enum_value,
                                                    std::to_string(found->value), "", "", result, 0,
                                                    0, false, true});
+                }
+            } else if (inner_enum.enumeration) {
+                const auto found = std::find_if(
+                    inner_enum.enumeration->entries.begin(), inner_enum.enumeration->entries.end(),
+                    [&](const auto& entry) { return entry.name == expression.value(); });
+                if (found == inner_enum.enumeration->entries.end()) {
+                    diagnostics_.error("GDS4041",
+                                       "enum '" + object_type.name + "' has no member '" +
+                                           expression.value() + "'",
+                                       expression.span);
+                    result = unknown_type;
+                } else {
+                    auto native_owner = inner_enum.owner->native_class_name;
+                    if (native_owner.empty() && script_symbols_ && current_script_) {
+                        if (const auto* published = script_symbols_->find_inner(
+                                *current_script_, inner_enum.owner->name)) {
+                            native_owner = published->native_class_name;
+                        }
+                    }
+                    result = object_type;
+                    model_.api_resolutions_.emplace(
+                        &expression,
+                        ApiResolution{ApiResolutionKind::enum_member,
+                                      native_owner.empty()
+                                          ? inner_enum.owner->name +
+                                                "::" + inner_enum.enumeration->name
+                                          : native_owner + "::" + inner_enum.enumeration->name,
+                                      "", "", result, 0, 0, false, true});
                 }
             } else if (enumeration == enum_members_.end() && !project_enum.enumeration) {
                 diagnostics_.error("GDS4041",
@@ -2746,6 +2806,28 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         &expression,
                         ApiResolution{ApiResolutionKind::inner_type_reference, nested->name, "", "",
                                       result, 0, 0, false, true});
+                    break;
+                }
+                if (const auto enumeration =
+                        find_inner_enum(inner->name + "." + expression.value());
+                    enumeration.enumeration) {
+                    auto native_owner = enumeration.owner->native_class_name;
+                    if (native_owner.empty() && script_symbols_ && current_script_) {
+                        if (const auto* published = script_symbols_->find_inner(
+                                *current_script_, enumeration.owner->name)) {
+                            native_owner = published->native_class_name;
+                        }
+                    }
+                    result = {TypeKind::enumeration,
+                              enumeration.owner->name + "." + enumeration.enumeration->name};
+                    model_.api_resolutions_.emplace(
+                        &expression,
+                        ApiResolution{ApiResolutionKind::script_enum_type,
+                                      native_owner.empty()
+                                          ? enumeration.owner->name +
+                                                "::" + enumeration.enumeration->name
+                                          : native_owner + "::" + enumeration.enumeration->name,
+                                      "", "", result, 0, 0, false, true});
                     break;
                 }
             }
@@ -4112,8 +4194,8 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
                       [](const auto& parameter) { return parameter.default_value == nullptr; }));
     const auto validate_override = [&](const std::string& owner, const Type& parent_return,
                                        const std::vector<Type>& parent_parameters,
-                                       const std::size_t parent_required,
-                                       const bool parent_static, const bool parent_vararg) {
+                                       const std::size_t parent_required, const bool parent_static,
+                                       const bool parent_vararg) {
         if (function.is_static != parent_static) {
             diagnostics_.error("GDS4143",
                                owner + " override '" + function.name +
@@ -4166,10 +4248,10 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
         }
     };
     if (inherited_script_method) {
-        validate_override(
-            "script", inherited_script_method->type, inherited_script_method->parameters,
-            inherited_script_method->required_arguments, inherited_script_method->is_static,
-            inherited_script_method->is_vararg);
+        validate_override("script", inherited_script_method->type,
+                          inherited_script_method->parameters,
+                          inherited_script_method->required_arguments,
+                          inherited_script_method->is_static, inherited_script_method->is_vararg);
     } else if (virtual_method) {
         std::vector<Type> api_parameters;
         api_parameters.reserve(virtual_method->maximum_arguments);
@@ -4384,6 +4466,23 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
                 if (member.kind == ScriptMemberKind::field && member.is_static)
                     static_fields_.insert(member.name);
             }
+        }
+    }
+    // Internal classes retain lexical access to enums declared by their owning script. Rebuild
+    // that outer enum scope after isolating the class body so unqualified annotations and values
+    // resolve to the same canonical enum identity as code at script scope.
+    if (current_script_) {
+        for (const auto& enumeration : current_script_->enums) {
+            const auto qualified = current_script_->script_name + "." + enumeration.name;
+            scopes_.front().insert_or_assign(enumeration.name,
+                                             Symbol{SymbolKind::enum_type,
+                                                    enumeration.name,
+                                                    {TypeKind::enumeration, qualified},
+                                                    {},
+                                                    true});
+            auto& values = enum_members_[qualified];
+            for (const auto& entry : enumeration.entries)
+                values.insert_or_assign(entry.name, entry.value);
         }
     }
     analyze_enums(declaration.enums);
@@ -5212,6 +5311,48 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
         }
         inner.godot_base_type = current->godot_base_type;
     }
+    const auto populate_inner_enums = [&](const auto& self, const auto& declarations,
+                                          const std::string& parent) -> void {
+        for (const auto& declaration : declarations) {
+            const auto qualified =
+                parent.empty() ? declaration.name : parent + "." + declaration.name;
+            auto found = local_inner_classes_.find(qualified);
+            if (found == local_inner_classes_.end())
+                continue;
+            for (const auto& enumeration : declaration.enums) {
+                ScriptEnumSymbol enum_symbol;
+                enum_symbol.name = enumeration.name.value_or("");
+                std::unordered_map<std::string, std::int64_t> previous;
+                std::int64_t next_value = 0;
+                for (const auto& entry : enumeration.entries) {
+                    const auto value = entry.value
+                                           ? evaluate_integer_constant(*entry.value, previous)
+                                           : std::optional<std::int64_t>{next_value};
+                    const auto resolved = value.value_or(0);
+                    previous.emplace(entry.name, resolved);
+                    enum_symbol.entries.push_back({entry.name, resolved});
+                    if (!enumeration.name) {
+                        found->second.members.push_back({ScriptMemberKind::enum_value,
+                                                         entry.name,
+                                                         {TypeKind::integer, "int"},
+                                                         {},
+                                                         0,
+                                                         true,
+                                                         false,
+                                                         false,
+                                                         {},
+                                                         {}});
+                    }
+                    if (resolved != std::numeric_limits<std::int64_t>::max())
+                        next_value = resolved + 1;
+                }
+                if (enumeration.name)
+                    found->second.enums.push_back(std::move(enum_symbol));
+            }
+            self(self, declaration.classes, qualified);
+        }
+    };
+    populate_inner_enums(populate_inner_enums, script.classes, "");
     const auto populate_inner_classes = [&](const auto& self, const auto& declarations,
                                             const std::string& parent) -> void {
         for (const auto& declaration : declarations) {
@@ -5270,29 +5411,6 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
                     ++member.required_arguments;
                 }
                 found->second.members.push_back(std::move(member));
-            }
-            for (const auto& enumeration : declaration.enums) {
-                ScriptEnumSymbol enum_symbol;
-                enum_symbol.name = enumeration.name.value_or("");
-                std::int64_t value = 0;
-                for (const auto& entry : enumeration.entries) {
-                    enum_symbol.entries.push_back({entry.name, value});
-                    if (!enumeration.name) {
-                        found->second.members.push_back({ScriptMemberKind::enum_value,
-                                                         entry.name,
-                                                         {TypeKind::integer, "int"},
-                                                         {},
-                                                         0,
-                                                         true,
-                                                         false,
-                                                         false,
-                                                         {},
-                                                         {}});
-                    }
-                    ++value;
-                }
-                if (enumeration.name)
-                    found->second.enums.push_back(std::move(enum_symbol));
             }
             self(self, declaration.classes, qualified);
         }

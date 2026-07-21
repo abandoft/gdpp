@@ -269,6 +269,11 @@ class SemanticAnalyzer final {
     [[nodiscard]] const ScriptInnerClassSymbol*
     find_nested_inner_class(const ScriptInnerClassSymbol& owner,
                             const std::string& name) const noexcept;
+    struct InnerEnumLookup {
+        const ScriptInnerClassSymbol* owner{nullptr};
+        const ScriptEnumSymbol* enumeration{nullptr};
+    };
+    [[nodiscard]] InnerEnumLookup find_inner_enum(const std::string& name) const noexcept;
     [[nodiscard]] const ScriptMemberSymbol*
     find_inner_member(const ScriptInnerClassSymbol& owner, const std::string& name) const noexcept;
     [[nodiscard]] bool script_function_is_static(const std::string& name) const noexcept;
