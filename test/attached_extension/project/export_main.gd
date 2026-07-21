@@ -3,6 +3,10 @@ extends "res://vendor_grandchild.gd"
 
 func _ready() -> void:
     super._ready()
+    call_deferred(&"_verify_export_runtime")
+
+
+func _verify_export_runtime() -> void:
     if not is_class(&"VendorBase"):
         _fail("export changed the provider-owned Node type")
         return
