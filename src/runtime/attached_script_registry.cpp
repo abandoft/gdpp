@@ -185,6 +185,23 @@ std::optional<AttachedScriptDescriptor> resolve_attached_script(const godot::Str
                       "attached script inheritance changes native base type at: " + base_path);
             return std::nullopt;
         }
+        if (base->second.rpc_config.get_type() == godot::Variant::DICTIONARY) {
+            godot::Dictionary rpc = resolved.rpc_config.get_type() == godot::Variant::DICTIONARY
+                                        ? godot::Dictionary{resolved.rpc_config}
+                                        : godot::Dictionary{};
+            const godot::Dictionary inherited_rpc = base->second.rpc_config;
+            const godot::Array method_names = inherited_rpc.keys();
+            for (std::int64_t index = 0; index < method_names.size(); ++index) {
+                const godot::StringName method_name{method_names[index]};
+                const bool overridden = std::any_of(
+                    resolved.methods.begin(), resolved.methods.end(),
+                    [&](const godot::MethodInfo& method) { return method.name == method_name; });
+                if (!overridden && !rpc.has(method_name))
+                    rpc[method_name] = inherited_rpc[method_name];
+            }
+            if (!rpc.is_empty())
+                resolved.rpc_config = rpc;
+        }
         append_unique(resolved.properties, base->second.properties,
                       [](const AttachedScriptProperty& item) { return item.info.name; });
         append_unique(resolved.methods, base->second.methods,

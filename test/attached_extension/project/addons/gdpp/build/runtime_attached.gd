@@ -59,6 +59,20 @@ func _run() -> void:
     if int(node.call("invoke_hook", 4)) != 30:
         _fail("provider-to-script virtual dispatch returned the wrong value")
         return
+    var rpc_config: Dictionary = script.get_rpc_config()
+    var inherited_rpc: Dictionary = rpc_config.get(&"inherited_rpc", {})
+    if (
+        int(inherited_rpc.get(&"rpc_mode", 0)) != MultiplayerAPI.RPC_MODE_ANY_PEER
+        or int(inherited_rpc.get(&"transfer_mode", -1))
+        != MultiplayerPeer.TRANSFER_MODE_RELIABLE
+        or inherited_rpc.get(&"call_local", false) != true
+        or int(inherited_rpc.get(&"channel", -1)) != 2
+    ):
+        _fail("inherited RPC metadata was not preserved")
+        return
+    if rpc_config.has(&"overridden_rpc"):
+        _fail("an unannotated override retained its base RPC metadata")
+        return
     node.connect(&"child_ping", _on_child_ping)
     node.connect(&"vendor_ping", _on_vendor_ping)
     node.call("emit_vendor_ping", 41)

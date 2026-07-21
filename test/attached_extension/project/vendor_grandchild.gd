@@ -10,3 +10,7 @@ func compute(value: int) -> int:
 
 func hook(value: int) -> int:
     return super.hook(value) + extra
+
+
+func overridden_rpc(value: int) -> int:
+    return value + extra

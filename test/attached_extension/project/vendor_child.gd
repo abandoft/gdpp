@@ -23,3 +23,13 @@ func compute(value: int) -> int:
 
 func hook(value: int) -> int:
     return value * 3 + bonus
+
+
+@rpc("any_peer", "call_local", "reliable", 2)
+func inherited_rpc(value: int) -> int:
+    return value + bonus
+
+
+@rpc("authority", "call_remote", "unreliable", 1)
+func overridden_rpc(value: int) -> int:
+    return value
