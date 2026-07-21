@@ -210,6 +210,7 @@ struct Signal {
 struct Function {
     std::string name;
     std::vector<Parameter> parameters;
+    std::optional<Parameter> rest_parameter;
     Type return_type;
     std::vector<Statement> body;
     bool is_static{false};
@@ -222,6 +223,7 @@ struct Function {
 struct LambdaExpression {
     std::string name;
     std::vector<Parameter> parameters;
+    std::optional<Parameter> rest_parameter;
     Type return_type;
     std::vector<Statement> body;
     bool owner_bound{false};

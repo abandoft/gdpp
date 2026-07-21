@@ -522,6 +522,8 @@ ir::ExpressionPtr IrLowerer::lower_expression(const ast::Expression& expression)
         lowered->lambda->parameters.reserve(lambda->parameters.size());
         for (const auto& parameter : lambda->parameters)
             lowered->lambda->parameters.push_back(lower_parameter(parameter));
+        if (lambda->rest_parameter)
+            lowered->lambda->rest_parameter = lower_parameter(*lambda->rest_parameter);
         lowered->lambda->body.reserve(lambda->body.size());
         for (const auto& statement : lambda->body)
             lowered->lambda->body.push_back(lower_statement(statement));
@@ -690,6 +692,8 @@ ir::Class IrLowerer::lower_class(const ast::ClassDeclaration& declaration) const
         result.span = function.span;
         for (const auto& parameter : function.parameters)
             result.parameters.push_back(lower_parameter(parameter));
+        if (function.rest_parameter)
+            result.rest_parameter = lower_parameter(*function.rest_parameter);
         for (const auto& statement : function.body)
             result.body.push_back(lower_statement(statement));
         std::size_t temporary_counter = 0;
@@ -842,6 +846,8 @@ ir::Module IrLowerer::lower(const ast::Script& script) const {
         for (const auto& parameter : function.parameters) {
             lowered.parameters.push_back(lower_parameter(parameter));
         }
+        if (function.rest_parameter)
+            lowered.rest_parameter = lower_parameter(*function.rest_parameter);
         lowered.body.reserve(function.body.size());
         for (const auto& statement : function.body) {
             lowered.body.push_back(lower_statement(statement));
@@ -870,6 +876,25 @@ bool IrVerifier::verify_parameter(const ir::Parameter& parameter) {
     }
     if (parameter.default_value)
         valid = verify_expression(*parameter.default_value) && valid;
+    return valid;
+}
+
+bool IrVerifier::verify_rest_parameter(const ir::Parameter& parameter) {
+    bool valid = verify_parameter(parameter);
+    if (parameter.name.empty()) {
+        diagnostics_.error("GDS5042", "rest parameter IR is missing its name", parameter.span);
+        valid = false;
+    }
+    if (parameter.type.kind != TypeKind::array) {
+        diagnostics_.error("GDS5043", "rest parameter IR must have Array type", parameter.span);
+        valid = false;
+    }
+    if (parameter.default_value ||
+        parameter.default_evaluation != DefaultArgumentEvaluation::absent) {
+        diagnostics_.error("GDS5044", "rest parameter IR cannot carry a default value",
+                           parameter.span);
+        valid = false;
+    }
     return valid;
 }
 
@@ -937,6 +962,8 @@ bool IrVerifier::verify_expression(const ir::Expression& expression) {
                 }
                 valid = verify_parameter(parameter) && valid;
             }
+            if (expression.lambda->rest_parameter)
+                valid = verify_rest_parameter(*expression.lambda->rest_parameter) && valid;
             for (const auto& statement : expression.lambda->body) {
                 if (!verify_statement(statement))
                     valid = false;
@@ -1284,6 +1311,8 @@ bool IrVerifier::verify_class(const ir::Class& declaration) {
         for (const auto& parameter : function.parameters) {
             valid = verify_parameter(parameter) && valid;
         }
+        if (function.rest_parameter)
+            valid = verify_rest_parameter(*function.rest_parameter) && valid;
         if (function.is_abstract && !function.body.empty()) {
             diagnostics_.error("GDS5039", "abstract function IR cannot contain a body",
                                function.span);
@@ -1384,6 +1413,8 @@ bool IrVerifier::verify(const ir::Module& module) {
         for (const auto& parameter : function.parameters) {
             valid = verify_parameter(parameter) && valid;
         }
+        if (function.rest_parameter)
+            valid = verify_rest_parameter(*function.rest_parameter) && valid;
         if (function.is_abstract && !function.body.empty()) {
             diagnostics_.error("GDS5039", "abstract function IR cannot contain a body",
                                function.span);

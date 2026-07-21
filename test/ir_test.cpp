@@ -13,13 +13,15 @@
 
 namespace {
 
-gdpp::ir::Module lower_source(const std::string& text, gdpp::DiagnosticBag& diagnostics) {
+gdpp::ir::Module lower_source(
+    const std::string& text, gdpp::DiagnosticBag& diagnostics,
+    const gdpp::GodotVersion target_version = gdpp::minimum_godot_version) {
     const gdpp::SourceFile source{"ir_test.gd", text};
     gdpp::Lexer lexer{source, diagnostics};
     const auto tokens = lexer.scan();
     gdpp::Parser parser{tokens, diagnostics};
     const auto script = parser.parse_script();
-    gdpp::SemanticAnalyzer analyzer{diagnostics};
+    gdpp::SemanticAnalyzer analyzer{diagnostics, gdpp::GodotApi::for_version(target_version)};
     const auto semantic = analyzer.analyze(script);
     const gdpp::IrLowerer lowerer{semantic};
     return lowerer.lower(script);
@@ -98,6 +100,36 @@ TEST_CASE("typed IR preserves Godot default argument evaluation contracts") {
 
     gdpp::IrVerifier verifier{diagnostics};
     REQUIRE(verifier.verify(module));
+}
+
+TEST_CASE("typed IR owns function and lambda rest parameters") {
+    gdpp::DiagnosticBag diagnostics;
+    auto module = lower_source(
+        "func collect(prefix: String, ...values: Array) -> int:\n"
+        "    var count := func(...parts: Array) -> int: return parts.size()\n"
+        "    return values.size() + count.call(prefix)\n",
+        diagnostics, gdpp::GodotVersion::v4_6);
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(module.functions.size(), std::size_t{1});
+    REQUIRE(module.functions.front().rest_parameter.has_value());
+    REQUIRE_EQ(module.functions.front().rest_parameter->name, std::string{"values"});
+    REQUIRE_EQ(module.functions.front().rest_parameter->type.kind, gdpp::TypeKind::array);
+    REQUIRE(!module.functions.front().rest_parameter->default_value);
+    const auto& lambda = module.functions.front().body.front().expression->lambda;
+    REQUIRE(lambda != nullptr);
+    REQUIRE(lambda->rest_parameter.has_value());
+    REQUIRE_EQ(lambda->rest_parameter->name, std::string{"parts"});
+
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+
+    module.functions.front().rest_parameter->type = {gdpp::TypeKind::dictionary, "Dictionary"};
+    gdpp::DiagnosticBag invalid_diagnostics;
+    gdpp::IrVerifier invalid_verifier{invalid_diagnostics};
+    REQUIRE(!invalid_verifier.verify(module));
+    REQUIRE(std::any_of(invalid_diagnostics.items().begin(), invalid_diagnostics.items().end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS5043"; }));
 }
 
 TEST_CASE("typed IR rejects missing default argument evaluation contracts") {
