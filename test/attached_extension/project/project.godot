@@ -3,6 +3,11 @@ config_version=5
 [application]
 
 config/name="GDPP Attached Extension Integration"
+run/main_scene="res://export_main.tscn"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/gdpp/plugin.cfg")
 
 [rendering]
 

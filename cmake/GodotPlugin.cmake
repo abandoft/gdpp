@@ -685,6 +685,15 @@ if(GDPP_BUILD_TESTS)
                 "${GDPP_ADDON_DIRECTORY}/gdpp.gdextension"
                 "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/gdpp.gdextension"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ADDON_DIRECTORY}/plugin.cfg"
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/plugin.cfg"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ADDON_DIRECTORY}/plugin.gd"
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/plugin.gd"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ADDON_DIRECTORY}/export_plugin.gd"
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/export_plugin.gd"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "$<TARGET_FILE:gdpp_godot_plugin>"
                 "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/binary/$<TARGET_FILE_NAME:gdpp_godot_plugin>"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
