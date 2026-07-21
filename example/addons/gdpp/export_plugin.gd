@@ -72,9 +72,15 @@ func _get_name() -> String:
 
 
 func _supports_platform(platform: EditorExportPlatform) -> bool:
-    return platform.get_os_name().to_lower() in [
-        "macos", "windows", "linux", "android", "ios", "web"
-    ]
+    var os_name := platform.get_os_name().to_lower()
+    return (
+        os_name == "macos"
+        or os_name == "windows"
+        or os_name == "linux"
+        or os_name == "android"
+        or os_name == "ios"
+        or os_name == "web"
+    )
 
 
 func _get_export_options(_platform: EditorExportPlatform) -> Array[Dictionary]:
@@ -1242,7 +1248,7 @@ func _make_attached_script(script_path: String) -> Script:
         return null
     var script := instance as Script
     script.set("source_path", script_path)
-    if not script.is_valid() or str(script.get("source_path")) != script_path:
+    if script.get_instance_base_type().is_empty() or str(script.get("source_path")) != script_path:
         push_error("GDPP: compiled script descriptor for '%s' is unavailable" % script_path)
         return null
     return script
