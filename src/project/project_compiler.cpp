@@ -492,6 +492,19 @@ std::string normalized_script_reference(const std::string& owner, const std::str
     return generic_path_to_utf8(path.lexically_normal());
 }
 
+std::optional<std::string> direct_preload_path(const ast::Expression* expression) {
+    if (!expression)
+        return std::nullopt;
+    const auto* call = expression->get_if<ast::CallExpression>();
+    if (!call || !call->callee || call->callee->kind() != ast::ExpressionKind::identifier ||
+        call->callee->value() != "preload" || call->arguments.size() != 1 ||
+        !call->arguments.front() ||
+        call->arguments.front()->literal_kind() != ast::LiteralKind::string) {
+        return std::nullopt;
+    }
+    return call->arguments.front()->value();
+}
+
 Type signature_expression_type(const ast::Expression& expression, const GodotApi& api) {
     const Type dynamic{TypeKind::variant, "Variant"};
     if (expression.get_if<ast::ArrayExpression>())
@@ -1887,6 +1900,53 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     if (has_project_errors(result.diagnostics))
         return result;
 
+    const auto resolve_script_input = [&](const SourceInput& owner,
+                                          std::string reference) -> std::optional<std::size_t> {
+        if (const auto alias = resource_aliases.find(reference); alias != resource_aliases.end())
+            reference = alias->second;
+        if (const auto exact = script_paths.find(reference); exact != script_paths.end())
+            return exact->second;
+        const auto normalized = normalized_script_reference(owner.relative, reference);
+        if (const auto path = script_paths.find(normalized); path != script_paths.end())
+            return path->second;
+        return std::nullopt;
+    };
+    // An internal class may inherit either a globally named script or a script resource held by
+    // a lexical preload constant. Resolve that source-language identity before semantic analysis
+    // so the frontend and generated C++ share one explicit native inheritance graph.
+    for (auto& input : inputs) {
+        for (auto& inner : input.inner_classes) {
+            if (inner.base_class_name.empty())
+                continue;
+            const auto local_base = std::find_if(
+                input.inner_classes.begin(), input.inner_classes.end(),
+                [&](const auto& candidate) { return candidate.name == inner.base_class_name; });
+            if (local_base != input.inner_classes.end())
+                continue;
+
+            std::optional<std::size_t> script_base;
+            const auto alias = std::find_if(
+                input.script.variables.begin(), input.script.variables.end(),
+                [&](const ast::VariableDeclaration& variable) {
+                    return variable.is_constant && variable.name == inner.base_class_name;
+                });
+            if (alias != input.script.variables.end()) {
+                if (const auto path = direct_preload_path(alias->initializer.get()))
+                    script_base = resolve_script_input(input, *path);
+            }
+            if (!script_base) {
+                if (const auto global = script_classes.find(inner.base_class_name);
+                    global != script_classes.end()) {
+                    script_base = global->second;
+                }
+            }
+            if (!script_base)
+                continue;
+            inner.base_script_path = inputs[*script_base].relative;
+            inner.base_class_name.clear();
+        }
+    }
+
     for (auto& input : inputs) {
         const auto resolve_enum_type = [&](Type& type) {
             if (type.kind != TypeKind::object)
@@ -2061,7 +2121,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             cycle << " -> " << inputs[index].script_class_name;
             result.diagnostics.push_back(
                 {inputs[index].path,
-                 project_error("PRJ0014", "cyclic script inheritance: " + cycle.str())});
+                 project_error("PRJ0014", "cyclic generated class inheritance: " + cycle.str())});
             return false;
         }
         visit_state[index] = 1;
@@ -2074,6 +2134,16 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             inputs[index].external_base_name =
                 inputs[*inputs[index].script_base].external_base_name;
             inputs[index].attached = inputs[*inputs[index].script_base].attached;
+        }
+        for (auto& inner : inputs[index].inner_classes) {
+            if (inner.base_script_path.empty())
+                continue;
+            const auto dependency = script_paths.find(inner.base_script_path);
+            if (dependency == script_paths.end())
+                continue;
+            if (!self(self, dependency->second))
+                return false;
+            inner.godot_base_type = inputs[dependency->second].semantic_base_type;
         }
         inheritance_stack.pop_back();
         visit_state[index] = 2;
@@ -2227,6 +2297,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         }
         for (const auto& inner : input.inner_classes) {
             identity << "inner:" << inner.name << ':' << inner.godot_base_type << ':'
+                     << inner.base_class_name << ':' << inner.base_script_path << ':'
                      << inner.is_abstract << '\n';
             for (const auto& member : inner.members) {
                 identity << "inner-member:" << static_cast<int>(member.kind) << ':' << member.name
@@ -2488,6 +2559,10 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         std::sort(input.extension_abis.begin(), input.extension_abis.end());
         if (input.script_base)
             input.dependencies.push_back(inputs[*input.script_base].relative);
+        for (const auto& inner : input.inner_classes) {
+            if (!inner.base_script_path.empty())
+                input.dependencies.push_back(inner.base_script_path);
+        }
         std::sort(input.dependencies.begin(), input.dependencies.end());
         input.dependencies.erase(std::unique(input.dependencies.begin(), input.dependencies.end()),
                                  input.dependencies.end());

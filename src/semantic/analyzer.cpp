@@ -647,6 +647,11 @@ SemanticAnalyzer::inner_base_of(const ScriptInnerClassSymbol& owner) const noexc
                : nullptr;
 }
 
+const ScriptClassSymbol*
+SemanticAnalyzer::inner_script_base_of(const ScriptInnerClassSymbol& owner) const noexcept {
+    return script_symbols_ ? script_symbols_->base_of(owner) : nullptr;
+}
+
 const ScriptInnerClassSymbol*
 SemanticAnalyzer::find_nested_inner_class(const ScriptInnerClassSymbol& owner,
                                           const std::string& name) const noexcept {
@@ -705,6 +710,15 @@ SemanticAnalyzer::find_inner_member(const ScriptInnerClassSymbol& owner,
         if (found != current->members.end())
             return &*found;
         current = inner_base_of(*current);
+    }
+    if (script_symbols_) {
+        const auto* terminal = &owner;
+        visited.clear();
+        while (terminal && visited.insert(terminal).second) {
+            if (const auto* base = inner_script_base_of(*terminal))
+                return script_symbols_->find_member(*base, name);
+            terminal = inner_base_of(*terminal);
+        }
     }
     return nullptr;
 }
@@ -817,9 +831,10 @@ bool SemanticAnalyzer::object_type_inherits(const Type& derived, const Type& bas
     if (api_.find_class(derived.name) && api_.find_class(base.name))
         return api_.inherits(derived.name, base.name);
 
+    const ScriptClassSymbol* base_script = nullptr;
     if (script_symbols_) {
         const auto* derived_script = script_symbols_->find_class(derived.name);
-        const auto* base_script = script_symbols_->find_class(base.name);
+        base_script = script_symbols_->find_class(base.name);
         if (!derived_script && current_script_ && derived.name == current_script_->script_name)
             derived_script = current_script_;
         if (derived_script && base_script)
@@ -841,6 +856,15 @@ bool SemanticAnalyzer::object_type_inherits(const Type& derived, const Type& bas
         for (auto* current = derived_inner; current; current = inner_base_of(*current)) {
             if (current == base_inner)
                 return true;
+        }
+    }
+    if (derived_inner && base_script && script_symbols_) {
+        std::unordered_set<const ScriptInnerClassSymbol*> visited;
+        for (auto* current = derived_inner; current && visited.insert(current).second;
+             current = inner_base_of(*current)) {
+            if (const auto* script_base = inner_script_base_of(*current))
+                return script_base == base_script ||
+                       script_symbols_->inherits(*script_base, base_script->script_name);
         }
     }
     if (derived_inner && api_.find_class(base.name))
@@ -1341,7 +1365,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         }
         if (expression.value() == "super") {
             const auto* base_inner = current_inner_base_;
-            const auto* base_script = !base_inner && script_symbols_ && current_script_
+            const auto* base_script = !base_inner && current_inner_class_
+                                          ? inner_script_base_of(*current_inner_class_)
+                                      : !base_inner && script_symbols_ && current_script_
                                           ? script_symbols_->base_of(*current_script_)
                                           : nullptr;
             result = base_inner    ? Type{TypeKind::object, base_inner->name}
@@ -2019,7 +2045,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
         if (callee.kind() == ast::ExpressionKind::identifier) {
             if (callee.value() == "super") {
                 const auto* base_inner = current_inner_base_;
-                const auto* base_script = !base_inner && script_symbols_ && current_script_
+                const auto* base_script = !base_inner && current_inner_class_
+                                              ? inner_script_base_of(*current_inner_class_)
+                                          : !base_inner && script_symbols_ && current_script_
                                               ? script_symbols_->base_of(*current_script_)
                                               : nullptr;
                 const auto* external_base =
@@ -2118,7 +2146,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         diagnose_static_instance_access("method", callee.value(), expression.span);
                     const auto local = functions_.find(callee.value());
                     const auto* member =
-                        script_symbols_ && current_script_
+                        current_inner_class_
+                            ? find_inner_member(*current_inner_class_, callee.value())
+                        : script_symbols_ && current_script_
                             ? script_symbols_->find_member(*current_script_, callee.value())
                             : nullptr;
                     mark_coroutine_call(member ? member->is_coroutine
@@ -2126,10 +2156,15 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                                      contains_await_syntax(local->second->body));
                 }
                 if (symbol->kind == SymbolKind::function && script_symbols_ && current_script_) {
-                    if (const auto* member =
-                            script_symbols_->find_member(*current_script_, callee.value())) {
+                    const auto* member =
+                        current_inner_class_
+                            ? find_inner_member(*current_inner_class_, callee.value())
+                            : script_symbols_->find_member(*current_script_, callee.value());
+                    if (member) {
                         validate_script_call(*member, argument_types, expression, expression.span);
                         result = member->type;
+                        if (current_inner_class_)
+                            break;
                         const bool external_member =
                             script_symbols_->member_is_external(*current_script_, callee.value());
                         if (external_member) {
@@ -4118,10 +4153,13 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
     if (virtual_method && !virtual_method->is_virtual)
         virtual_method = nullptr;
     const ScriptMemberSymbol* inherited_script_method = nullptr;
-    if (function.name != "_init" && current_inner_base_) {
-        for (auto* base = current_inner_base_; base && !inherited_script_method;
-             base = inner_base_of(*base)) {
-            const auto* inherited = find_inner_member(*base, function.name);
+    if (function.name != "_init" && current_inner_class_) {
+        if (current_inner_base_) {
+            const auto* inherited = find_inner_member(*current_inner_base_, function.name);
+            if (inherited && inherited->kind == ScriptMemberKind::function)
+                inherited_script_method = inherited;
+        } else if (const auto* base = inner_script_base_of(*current_inner_class_)) {
+            const auto* inherited = script_symbols_->find_member(*base, function.name);
             if (inherited && inherited->kind == ScriptMemberKind::function)
                 inherited_script_method = inherited;
         }
@@ -4428,15 +4466,58 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
     loop_depth_ = 0;
     current_inner_class_ = find_inner_class(declaration.name);
     current_inner_base_ = current_inner_class_ ? inner_base_of(*current_inner_class_) : nullptr;
-    base_type_ = current_inner_base_ ? current_inner_base_->godot_base_type
-                                     : declaration.base_type.value_or("RefCounted");
+    const ScriptClassSymbol* current_inner_script_base = nullptr;
+    if (current_inner_class_) {
+        std::unordered_set<const ScriptInnerClassSymbol*> visited;
+        for (auto* current = current_inner_class_; current && visited.insert(current).second;
+             current = inner_base_of(*current)) {
+            if (const auto* script_base = inner_script_base_of(*current)) {
+                current_inner_script_base = script_base;
+                break;
+            }
+        }
+    }
+    base_type_ = current_inner_class_ ? current_inner_class_->godot_base_type
+                                      : declaration.base_type.value_or("RefCounted");
+    record_script_dependency(current_inner_script_base);
     validate_inner_abstract_contract(declaration);
 
-    if (!current_inner_base_ && !api_.find_class(base_type_)) {
+    if (!current_inner_base_ && !current_inner_script_base && !api_.find_class(base_type_)) {
         diagnostics_.error("GDS4099",
                            "internal class base '" + base_type_ + "' is not a Godot engine type",
                            declaration.span);
         base_type_ = "RefCounted";
+    }
+    const auto import_inherited_member = [&](const ScriptMemberSymbol& member) {
+        auto kind = SymbolKind::field;
+        if (member.kind == ScriptMemberKind::constant)
+            kind = SymbolKind::constant;
+        else if (member.kind == ScriptMemberKind::enum_value)
+            kind = SymbolKind::enum_value;
+        else if (member.kind == ScriptMemberKind::function)
+            kind = SymbolKind::function;
+        else if (member.kind == ScriptMemberKind::signal)
+            kind = SymbolKind::signal;
+        scopes_.front().insert_or_assign(member.name,
+                                         Symbol{kind,
+                                                member.name,
+                                                member.type,
+                                                {},
+                                                member.kind == ScriptMemberKind::constant ||
+                                                    member.kind == ScriptMemberKind::enum_value});
+        if (member.kind == ScriptMemberKind::field && member.has_accessor)
+            accessor_fields_.insert(member.name);
+        if (member.kind == ScriptMemberKind::field && member.is_static)
+            static_fields_.insert(member.name);
+    };
+    if (current_inner_script_base && script_symbols_) {
+        std::vector<const ScriptClassSymbol*> hierarchy;
+        for (auto* base = current_inner_script_base; base; base = script_symbols_->base_of(*base))
+            hierarchy.push_back(base);
+        for (auto base = hierarchy.rbegin(); base != hierarchy.rend(); ++base) {
+            for (const auto& member : (*base)->members)
+                import_inherited_member(member);
+        }
     }
     if (current_inner_base_) {
         std::vector<const ScriptInnerClassSymbol*> hierarchy;
@@ -4446,28 +4527,8 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
             hierarchy.push_back(base);
         }
         for (auto base = hierarchy.rbegin(); base != hierarchy.rend(); ++base) {
-            for (const auto& member : (*base)->members) {
-                auto kind = SymbolKind::field;
-                if (member.kind == ScriptMemberKind::constant)
-                    kind = SymbolKind::constant;
-                else if (member.kind == ScriptMemberKind::enum_value)
-                    kind = SymbolKind::enum_value;
-                else if (member.kind == ScriptMemberKind::function)
-                    kind = SymbolKind::function;
-                else if (member.kind == ScriptMemberKind::signal)
-                    kind = SymbolKind::signal;
-                scopes_.front().insert_or_assign(
-                    member.name, Symbol{kind,
-                                        member.name,
-                                        member.type,
-                                        {},
-                                        member.kind == ScriptMemberKind::constant ||
-                                            member.kind == ScriptMemberKind::enum_value});
-                if (member.kind == ScriptMemberKind::field && member.has_accessor)
-                    accessor_fields_.insert(member.name);
-                if (member.kind == ScriptMemberKind::field && member.is_static)
-                    static_fields_.insert(member.name);
-            }
+            for (const auto& member : (*base)->members)
+                import_inherited_member(member);
         }
     }
     // Internal classes retain lexical access to enums declared by their owning script. Rebuild
@@ -4709,6 +4770,33 @@ void SemanticAnalyzer::validate_inner_abstract_contract(const ast::ClassDeclarat
                 implemented.insert(member.name);
             }
         }
+    }
+    if (!script_symbols_ || !current_inner_class_)
+        return;
+    const ScriptInnerClassSymbol* terminal = current_inner_class_;
+    std::unordered_set<const ScriptInnerClassSymbol*> visited;
+    while (terminal && visited.insert(terminal).second) {
+        if (const auto* base = inner_script_base_of(*terminal)) {
+            for (auto* script_base = base; script_base && script_base->is_abstract;
+                 script_base = script_symbols_->base_of(*script_base)) {
+                for (const auto& member : script_base->members) {
+                    if (member.kind != ScriptMemberKind::function)
+                        continue;
+                    if (member.is_abstract && implemented.find(member.name) == implemented.end()) {
+                        diagnostics_.error("GDS4149",
+                                           "concrete internal class '" + declaration.name +
+                                               "' must implement inherited abstract method '" +
+                                               script_base->script_name + "." + member.name +
+                                               "' or be marked @abstract",
+                                           declaration.span);
+                    } else if (!member.is_abstract) {
+                        implemented.insert(member.name);
+                    }
+                }
+            }
+            break;
+        }
+        terminal = inner_base_of(*terminal);
     }
 }
 
@@ -5244,7 +5332,17 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
                 parent.empty() ? declaration.name : parent + "." + declaration.name;
             ScriptInnerClassSymbol symbol;
             symbol.name = qualified;
-            symbol.godot_base_type = declaration.base_type.value_or("RefCounted");
+            if (current_script_) {
+                if (const auto* published =
+                        script_symbols_->find_inner(*current_script_, qualified)) {
+                    symbol.native_class_name = published->native_class_name;
+                    symbol.godot_base_type = published->godot_base_type;
+                    symbol.base_class_name = published->base_class_name;
+                    symbol.base_script_path = published->base_script_path;
+                }
+            }
+            if (symbol.native_class_name.empty())
+                symbol.godot_base_type = declaration.base_type.value_or("RefCounted");
             symbol.is_abstract = std::any_of(
                 declaration.annotations.begin(), declaration.annotations.end(),
                 [](const ast::Annotation& annotation) { return annotation.name == "abstract"; });
@@ -5287,7 +5385,8 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
                 parent.empty() ? declaration.name : parent + "." + declaration.name;
             if (auto found = local_inner_classes_.find(qualified);
                 found != local_inner_classes_.end() && declaration.base_type &&
-                !api_.find_class(*declaration.base_type)) {
+                !api_.find_class(*declaration.base_type) &&
+                found->second.base_script_path.empty()) {
                 found->second.base_class_name =
                     resolve_inner_base_name(qualified, *declaration.base_type);
             }

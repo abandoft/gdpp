@@ -692,6 +692,65 @@ TEST_CASE("project target version changes descriptors SDK configuration and buil
             std::string::npos);
 }
 
+TEST_CASE("project compiler lowers internal classes derived from preloaded scripts") {
+    const auto root = fixture_root("project-cross-script-inner-inheritance");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "message.gd", "extends RefCounted\n"
+                                    "class_name MessageBase\n"
+                                    "var cleared: bool = false\n"
+                                    "func clear() -> void:\n"
+                                    "    cleared = true\n"
+                                    "func value() -> int:\n"
+                                    "    return 40\n");
+    write_text(root / "packets.gd", "extends Node\n"
+                                    "const Message = preload(\"message.gd\")\n"
+                                    "class AliasPacket extends Message:\n"
+                                    "    func reset() -> bool:\n"
+                                    "        clear()\n"
+                                    "        return cleared\n"
+                                    "    func value() -> int:\n"
+                                    "        return super() + 2\n"
+                                    "class GlobalPacket extends MessageBase:\n"
+                                    "    func reset() -> bool:\n"
+                                    "        clear()\n"
+                                    "        return cleared\n");
+
+    const auto options = project_options(root);
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    const auto base =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path == std::filesystem::path{"message.gd"};
+        });
+    const auto consumer =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path == std::filesystem::path{"packets.gd"};
+        });
+    REQUIRE(base != result.scripts.end());
+    REQUIRE(consumer != result.scripts.end());
+    REQUIRE_EQ(consumer->dependencies, std::vector<std::string>{"message.gd"});
+    REQUIRE_EQ(consumer->inner_class_names.size(), std::size_t{2});
+    const auto header =
+        read_text(options.output_directory / "generated" / consumer->header_file_name);
+    REQUIRE(header.find("#include \"" + base->header_file_name + "\"") != std::string::npos);
+    for (const auto& inner : consumer->inner_class_names) {
+        REQUIRE(header.find("class " + inner + " : public " + base->class_name) !=
+                std::string::npos);
+    }
+    REQUIRE(header.find("virtual int64_t value() override;") != std::string::npos);
+    const auto source =
+        read_text(options.output_directory / "generated" / consumer->source_file_name);
+    REQUIRE(source.find(base->class_name + "::value()") != std::string::npos);
+    const auto registration = read_text(options.output_directory / "register_types.cpp");
+    const auto base_position = registration.find(base->class_name);
+    const auto inner_position = registration.find(consumer->inner_class_names.front());
+    REQUIRE(base_position != std::string::npos);
+    REQUIRE(inner_position != std::string::npos);
+    REQUIRE(base_position < inner_position);
+}
+
 TEST_CASE("project compiler rejects cross-script native class collisions transactionally") {
     const auto root = fixture_root("project-collision");
     std::error_code error;

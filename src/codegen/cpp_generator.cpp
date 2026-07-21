@@ -1364,6 +1364,25 @@ bool CodeGenerator::inner_overrides_method(std::string_view base,
         const auto parent = inner_base_names_.find(current);
         current = parent == inner_base_names_.end() ? std::string{} : parent->second;
     }
+    if (current_inner_script_ && script_symbols_) {
+        const auto derived =
+            std::find_if(current_inner_script_->members.begin(),
+                         current_inner_script_->members.end(), [&](const auto& member) {
+                             return member.kind == ScriptMemberKind::function &&
+                                    !member.is_static && member.name == method;
+                         });
+        const auto* script_base = script_symbols_->base_of(*current_inner_script_);
+        const auto* inherited =
+            script_base ? script_symbols_->find_member(*script_base, std::string{method}) : nullptr;
+        if (derived != current_inner_script_->members.end() && inherited &&
+            inherited->kind == ScriptMemberKind::function && !inherited->is_static) {
+            return derived->type == inherited->type &&
+                   derived->parameters == inherited->parameters &&
+                   derived->default_parameters == inherited->default_parameters &&
+                   derived->is_vararg == inherited->is_vararg &&
+                   derived->is_coroutine == inherited->is_coroutine;
+        }
+    }
     return false;
 }
 
@@ -2663,12 +2682,19 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         if (script_symbols_) {
             const ScriptClassSymbol* owner = nullptr;
             if (callee.kind == ir::ExpressionKind::identifier) {
-                owner = callee.resolution == ir::ResolutionKind::script_super && current_script_
-                            ? script_symbols_->base_of(*current_script_)
-                            : current_script_;
+                if (callee.resolution == ir::ResolutionKind::script_super) {
+                    owner = script_symbols_->find_native_class(callee.resolved_owner);
+                    if (!owner && current_script_ && !current_inner_script_)
+                        owner = script_symbols_->base_of(*current_script_);
+                } else {
+                    owner = current_script_;
+                }
             } else if (callee.kind == ir::ExpressionKind::member && !callee.operands.empty()) {
-                if (callee.resolution == ir::ResolutionKind::script_super && current_script_)
-                    owner = script_symbols_->base_of(*current_script_);
+                if (callee.resolution == ir::ResolutionKind::script_super) {
+                    owner = script_symbols_->find_native_class(callee.resolved_owner);
+                    if (!owner && current_script_ && !current_inner_script_)
+                        owner = script_symbols_->base_of(*current_script_);
+                }
                 if (!owner)
                     owner = script_symbols_->find_global(callee.operands.at(0)->type.name);
                 if (!owner && callee.operands.at(0)->value == "self")
@@ -4828,8 +4854,12 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
     const auto source_base =
         resolved_base == inner_base_names_.end() ? declaration.base_type : resolved_base->second;
     const auto native_inner_base = inner_cpp_type(source_base);
-    const auto base_cpp =
-        native_inner_base.empty() ? "godot::" + declaration.base_type : native_inner_base;
+    const auto* native_script_base = current_inner_script_ && script_symbols_
+                                         ? script_symbols_->base_of(*current_inner_script_)
+                                         : nullptr;
+    const auto base_cpp = !native_inner_base.empty() ? native_inner_base
+                          : native_script_base       ? native_script_base->native_class_name
+                                                     : "godot::" + declaration.base_type;
     const auto godot_base = inner_godot_base_type(source_name);
     current_godot_base_type_ = godot_base;
     const auto engine_virtual_for = [&](const ir::Function& function) {
@@ -5700,6 +5730,13 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         inner_ref_types_.insert(qualified);
     }
     for (const auto& [qualified, declaration] : named_inner_classes) {
+        if (script_symbols_ && current_script_) {
+            if (const auto* symbol = script_symbols_->find_inner(*current_script_, qualified);
+                symbol && !symbol->godot_base_type.empty()) {
+                inner_godot_base_types_.emplace(qualified, symbol->godot_base_type);
+                continue;
+            }
+        }
         const ir::Class* current = declaration;
         std::string current_name = qualified;
         std::unordered_set<std::string> visited{qualified};
@@ -5862,13 +5899,25 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
 
     std::ostringstream header;
     const auto native_types = collect_native_types(module, api_, script_symbols_);
+    std::set<std::string> included_script_headers;
     header << "// Generated by GDPP. Do not edit.\n"
            << "#pragma once\n\n"
            << "#include <gdpp/runtime/attached_script.hpp>\n";
     if (native_base_class.empty() && !attached_script)
         header << "#include <" << header_for_base(base) << ">\n";
-    else if (!native_base_header.empty())
+    else if (!native_base_header.empty()) {
         header << "#include \"" << native_base_header << "\"\n";
+        included_script_headers.insert(native_base_header);
+    }
+    if (script_symbols_ && current_script_) {
+        for (const auto& inner : current_script_->inner_classes) {
+            const auto* script_base = script_symbols_->base_of(inner);
+            if (script_base && script_base != current_script_ &&
+                included_script_headers.insert(script_base->header_file_name).second) {
+                header << "#include \"" << script_base->header_file_name << "\"\n";
+            }
+        }
+    }
     for (const auto& type : native_types.builtins) {
         header << "#include <godot_cpp/variant/" << to_snake_case(type) << ".hpp>\n";
     }
@@ -5883,26 +5932,28 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         for (const auto& type : native_types.complete_scripts) {
             const auto* symbol = script_symbols_->find_global(type);
             if (symbol && symbol != current_script_ &&
-                symbol->header_file_name != native_base_header)
+                included_script_headers.insert(symbol->header_file_name).second)
                 header << "#include \"" << symbol->header_file_name << "\"\n";
         }
         for (const auto& resource_path : native_types.complete_script_resources) {
             const auto* symbol = script_symbols_->find_path(resource_path);
             if (symbol && symbol != current_script_ &&
-                symbol->header_file_name != native_base_header)
+                included_script_headers.insert(symbol->header_file_name).second)
                 header << "#include \"" << symbol->header_file_name << "\"\n";
         }
         for (const auto& type : native_types.scripts) {
             const auto* symbol = script_symbols_->find_global(type);
             if (symbol && symbol != current_script_ &&
-                symbol->header_file_name != native_base_header &&
+                included_script_headers.find(symbol->header_file_name) ==
+                    included_script_headers.end() &&
                 native_types.complete_scripts.find(type) == native_types.complete_scripts.end())
                 header << "class " << symbol->native_class_name << ";\n";
         }
         for (const auto& resource_path : native_types.script_resources) {
             const auto* symbol = script_symbols_->find_path(resource_path);
             if (symbol && symbol != current_script_ &&
-                symbol->header_file_name != native_base_header &&
+                included_script_headers.find(symbol->header_file_name) ==
+                    included_script_headers.end() &&
                 native_types.complete_script_resources.find(resource_path) ==
                     native_types.complete_script_resources.end())
                 header << "class " << symbol->native_class_name << ";\n";

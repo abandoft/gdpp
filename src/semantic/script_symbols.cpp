@@ -177,6 +177,11 @@ const ScriptClassSymbol* ScriptSymbolTable::base_of(const ScriptClassSymbol& own
     return owner.base_script_path.empty() ? nullptr : find_path(owner.base_script_path);
 }
 
+const ScriptClassSymbol*
+ScriptSymbolTable::base_of(const ScriptInnerClassSymbol& owner) const noexcept {
+    return owner.base_script_path.empty() ? nullptr : find_path(owner.base_script_path);
+}
+
 const ScriptMemberSymbol* ScriptSymbolTable::find_member(const ScriptClassSymbol& owner,
                                                          const std::string& name) const noexcept {
     const ScriptClassSymbol* current = &owner;
@@ -246,7 +251,10 @@ ScriptSymbolTable::find_inner_member(const ScriptInnerClassSymbol& owner,
                                      const std::string& name) const noexcept {
     const auto found = std::find_if(owner.members.begin(), owner.members.end(),
                                     [&](const auto& member) { return member.name == name; });
-    return found == owner.members.end() ? nullptr : &*found;
+    if (found != owner.members.end())
+        return &*found;
+    const auto* base = base_of(owner);
+    return base ? find_member(*base, name) : nullptr;
 }
 
 std::vector<const ScriptMemberSymbol*>

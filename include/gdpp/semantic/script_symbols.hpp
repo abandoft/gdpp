@@ -53,6 +53,9 @@ struct ScriptInnerClassSymbol {
     std::string native_class_name;
     std::string godot_base_type{"RefCounted"};
     std::string base_class_name;
+    // Project path of a top-level script used as this internal class's direct base. This is
+    // distinct from base_class_name, which identifies another internal class in the same unit.
+    std::string base_script_path;
     std::vector<ScriptMemberSymbol> members;
     std::vector<ScriptEnumSymbol> enums;
     bool is_abstract{false};
@@ -122,6 +125,8 @@ class ScriptSymbolTable final {
     [[nodiscard]] const ScriptEnumSymbol*
     find_external_enum(const ExternalClassSymbol& owner, const std::string& name) const noexcept;
     [[nodiscard]] const ScriptClassSymbol* base_of(const ScriptClassSymbol& owner) const noexcept;
+    [[nodiscard]] const ScriptClassSymbol*
+    base_of(const ScriptInnerClassSymbol& owner) const noexcept;
     [[nodiscard]] const ScriptMemberSymbol* find_member(const ScriptClassSymbol& owner,
                                                         const std::string& name) const noexcept;
     [[nodiscard]] bool member_is_external(const ScriptClassSymbol& owner,

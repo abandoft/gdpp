@@ -266,6 +266,8 @@ class SemanticAnalyzer final {
     find_inner_class(const std::string& name) const noexcept;
     [[nodiscard]] const ScriptInnerClassSymbol*
     inner_base_of(const ScriptInnerClassSymbol& owner) const noexcept;
+    [[nodiscard]] const ScriptClassSymbol*
+    inner_script_base_of(const ScriptInnerClassSymbol& owner) const noexcept;
     [[nodiscard]] const ScriptInnerClassSymbol*
     find_nested_inner_class(const ScriptInnerClassSymbol& owner,
                             const std::string& name) const noexcept;
