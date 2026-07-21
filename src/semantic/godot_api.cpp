@@ -215,6 +215,18 @@ const GodotClassRecord* GodotApi::find_class(std::string_view name) const noexce
                                                                                      : found;
 }
 
+bool GodotApi::is_editor_class(std::string_view name) const noexcept {
+    for (std::size_t depth = 0; !name.empty() && depth < class_count_; ++depth) {
+        const auto* type = find_class(name);
+        if (!type)
+            return false;
+        if (type->editor_only)
+            return true;
+        name = type->inherits;
+    }
+    return false;
+}
+
 const GodotClassConstantRecord*
 GodotApi::find_class_constant(std::string_view owner, std::string_view name,
                               bool include_inherited) const noexcept {

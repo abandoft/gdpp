@@ -80,7 +80,7 @@ def main() -> None:
     arguments = parser.parse_args()
 
     data = json.loads(arguments.input.read_text(encoding="utf-8"))
-    classes: list[tuple[str, str, bool]] = []
+    classes: list[tuple[str, str, bool, bool]] = []
     class_constants: list[tuple[str, str, str, int, bool]] = []
     methods: list[tuple] = []
     constructors: list[tuple[str, tuple[tuple[str, str, str, bool], ...]]] = []
@@ -99,7 +99,7 @@ def main() -> None:
     for item in data.get("classes", []):
         owner = item["name"]
         method_names = {method["name"] for method in item.get("methods", [])}
-        classes.append((owner, item.get("inherits", ""), False))
+        classes.append((owner, item.get("inherits", ""), False, item.get("api_type") == "editor"))
         class_constants.extend(
             (owner, "", constant["name"], int(constant["value"]), False)
             for constant in item.get("constants", [])
@@ -140,7 +140,7 @@ def main() -> None:
         owner = item["name"]
         if not owner:
             continue
-        classes.append((owner, "", True))
+        classes.append((owner, "", True, False))
         methods.extend(method_record(owner, method, True) for method in item.get("methods", []))
         for constructor in item.get("constructors", []):
             constructors.append(
@@ -242,8 +242,11 @@ def main() -> None:
         f'inline constexpr const char* version = {cpp_string(version)};',
         "inline constexpr GodotClassRecord classes[] = {",
     ]
-    for name, inherits, builtin in classes:
-        lines.append(f"    {{{cpp_string(name)}, {cpp_string(inherits)}, {str(builtin).lower()}}},")
+    for name, inherits, builtin, editor_only in classes:
+        lines.append(
+            f"    {{{cpp_string(name)}, {cpp_string(inherits)}, {str(builtin).lower()}, "
+            f"{str(editor_only).lower()}}},"
+        )
     lines.append("};")
     lines.append(f"inline constexpr std::size_t class_constant_count = {len(class_constants)};")
     lines.append("inline constexpr GodotClassConstantRecord class_constants[] = {")

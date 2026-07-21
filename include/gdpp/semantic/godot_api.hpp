@@ -13,6 +13,7 @@ struct GodotClassRecord {
     const char* name;
     const char* inherits;
     bool builtin;
+    bool editor_only;
 };
 
 struct GodotClassConstantRecord {
@@ -126,6 +127,7 @@ class GodotApi final {
     [[nodiscard]] std::size_t builtin_operator_count() const noexcept;
     [[nodiscard]] std::size_t builtin_constant_count() const noexcept;
     [[nodiscard]] const GodotClassRecord* find_class(std::string_view name) const noexcept;
+    [[nodiscard]] bool is_editor_class(std::string_view name) const noexcept;
     [[nodiscard]] const GodotClassConstantRecord*
     find_class_constant(std::string_view owner, std::string_view name,
                         bool include_inherited = true) const noexcept;

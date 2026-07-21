@@ -154,4 +154,7 @@ TEST_CASE("Godot 4.7 metadata exposes language utilities globals enums and opera
     REQUIRE_EQ(std::string_view{gray->type}, std::string_view{"Color"});
     REQUIRE_EQ(std::string_view{gray->value},
                std::string_view{"Color(0.74509805, 0.74509805, 0.74509805, 1)"});
+    REQUIRE(api.is_editor_class("EditorPlugin"));
+    REQUIRE(api.is_editor_class("EditorDebuggerPlugin"));
+    REQUIRE(!api.is_editor_class("Node"));
 }
