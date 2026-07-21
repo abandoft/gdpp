@@ -889,15 +889,42 @@ if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
             TIMEOUT 600
     )
     add_test(
-        NAME gdpp.godot.attached_extension_runtime
+        NAME gdpp.godot.attached_extension_runtime_provider_first
         COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --path "${GDPP_ATTACHED_TEST_ROOT}"
                 --script addons/gdpp/build/runtime_attached.gd
     )
     set_tests_properties(
-        gdpp.godot.attached_extension_runtime
+        gdpp.godot.attached_extension_runtime_provider_first
         PROPERTIES
             PASS_REGULAR_EXPRESSION "GDPP_ATTACHED_RUNTIME_OK"
             FIXTURES_REQUIRED gdpp_attached_extension_native
+            DEPENDS gdpp.godot.attached_extension_compile
+            TIMEOUT 120
+    )
+    add_test(
+        NAME gdpp.godot.attached_extension_project_first
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ATTACHED_TEST_ROOT}/extension_list.project_first.cfg"
+                "${GDPP_ATTACHED_TEST_ROOT}/.godot/extension_list.cfg"
+    )
+    set_tests_properties(
+        gdpp.godot.attached_extension_project_first
+        PROPERTIES
+            FIXTURES_REQUIRED gdpp_attached_extension_native
+            DEPENDS gdpp.godot.attached_extension_runtime_provider_first
+            TIMEOUT 30
+    )
+    add_test(
+        NAME gdpp.godot.attached_extension_runtime_project_first
+        COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --path "${GDPP_ATTACHED_TEST_ROOT}"
+                --script addons/gdpp/build/runtime_attached.gd
+    )
+    set_tests_properties(
+        gdpp.godot.attached_extension_runtime_project_first
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "GDPP_ATTACHED_RUNTIME_OK"
+            FIXTURES_REQUIRED gdpp_attached_extension_native
+            DEPENDS gdpp.godot.attached_extension_project_first
             TIMEOUT 120
     )
     add_test(
@@ -910,6 +937,7 @@ if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
         gdpp.godot.attached_extension_restore
         PROPERTIES
             FIXTURES_CLEANUP gdpp_attached_extension_native
+            DEPENDS gdpp.godot.attached_extension_runtime_project_first
             TIMEOUT 30
     )
 endif()
