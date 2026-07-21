@@ -875,6 +875,8 @@ std::string generated_cmake(const ProjectCompileOptions& options,
                             const std::filesystem::path& native_library_directory,
                             const std::vector<ExtensionBridge>& bridges) {
     std::ostringstream output;
+    const bool has_attached_scripts = std::any_of(
+        scripts.begin(), scripts.end(), [](const auto& script) { return script.is_attached; });
     output
         << "cmake_minimum_required(VERSION 3.22)\n"
         << "project(gdpp_project LANGUAGES CXX)\n\n"
@@ -986,6 +988,11 @@ std::string generated_cmake(const ProjectCompileOptions& options,
         << "add_library(gdpp_project SHARED\n"
         << "  register_types.cpp\n"
         << "  \"${GDPP_SDK_DIR}/src/runtime/variant_ops.cpp\"\n";
+    if (has_attached_scripts) {
+        output << "  \"${GDPP_SDK_DIR}/src/runtime/attached_script_registry.cpp\"\n"
+               << "  \"${GDPP_SDK_DIR}/src/runtime/attached_script_instance.cpp\"\n"
+               << "  \"${GDPP_SDK_DIR}/src/runtime/attached_script_language.cpp\"\n";
+    }
     for (const auto& script : scripts)
         output << "  \"${CMAKE_CURRENT_SOURCE_DIR}/generated/" << script.source_file_name << "\"\n";
     output
@@ -1159,6 +1166,8 @@ file(WRITE "${GDPP_CLASS_DB_OUTPUT}" "${GDPP_CLASS_DB_HEADER}")
 
 std::string generated_registration(const std::vector<CompiledProjectScript>& scripts) {
     std::ostringstream output;
+    const bool has_attached_scripts = std::any_of(
+        scripts.begin(), scripts.end(), [](const auto& script) { return script.is_attached; });
     const auto emit_registration = [&](const std::string& class_name, const bool is_abstract,
                                        const bool is_tool) {
         output << "    ";
@@ -1177,10 +1186,17 @@ std::string generated_registration(const std::vector<CompiledProjectScript>& scr
     output << "\n#include <gdextension_interface.h>\n"
            << "#include <godot_cpp/core/class_db.hpp>\n"
            << "#include <godot_cpp/core/defs.hpp>\n"
+           << "#include <godot_cpp/core/error_macros.hpp>\n"
            << "#include <godot_cpp/godot.hpp>\n\n"
+           << (has_attached_scripts ? "#include <gdpp/runtime/attached_script.hpp>\n\n" : "")
            << "namespace {\n"
            << "void initialize_gdpp_project(godot::ModuleInitializationLevel level) {\n"
            << "    if (level != godot::MODULE_INITIALIZATION_LEVEL_SCENE) return;\n";
+    if (has_attached_scripts) {
+        output << "    GDREGISTER_RUNTIME_CLASS(gdpp::runtime::AttachedScriptBehavior);\n"
+               << "    GDREGISTER_RUNTIME_CLASS(gdpp::runtime::AttachedCompiledLanguage);\n"
+               << "    GDREGISTER_RUNTIME_CLASS(gdpp::runtime::AttachedCompiledScript);\n";
+    }
     for (const auto& script : scripts) {
         for (const auto& inner_class_name : script.inner_class_names) {
             const bool is_abstract =
@@ -1190,6 +1206,22 @@ std::string generated_registration(const std::vector<CompiledProjectScript>& scr
             emit_registration(inner_class_name, is_abstract, script.is_tool);
         }
         emit_registration(script.class_name, script.is_abstract, script.is_tool);
+    }
+    if (has_attached_scripts) {
+        for (const auto& script : scripts) {
+            if (!script.is_attached)
+                continue;
+            output << "    {\n"
+                   << "        godot::String error;\n"
+                   << "        ERR_FAIL_COND_MSG(!gdpp::runtime::register_attached_script("
+                   << script.class_name << "::_gdpp_descriptor(), &error), error);\n"
+                   << "    }\n";
+        }
+        output << "    {\n"
+               << "        godot::String error;\n"
+               << "        ERR_FAIL_COND_MSG(!gdpp::runtime::AttachedCompiledLanguage::"
+                  "register_singleton(&error), error);\n"
+               << "    }\n";
     }
     output << "}\n"
            << "void uninitialize_gdpp_project(godot::ModuleInitializationLevel level) {\n"
@@ -1204,6 +1236,10 @@ std::string generated_registration(const std::vector<CompiledProjectScript>& scr
              inner != script->inner_class_names.rend(); ++inner) {
             output << "    " << *inner << "::_gdpp_release_preloaded_resources();\n";
         }
+    }
+    if (has_attached_scripts) {
+        output << "    gdpp::runtime::AttachedCompiledLanguage::unregister_singleton();\n"
+               << "    gdpp::runtime::unregister_all_attached_scripts();\n";
     }
     output << "}\n"
            << "} // namespace\n\n"
@@ -1230,10 +1266,12 @@ std::string generated_descriptor(const std::filesystem::path& project_relative_l
                                           build_id);
     };
     std::ostringstream output;
+    const bool has_attached_scripts = std::any_of(
+        scripts.begin(), scripts.end(), [](const auto& script) { return script.is_attached; });
     output << "[configuration]\n\n"
            << "entry_symbol = \"gdpp_project_library_init\"\n"
            << "compatibility_minimum = \"" << godot_version_name(target_version) << "\"\n"
-           << "reloadable = true\n\n"
+           << "reloadable = " << (has_attached_scripts ? "false" : "true") << "\n\n"
            << "[libraries]\n\n"
            << "macos.editor.arm64 = \"" << path(NativePlatform::macos, "arm64") << "\"\n"
            << "macos.editor.x86_64 = \"" << path(NativePlatform::macos, "x86_64") << "\"\n"
@@ -1430,6 +1468,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         std::optional<std::size_t> script_base;
         std::optional<std::size_t> local_inner_base;
         BridgeClassReference extension_base;
+        std::string external_base_name;
+        bool attached{false};
         bool globally_named{false};
         std::string autoload_name;
         std::vector<ScriptMemberSymbol> members;
@@ -1886,17 +1926,6 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         }
         const auto bridged = bridge_classes.find(input.base_reference);
         if (bridged != bridge_classes.end()) {
-            if (bridged->second.type->runtime_only) {
-                result.diagnostics.push_back(
-                    {input.path,
-                     project_error(
-                         "PRJ0022",
-                         "runtime-only bridge type '" + input.base_reference +
-                             "' is visible to Godot but cannot be emitted as a cross-library "
-                             "GDExtension C++ base. Provider headers alone do not solve this; "
-                             "GDPP needs a script-instance-compatible inheritance backend")});
-                continue;
-            }
             if (!target_api.find_class(bridged->second.type->godot_base)) {
                 result.diagnostics.push_back(
                     {input.path,
@@ -1906,6 +1935,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                 continue;
             }
             input.extension_base = bridged->second;
+            input.external_base_name = input.base_reference;
+            input.attached = true;
             input.semantic_base_type = bridged->second.type->godot_base;
             continue;
         }
@@ -1999,6 +2030,9 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                 return false;
             inputs[index].semantic_base_type =
                 inputs[*inputs[index].script_base].semantic_base_type;
+            inputs[index].external_base_name =
+                inputs[*inputs[index].script_base].external_base_name;
+            inputs[index].attached = inputs[*inputs[index].script_base].attached;
         }
         inheritance_stack.pop_back();
         visit_state[index] = 2;
@@ -2103,6 +2137,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         identity << "path:" << input.relative << ":script:" << input.script_class_name
                  << ":native-stem:" << input.native_class_stem << ":base:" << input.base_reference
                  << ":api-base:" << input.semantic_base_type << ":autoload:" << input.autoload_name
+                 << ":external-base:" << input.external_base_name << ":attached:" << input.attached
                  << ":abstract:" << input.is_abstract << ":tool:" << input.script.tool << ':';
         append_annotation_identity(identity, input.script.annotations);
         identity << '\n';
@@ -2239,6 +2274,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             "GDPPNative_" + input.native_class_stem + "_" + input.public_abi_hash.substr(0, 16);
         symbol.header_file_name = to_snake_case(input.native_class_stem) + ".gd.hpp";
         symbol.godot_base_type = input.semantic_base_type;
+        symbol.external_base_name = input.external_base_name;
+        symbol.attached = input.attached;
         if (input.script_base)
             symbol.base_script_path = inputs[*input.script_base].relative;
         symbol.globally_named = input.globally_named;
@@ -2444,8 +2481,11 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         script.public_abi_hash = input.public_abi_hash;
         script.dependencies = input.dependencies;
         script.icon_path = input.icon_path;
+        script.native_base_type = input.semantic_base_type;
+        script.external_base_name = input.external_base_name;
         script.is_abstract = input.is_abstract;
         script.is_tool = input.script.tool;
+        script.is_attached = input.attached;
         const auto expected_class_name =
             "GDPPNative_" + input.native_class_stem + "_" + input.public_abi_hash.substr(0, 16);
         for (const auto& inner : input.inner_classes) {
@@ -2471,6 +2511,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             script_options.native_class_suffix = "_" + input.public_abi_hash.substr(0, 16);
             script_options.current_script_path = input.relative;
             script_options.semantic_base_type = input.semantic_base_type;
+            script_options.attached_script = input.attached;
+            script_options.attached_native_base = input.external_base_name;
             if (input.script_base) {
                 const auto& base = inputs[*input.script_base];
                 const auto* base_symbol = script_symbols.find_path(base.relative);
@@ -2478,7 +2520,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                     base_symbol ? base_symbol->native_class_name : "";
                 script_options.native_base_header =
                     base_symbol ? base_symbol->header_file_name : "";
-            } else if (input.extension_base.type) {
+            } else if (input.extension_base.type && !input.attached) {
                 script_options.native_base_class = input.extension_base.type->cpp_type;
                 script_options.native_base_header = input.extension_base.type->header;
             } else if (input.local_inner_base) {

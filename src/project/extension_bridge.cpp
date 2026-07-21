@@ -620,7 +620,9 @@ load_extension_bridges(const std::filesystem::path& project_root,
             const auto* mode = class_object ? string_field(*class_object, "mode") : nullptr;
             const auto* godot_base =
                 class_object ? string_field(*class_object, "godot_base") : nullptr;
-            const bool runtime_only = mode && *mode == "runtime";
+            // Both legacy modes are consumed as runtime ClassDB contracts. Direct native
+            // inheritance across GDExtension libraries is unsupported by Godot, while the
+            // attached ScriptInstance backend needs neither provider headers nor link inputs.
             if (mode && *mode != "runtime" && *mode != "native") {
                 result.diagnostics.push_back(path_to_utf8(manifest) + ": bridge class '" +
                                              (gdscript_name ? *gdscript_name : "<unknown>") +
@@ -632,15 +634,6 @@ load_extension_bridges(const std::filesystem::path& project_root,
                 result.diagnostics.push_back(path_to_utf8(manifest) +
                                              ": every bridge class needs valid GDScript and Godot "
                                              "base names");
-                continue;
-            }
-            if (!runtime_only) {
-                result.diagnostics.push_back(
-                    path_to_utf8(manifest) + ": native bridge class '" + *gdscript_name +
-                    "' is unsupported: Godot cannot safely register a class in one "
-                    "GDExtension library as a native child of a class owned by another "
-                    "GDExtension library; provider headers and link libraries do not remove "
-                    "that engine limitation");
                 continue;
             }
             ExtensionBridgeClass bridge_class{*gdscript_name, {},    {}, *godot_base,

@@ -25,6 +25,8 @@ struct CompileOptions {
     std::string semantic_base_type;
     std::string native_base_class;
     std::string native_base_header;
+    bool attached_script{false};
+    std::string attached_native_base;
     const ScriptSymbolTable* script_symbols{nullptr};
     std::string current_script_path;
 };
