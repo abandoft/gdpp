@@ -75,6 +75,27 @@ void ScriptSymbolTable::update_class_identity(const std::string& path,
     owner.native_class_name = std::move(native_class_name);
     owner.header_file_name = std::move(header_file_name);
     native_classes_.insert_or_assign(owner.native_class_name, found->second);
+    const auto remap_type = [&](Type& type) {
+        std::size_t offset = 0;
+        while ((offset = type.name.find(previous_native_name, offset)) != std::string::npos) {
+            type.name.replace(offset, previous_native_name.size(), owner.native_class_name);
+            offset += owner.native_class_name.size();
+        }
+    };
+    for (auto& script : classes_) {
+        for (auto& member : script.members) {
+            remap_type(member.type);
+            for (auto& parameter : member.parameters)
+                remap_type(parameter);
+        }
+        for (auto& inner : script.inner_classes) {
+            for (auto& member : inner.members) {
+                remap_type(member.type);
+                for (auto& parameter : member.parameters)
+                    remap_type(parameter);
+            }
+        }
+    }
     for (auto& inner : owner.inner_classes) {
         if (inner.native_class_name.rfind(previous_native_name, 0) == 0) {
             inner.native_class_name = owner.native_class_name +

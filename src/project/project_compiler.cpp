@@ -2392,13 +2392,137 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     for (auto& input : inputs)
         input.public_abi_hash = append_public_abi(input);
 
-    ScriptSymbolTable script_symbols;
+    std::vector<std::string> native_script_names;
+    native_script_names.reserve(inputs.size());
     for (const auto& input : inputs) {
+        native_script_names.push_back("GDPPNative_" + input.native_class_stem + "_" +
+                                      input.public_abi_hash.substr(0, 16));
+    }
+    // Signature extraction runs before the full semantic analyzer, so preload aliases initially
+    // retain their source spelling (for example `msg.Player` or `msg.State`). Canonicalize those
+    // public contracts after stable native identities are known. This keeps every caller and
+    // callee on one path-stable object/enum identity without making source alias names part of
+    // the generated C++ ABI.
+    for (std::size_t input_index = 0; input_index < inputs.size(); ++input_index) {
+        auto& input = inputs[input_index];
+        std::unordered_map<std::string, std::size_t> aliases;
+        for (const auto& variable : input.script.variables) {
+            if (!variable.is_constant)
+                continue;
+            if (const auto path = direct_preload_path(variable.initializer.get())) {
+                if (const auto target = resolve_script_input(input, *path))
+                    aliases.insert_or_assign(variable.name, *target);
+            }
+        }
+        const auto canonicalize_type = [&](const auto& self, Type& type) -> void {
+            if (const auto container = describe_container_type(type)) {
+                std::vector<Type> arguments;
+                arguments.reserve(container->arguments.size());
+                for (const auto& argument : container->arguments) {
+                    auto argument_type = type_from_annotation(argument);
+                    self(self, argument_type);
+                    arguments.push_back(std::move(argument_type));
+                }
+                std::string name = container->kind == ContainerTypeKind::array ? "Array["
+                                                                               : "Dictionary[";
+                for (std::size_t index = 0; index < arguments.size(); ++index) {
+                    if (index != 0)
+                        name += ", ";
+                    name += arguments[index].name;
+                }
+                name += ']';
+                type = {type.kind, std::move(name)};
+                return;
+            }
+            if (type.kind != TypeKind::object && type.kind != TypeKind::enumeration)
+                return;
+
+            if (const auto exact_alias = aliases.find(type.name);
+                exact_alias != aliases.end()) {
+                type = {TypeKind::object, native_script_names[exact_alias->second]};
+                return;
+            }
+
+            std::size_t owner_index = input_index;
+            std::string member_name = type.name;
+            if (const auto separator = type.name.find('.'); separator != std::string::npos) {
+                const auto owner_name = type.name.substr(0, separator);
+                member_name = type.name.substr(separator + 1);
+                if (const auto alias = aliases.find(owner_name); alias != aliases.end()) {
+                    owner_index = alias->second;
+                } else if (const auto global = script_classes.find(owner_name);
+                           global != script_classes.end()) {
+                    owner_index = global->second;
+                } else if (owner_name != input.script_class_name) {
+                    return;
+                }
+            }
+
+            const auto& owner = inputs[owner_index];
+            const auto root_enum = std::find_if(
+                owner.enums.begin(), owner.enums.end(),
+                [&](const ScriptEnumSymbol& enumeration) {
+                    return enumeration.name == member_name;
+                });
+            if (root_enum != owner.enums.end()) {
+                type = {TypeKind::enumeration,
+                        native_script_names[owner_index] + "::" + root_enum->name};
+                return;
+            }
+            if (const auto* inner = [&]() -> const ScriptInnerClassSymbol* {
+                    const auto found = std::find_if(
+                        owner.inner_classes.begin(), owner.inner_classes.end(),
+                        [&](const ScriptInnerClassSymbol& candidate) {
+                            return candidate.name == member_name;
+                        });
+                    return found == owner.inner_classes.end() ? nullptr : &*found;
+                }()) {
+                type = {TypeKind::object, native_script_names[owner_index] + "__" +
+                                                  native_inner_suffix(inner->name)};
+                return;
+            }
+            const auto enum_separator = member_name.rfind('.');
+            if (enum_separator == std::string::npos)
+                return;
+            const auto inner_name = member_name.substr(0, enum_separator);
+            const auto enum_name = member_name.substr(enum_separator + 1);
+            const auto inner = std::find_if(
+                owner.inner_classes.begin(), owner.inner_classes.end(),
+                [&](const ScriptInnerClassSymbol& candidate) {
+                    return candidate.name == inner_name;
+                });
+            if (inner == owner.inner_classes.end())
+                return;
+            const auto enumeration = std::find_if(
+                inner->enums.begin(), inner->enums.end(),
+                [&](const ScriptEnumSymbol& candidate) { return candidate.name == enum_name; });
+            if (enumeration != inner->enums.end()) {
+                type = {TypeKind::enumeration,
+                        native_script_names[owner_index] + "__" +
+                            native_inner_suffix(inner->name) + "::" + enumeration->name};
+            }
+        };
+        for (auto& member : input.members) {
+            canonicalize_type(canonicalize_type, member.type);
+            for (auto& parameter : member.parameters)
+                canonicalize_type(canonicalize_type, parameter);
+        }
+        for (auto& inner : input.inner_classes) {
+            for (auto& member : inner.members) {
+                canonicalize_type(canonicalize_type, member.type);
+                for (auto& parameter : member.parameters)
+                    canonicalize_type(canonicalize_type, parameter);
+            }
+        }
+    }
+
+    ScriptSymbolTable script_symbols;
+    for (std::size_t input_index = 0; input_index < inputs.size(); ++input_index) {
+        const auto& input = inputs[input_index];
         ScriptClassSymbol symbol;
         symbol.path = input.relative;
         symbol.script_name = input.script_class_name;
-        symbol.native_class_name =
-            "GDPPNative_" + input.native_class_stem + "_" + input.public_abi_hash.substr(0, 16);
+        symbol.native_class_name = native_script_names[input_index];
         symbol.header_file_name = to_snake_case(input.native_class_stem) + ".gd.hpp";
         symbol.godot_base_type = input.semantic_base_type;
         symbol.external_base_name = input.external_base_name;
@@ -2537,12 +2661,44 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         if (!changed)
             break;
     }
+    std::vector<std::string> finalized_native_script_names;
+    finalized_native_script_names.reserve(inputs.size());
     for (auto& input : inputs) {
         input.public_abi_hash = append_public_abi(input);
-        script_symbols.update_class_identity(input.relative,
-                                             "GDPPNative_" + input.native_class_stem + "_" +
-                                                 input.public_abi_hash.substr(0, 16),
-                                             to_snake_case(input.native_class_stem) + ".gd.hpp");
+        finalized_native_script_names.push_back(
+            "GDPPNative_" + input.native_class_stem + "_" +
+            input.public_abi_hash.substr(0, 16));
+    }
+    const auto remap_input_type = [](Type& type, const std::string& previous,
+                                     const std::string& replacement) {
+        std::size_t offset = 0;
+        while ((offset = type.name.find(previous, offset)) != std::string::npos) {
+            type.name.replace(offset, previous.size(), replacement);
+            offset += replacement.size();
+        }
+    };
+    for (std::size_t identity = 0; identity < inputs.size(); ++identity) {
+        const auto& previous = native_script_names[identity];
+        const auto& replacement = finalized_native_script_names[identity];
+        if (previous == replacement)
+            continue;
+        for (auto& input : inputs) {
+            for (auto& member : input.members) {
+                remap_input_type(member.type, previous, replacement);
+                for (auto& parameter : member.parameters)
+                    remap_input_type(parameter, previous, replacement);
+            }
+            for (auto& inner : input.inner_classes) {
+                for (auto& member : inner.members) {
+                    remap_input_type(member.type, previous, replacement);
+                    for (auto& parameter : member.parameters)
+                        remap_input_type(parameter, previous, replacement);
+                }
+            }
+        }
+        script_symbols.update_class_identity(
+            inputs[identity].relative, replacement,
+            to_snake_case(inputs[identity].native_class_stem) + ".gd.hpp");
     }
 
     for (auto& input : inputs) {

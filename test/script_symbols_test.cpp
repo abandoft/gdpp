@@ -119,6 +119,32 @@ TEST_CASE("script symbols resolve project-wide internal native identities") {
     REQUIRE(owner != nullptr);
     REQUIRE_EQ(owner->path, std::string{"messages.gd"});
     REQUIRE(symbols.find_inner_native("Message") == nullptr);
+
+    gdpp::ScriptClassSymbol consumer;
+    consumer.path = "consumer.gd";
+    consumer.script_name = "Consumer";
+    consumer.native_class_name = "GDPPNative_Consumer";
+    consumer.header_file_name = "consumer.gd.hpp";
+    gdpp::ScriptMemberSymbol value;
+    value.name = "value";
+    value.type = {gdpp::TypeKind::object, "GDPPNative_Messages__Message"};
+    value.parameters.push_back(
+        {gdpp::TypeKind::array, "Array[GDPPNative_Messages__Message]"});
+    consumer.members.push_back(value);
+    symbols.add(std::move(consumer));
+
+    symbols.update_class_identity("messages.gd", "GDPPNative_Messages_v2",
+                                  "messages_v2.gd.hpp");
+    REQUIRE(symbols.find_native_class("GDPPNative_Messages") == nullptr);
+    REQUIRE(symbols.find_inner_native("GDPPNative_Messages__Message") == nullptr);
+    REQUIRE(symbols.find_inner_native("GDPPNative_Messages_v2__Message") != nullptr);
+    const auto* updated_consumer = symbols.find_path("consumer.gd");
+    REQUIRE(updated_consumer != nullptr);
+    const auto* updated_value = symbols.find_member(*updated_consumer, "value");
+    REQUIRE(updated_value != nullptr);
+    REQUIRE_EQ(updated_value->type.name, std::string{"GDPPNative_Messages_v2__Message"});
+    REQUIRE_EQ(updated_value->parameters.front().name,
+               std::string{"Array[GDPPNative_Messages_v2__Message]"});
 }
 
 } // namespace
