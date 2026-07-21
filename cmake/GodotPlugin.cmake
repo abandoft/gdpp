@@ -555,8 +555,8 @@ if(GDPP_BUILD_TESTS)
         list(APPEND GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS
             "-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
     endif()
-    add_custom_command(
-        OUTPUT "${GDPP_ATTACHED_TEST_RELEASE_LIBRARY}"
+    add_custom_target(
+        gdpp_test_vendor_release
         COMMAND "${CMAKE_COMMAND}" ${GDPP_ATTACHED_TEST_RELEASE_CONFIGURE_ARGS}
         COMMAND "${CMAKE_COMMAND}" --build "${GDPP_ATTACHED_TEST_RELEASE_BUILD}"
                 --config Release --parallel
@@ -569,8 +569,6 @@ if(GDPP_BUILD_TESTS)
         COMMENT "Building independent template_release vendor GDExtension"
         VERBATIM
     )
-    add_custom_target(gdpp_test_vendor_release
-        DEPENDS "${GDPP_ATTACHED_TEST_RELEASE_LIBRARY}")
 endif()
 
 set(GDPP_SMOKE_DIR "${CMAKE_BINARY_DIR}/generated-smoke")
