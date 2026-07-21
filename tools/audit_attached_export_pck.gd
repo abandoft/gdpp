@@ -44,7 +44,7 @@ func _init() -> void:
         elif path.begins_with("res://addons/gdpp/runtime/resources/"):
             transformed_resource_count += 1
 
-    _audit_extension_registry(violations)
+    var registry_order := _audit_extension_registry(violations)
     if not FileAccess.file_exists(VENDOR_DESCRIPTOR):
         violations.append("export omitted the independent vendor descriptor")
     if not FileAccess.file_exists(PROJECT_DESCRIPTOR):
@@ -57,31 +57,37 @@ func _init() -> void:
     print("GDPP_ATTACHED_PCK_FILES=%d" % files.size())
     print("GDPP_ATTACHED_PCK_SCENES=%d" % transformed_scene_count)
     print("GDPP_ATTACHED_PCK_RESOURCES=%d" % transformed_resource_count)
+    print("GDPP_ATTACHED_PCK_REGISTRY_ORDER=%s" % registry_order)
     print("GDPP_ATTACHED_PCK_VIOLATIONS=%d" % violations.size())
     for violation in violations:
         push_error(violation)
     quit(0 if violations.is_empty() else 5)
 
 
-func _audit_extension_registry(violations: PackedStringArray) -> void:
+func _audit_extension_registry(violations: PackedStringArray) -> String:
     if not FileAccess.file_exists(EXTENSION_REGISTRY):
         violations.append("export omitted the runtime extension registry")
-        return
+        return "missing"
     var entries := FileAccess.get_file_as_string(EXTENSION_REGISTRY).split("\n", false)
     var vendor_index := entries.find(VENDOR_DESCRIPTOR)
     var project_index := entries.find(PROJECT_DESCRIPTOR)
     if vendor_index < 0:
         violations.append("runtime registry omitted the vendor extension")
+    elif entries.count(VENDOR_DESCRIPTOR) != 1:
+        violations.append("runtime registry contains the vendor extension more than once")
     if project_index < 0:
         violations.append("runtime registry omitted the GDPP project extension")
-    if vendor_index >= 0 and project_index >= 0 and vendor_index >= project_index:
-        violations.append("runtime registry loads GDPP before its vendor provider")
+    elif entries.count(PROJECT_DESCRIPTOR) != 1:
+        violations.append("runtime registry contains the GDPP project extension more than once")
     if FileAccess.file_exists(PROJECT_DESCRIPTOR):
         var descriptor := FileAccess.get_file_as_string(PROJECT_DESCRIPTOR)
         if not descriptor.contains("entry_symbol = \"gdpp_project_library_init\""):
             violations.append("runtime descriptor still points to the compiler entry")
         if descriptor.contains("gdpp_compiler"):
             violations.append("runtime descriptor still references a compiler library")
+    if vendor_index < 0 or project_index < 0:
+        return "invalid"
+    return "provider-first" if vendor_index < project_index else "project-first"
 
 
 func _collect_files(directory_path: String, output: PackedStringArray) -> bool:
