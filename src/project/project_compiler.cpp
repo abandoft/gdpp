@@ -353,9 +353,15 @@ std::optional<std::string> scene_root_script(const std::filesystem::path& projec
     return std::nullopt;
 }
 
-std::unordered_map<std::string, std::string>
-read_project_autoloads(const std::filesystem::path& project_file) {
-    std::unordered_map<std::string, std::string> result;
+struct ProjectAutoloadScan {
+    std::unordered_map<std::string, std::string> scripts;
+    std::vector<std::pair<std::string, std::string>> unresolved_uids;
+};
+
+ProjectAutoloadScan
+read_project_autoloads(const std::filesystem::path& project_file,
+                       const std::map<std::string, std::string>& resource_aliases) {
+    ProjectAutoloadScan result;
     const auto content = read_file(project_file);
     if (!content)
         return result;
@@ -387,6 +393,14 @@ read_project_autoloads(const std::filesystem::path& project_file) {
         auto path = line.substr(quote + 1, last_quote - quote - 1);
         if (!path.empty() && path.front() == '*')
             path.erase(path.begin());
+        if (path.rfind("uid://", 0) == 0) {
+            const auto resolved = resource_aliases.find(path);
+            if (resolved == resource_aliases.end()) {
+                result.unresolved_uids.emplace_back(std::move(name), std::move(path));
+                continue;
+            }
+            path = resolved->second;
+        }
         constexpr std::string_view resource_prefix{"res://"};
         if (path.rfind(resource_prefix, 0) == 0)
             path.erase(0, resource_prefix.size());
@@ -396,7 +410,7 @@ read_project_autoloads(const std::filesystem::path& project_file) {
         if (const auto script = scene_root_script(project_file.parent_path(), path))
             path = *script;
         if (path_from_utf8(path).extension() == ".gd")
-            result.emplace(std::move(path), std::move(name));
+            result.scripts.emplace(std::move(path), std::move(name));
     }
     return result;
 }
@@ -1403,7 +1417,6 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     const auto manifest_path = output / "manifest.txt";
     const auto loaded_manifest = read_manifest(manifest_path);
     const auto& old_manifest = loaded_manifest.entries;
-    const auto project_autoloads = read_project_autoloads(root / "project.godot");
     std::vector<std::filesystem::path> source_paths;
     std::vector<std::filesystem::path> text_resource_paths;
     std::vector<std::filesystem::path> uid_sidecar_paths;
@@ -1630,8 +1643,16 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                           std::move(embedded.source));
         }
     }
+    const auto autoload_scan = read_project_autoloads(root / "project.godot", resource_aliases);
+    for (const auto& [name, uid] : autoload_scan.unresolved_uids) {
+        result.diagnostics.push_back(
+            {root / "project.godot",
+             project_error("PRJ0030", "autoload '" + name +
+                                          "' references unresolved resource UID '" + uid + "'")});
+    }
     if (has_project_errors(result.diagnostics))
         return result;
+    const auto& project_autoloads = autoload_scan.scripts;
     std::sort(inputs.begin(), inputs.end(), [](const SourceInput& left, const SourceInput& right) {
         return left.relative < right.relative;
     });

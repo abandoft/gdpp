@@ -2291,6 +2291,55 @@ TEST_CASE("project compiler resolves autoloads and invalidates their cached symb
                         }));
 }
 
+TEST_CASE("project compiler resolves UID script autoloads into native globals") {
+    const auto root = fixture_root("project-uid-autoload");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "project.godot", "[autoload]\nAudioManager=\"*uid://gdpp-audio-manager\"\n");
+    write_text(root / "audio_manager.gd", "extends Node\nvar volume: float = 0.5\n");
+    write_text(root / "audio_manager.gd.uid", "uid://gdpp-audio-manager\n");
+    write_text(root / "consumer.gd", "extends Node\n"
+                                     "func volume() -> float:\n"
+                                     "    return AudioManager.volume\n");
+    const auto options = project_options(root);
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    const auto find_script = [&](const std::string_view file_name) {
+        return std::find_if(result.scripts.begin(), result.scripts.end(), [&](const auto& script) {
+            return script.relative_path.filename().string() == std::string{file_name};
+        });
+    };
+    const auto consumer_script = find_script("consumer.gd");
+    const auto autoload_script = find_script("audio_manager.gd");
+    REQUIRE(consumer_script != result.scripts.end());
+    REQUIRE(autoload_script != result.scripts.end());
+    const auto consumer =
+        read_text(options.output_directory / "generated" / consumer_script->source_file_name);
+    const auto autoload =
+        read_text(options.output_directory / "generated" / autoload_script->source_file_name);
+    REQUIRE(consumer.find("gdpp::runtime::find_autoload(godot::StringName(\"AudioManager\"))") !=
+            std::string::npos);
+    REQUIRE(consumer.find("get_singleton_object") == std::string::npos);
+    REQUIRE(autoload.find(
+                "gdpp::runtime::register_autoload(godot::StringName(\"AudioManager\"), this)") !=
+            std::string::npos);
+}
+
+TEST_CASE("project compiler rejects unresolved UID autoloads") {
+    const auto root = fixture_root("project-unresolved-uid-autoload");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "project.godot", "[autoload]\nMissing=\"*uid://gdpp-missing\"\n");
+    write_text(root / "consumer.gd", "extends Node\nfunc read():\n    return Missing.value\n");
+
+    const auto result = gdpp::ProjectCompiler{}.compile(project_options(root));
+
+    REQUIRE(!result.success);
+    REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                        [](const auto& item) { return item.diagnostic.code == "PRJ0030"; }));
+}
+
 TEST_CASE("project compiler resolves the root script of a scene autoload") {
     const auto root = fixture_root("project-scene-autoload");
     std::error_code error;
