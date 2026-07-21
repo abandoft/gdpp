@@ -111,7 +111,8 @@ class CodeGenerator final {
                     std::size_t begin = 0,
                     const std::vector<std::pair<std::string, Type>>& entry_locals = {}) const;
     [[nodiscard]] static std::vector<std::pair<std::string, Type>>
-    parameter_locals(const std::vector<ir::Parameter>& parameters);
+    parameter_locals(const std::vector<ir::Parameter>& parameters,
+                     const ir::Parameter* rest_parameter = nullptr);
     [[nodiscard]] std::string
     emit_async_statements(const std::vector<ir::Statement>& statements, std::size_t indent,
                           std::size_t begin, std::vector<StatementSlice> tails,

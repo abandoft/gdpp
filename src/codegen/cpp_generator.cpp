@@ -585,6 +585,8 @@ void collect_expression_types(const ir::Expression& expression, NativeTypeInclud
         collect_type(expression.lambda->return_type, includes, api, script_symbols);
         for (const auto& parameter : expression.lambda->parameters)
             collect_type(parameter.type, includes, api, script_symbols);
+        if (expression.lambda->rest_parameter)
+            collect_type(expression.lambda->rest_parameter->type, includes, api, script_symbols);
         for (const auto& statement : expression.lambda->body)
             collect_statement_types(statement, includes, api, script_symbols);
     }
@@ -3140,9 +3142,10 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         const auto arguments = "_gdpp_lambda_arguments_" + std::to_string(identity);
         std::string result = "gdpp::runtime::make_local_callable(";
         result += lambda.owner_bound ? self_object_expression() : "nullptr";
-        result += ", " + std::to_string(required) + ", " +
-                  std::to_string(lambda.parameters.size()) + ", [=](const auto &" + arguments +
-                  ") mutable -> godot::Variant {\n";
+        result += ", " + std::to_string(required) + ", " + std::to_string(lambda.parameters.size());
+        if (lambda.rest_parameter)
+            result += ", true";
+        result += ", [=](const auto &" + arguments + ") mutable -> godot::Variant {\n";
         for (std::size_t index = 0; index < lambda.parameters.size(); ++index) {
             const auto& parameter = lambda.parameters[index];
             result += "    " + cpp_type(parameter.type) + " " +
@@ -3157,13 +3160,28 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             }
             result += ";\n";
         }
+        if (lambda.rest_parameter) {
+            const auto rest_name = sanitize_identifier(lambda.rest_parameter->name);
+            result += "    godot::Array " + rest_name + ";\n";
+            result += "    " + rest_name + ".resize(" + arguments + ".size() > " +
+                      std::to_string(lambda.parameters.size()) + " ? " + arguments + ".size() - " +
+                      std::to_string(lambda.parameters.size()) + " : 0);\n";
+            result += "    for (std::int64_t _gdpp_rest_index = " +
+                      std::to_string(lambda.parameters.size()) + "; _gdpp_rest_index < " +
+                      arguments + ".size(); ++_gdpp_rest_index) " + rest_name +
+                      "[_gdpp_rest_index - " + std::to_string(lambda.parameters.size()) +
+                      "] = " + arguments + "[static_cast<std::size_t>(_gdpp_rest_index)];\n";
+        }
         const auto saved_return = current_return_type_;
         const auto saved_callable = in_callable_lambda_;
         const auto saved_function = in_function_body_;
         current_return_type_ = lambda.return_type;
         in_callable_lambda_ = true;
         in_function_body_ = true;
-        result += emit_statements(lambda.body, 1, 0, parameter_locals(lambda.parameters));
+        result += emit_statements(lambda.body, 1, 0,
+                                  parameter_locals(lambda.parameters, lambda.rest_parameter
+                                                                          ? &*lambda.rest_parameter
+                                                                          : nullptr));
         current_return_type_ = saved_return;
         in_callable_lambda_ = saved_callable;
         in_function_body_ = saved_function;
@@ -3201,11 +3219,14 @@ std::string CodeGenerator::emit_statements(
 }
 
 std::vector<std::pair<std::string, Type>>
-CodeGenerator::parameter_locals(const std::vector<ir::Parameter>& parameters) {
+CodeGenerator::parameter_locals(const std::vector<ir::Parameter>& parameters,
+                                const ir::Parameter* rest_parameter) {
     std::vector<std::pair<std::string, Type>> result;
-    result.reserve(parameters.size());
+    result.reserve(parameters.size() + (rest_parameter ? 1 : 0));
     for (const auto& parameter : parameters)
         result.emplace_back(parameter.name, parameter.type);
+    if (rest_parameter)
+        result.emplace_back(rest_parameter->name, rest_parameter->type);
     return result;
 }
 

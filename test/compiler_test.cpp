@@ -58,13 +58,12 @@ TEST_CASE("semantic analysis enforces rest parameter type contracts across targe
 
     gdpp::CompileOptions legacy;
     legacy.target_version = gdpp::GodotVersion::v4_4;
-    const auto legacy_target = gdpp::Compiler{}.compile(
-        "legacy_rest.gd",
-        "func collect(required: int, ...values):\n"
-        "    return required + values.size()\n"
-        "func invoke():\n"
-        "    return collect(1, 2, 3)\n",
-        legacy);
+    const auto legacy_target = gdpp::Compiler{}.compile("legacy_rest.gd",
+                                                        "func collect(required: int, ...values):\n"
+                                                        "    return required + values.size()\n"
+                                                        "func invoke():\n"
+                                                        "    return collect(1, 2, 3)\n",
+                                                        legacy);
     const auto static_initializer = gdpp::Compiler{}.compile(
         "static_init_rest.gd", "static func _static_init(...values):\n    pass\n", modern);
 
@@ -85,24 +84,22 @@ TEST_CASE("semantic analysis enforces rest parameter type contracts across targe
 TEST_CASE("semantic overrides preserve unbounded callable ranges") {
     gdpp::CompileOptions options;
     options.target_version = gdpp::GodotVersion::v4_6;
-    const auto invalid = gdpp::Compiler{}.compile(
-        "invalid_vararg_override.gd",
-        "class Base:\n"
-        "    func collect(value, ...extras):\n"
-        "        pass\n"
-        "class Derived extends Base:\n"
-        "    func collect(value):\n"
-        "        pass\n",
-        options);
-    const auto valid = gdpp::Compiler{}.compile(
-        "valid_vararg_override.gd",
-        "class Base:\n"
-        "    func collect(value):\n"
-        "        pass\n"
-        "class Derived extends Base:\n"
-        "    func collect(value, ...extras):\n"
-        "        pass\n",
-        options);
+    const auto invalid = gdpp::Compiler{}.compile("invalid_vararg_override.gd",
+                                                  "class Base:\n"
+                                                  "    func collect(value, ...extras):\n"
+                                                  "        pass\n"
+                                                  "class Derived extends Base:\n"
+                                                  "    func collect(value):\n"
+                                                  "        pass\n",
+                                                  options);
+    const auto valid = gdpp::Compiler{}.compile("valid_vararg_override.gd",
+                                                "class Base:\n"
+                                                "    func collect(value):\n"
+                                                "        pass\n"
+                                                "class Derived extends Base:\n"
+                                                "    func collect(value, ...extras):\n"
+                                                "        pass\n",
+                                                options);
 
     REQUIRE(!invalid.success);
     REQUIRE(valid.success);
@@ -651,6 +648,22 @@ TEST_CASE("static lambdas support defaults without binding an instance owner") {
     REQUIRE(result.unit.source.find("gdpp::runtime::make_local_callable(nullptr, 0, 1") !=
             std::string::npos);
     REQUIRE(result.unit.source.find(".size() > 0 ?") != std::string::npos);
+}
+
+TEST_CASE("variadic lambdas receive excess arguments as a Godot Array") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "rest_lambda.gd",
+        "static func make() -> Callable:\n"
+        "    return func(required: int, optional: int = 2, ...values: Array) -> int:\n"
+        "        return required + optional + values.size()\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("gdpp::runtime::make_local_callable(nullptr, 1, 2, true") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Array values;") != std::string::npos);
+    REQUIRE(result.unit.source.find("values.resize(") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_rest_index = 2") != std::string::npos);
 }
 
 TEST_CASE("compiler preserves instance defaults and explicit null through native bindings") {
