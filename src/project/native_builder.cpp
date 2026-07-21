@@ -949,17 +949,15 @@ std::string native_library_name(NativeBuildProfile profile, NativePlatform platf
     return "lib" + stem + (platform == NativePlatform::macos ? ".dylib" : ".so");
 }
 
-std::string native_development_extension_descriptor(GodotVersion target_version,
-                                                    NativePlatform platform,
-                                                    std::string_view architecture,
-                                                    std::string_view resource_library_path,
-                                                    NativeWebThreadMode web_thread_mode,
-                                                    std::string_view additional_sections) {
+std::string native_development_extension_descriptor(
+    GodotVersion target_version, NativePlatform platform, std::string_view architecture,
+    std::string_view resource_library_path, NativeWebThreadMode web_thread_mode,
+    std::string_view additional_sections, const bool reloadable) {
     std::ostringstream output;
     output << "[configuration]\n\n"
            << "entry_symbol = \"gdpp_project_library_init\"\n"
            << "compatibility_minimum = \"" << godot_version_name(target_version) << "\"\n"
-           << "reloadable = true\n\n"
+           << "reloadable = " << (reloadable ? "true" : "false") << "\n\n"
            << "[libraries]\n\n";
     // "universal" describes the Mach-O payload, not a Godot runtime feature tag. A Universal 2
     // process still reports exactly one active CPU architecture, so both supported architecture

@@ -1137,7 +1137,7 @@ godot::Dictionary GDPPCompiler::compile_project(
             const auto resource_path = native_string(settings->localize_path(output_path));
             const auto descriptor = native_development_extension_descriptor(
                 *version, *platform, architecture, resource_path, web_thread_mode,
-                descriptor_additional_sections);
+                descriptor_additional_sections, attached_script_bases.is_empty());
             if (!write_file_atomic(result.extension_descriptor, descriptor)) {
                 output["success"] = false;
                 diagnostics.push_back(

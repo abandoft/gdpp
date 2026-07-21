@@ -344,6 +344,15 @@ TEST_CASE("development descriptor selects only the library that was actually bui
             std::string::npos);
 }
 
+TEST_CASE("development descriptor disables reload for attached script runtimes") {
+    const auto descriptor = gdpp::native_development_extension_descriptor(
+        gdpp::GodotVersion::v4_4, gdpp::NativePlatform::macos, "arm64",
+        "res://addons/gdpp/binary/libproject.dylib", gdpp::NativeWebThreadMode::not_applicable, {},
+        false);
+
+    REQUIRE(descriptor.find("reloadable = false") != std::string::npos);
+}
+
 TEST_CASE("universal macOS descriptor maps both runtime architectures to one fat library") {
     const auto descriptor = gdpp::native_development_extension_descriptor(
         gdpp::GodotVersion::v4_5, gdpp::NativePlatform::macos, "universal",
