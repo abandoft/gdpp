@@ -1,3 +1,16 @@
+## 1.7.1
+
+- Completed typed variadic functions, constructors, methods, lambdas, reflection metadata, call thunks, cache fingerprints, and attached-script dispatch across Godot 4.4–4.7 while keeping the grammar owned by GDPP rather than the host GDScript parser.
+- Completed cross-script preload namespaces for root and nested classes, enums, constants, static fields and functions, typed resource references, casts, type tests, inheritance, and canonical inspector enum identities.
+- Hardened cross-version native object lowering for RefCounted values, raw Object pointers, singleton wrappers, property getter return types, explicitly typed null branches, dynamic calls, and coroutine return ABIs.
+- Made runtime/export discovery resolve script and scene Autoload UIDs, rewrite stripped Autoloads transactionally, reject editor-only runtime graphs, and isolate editor-only generated registrations.
+- Eliminated native resource retention and self-assignment corruption by routing Dictionary, typed containers, String, StringName, NodePath, Array, PackedArray, Callable, and Signal storage through guarded assignment; attached-script descriptors now preserve the same rule.
+- Centralized nested CMake toolchain propagation for compiler, toolchain file, sysroot, target triple, Apple deployment settings, MSVC CRT, RC/MT tools, generator platform, and toolset; independently built provider extensions now link the packaged SDK without CRT drift.
+- Advanced the packaged SDK to schema 7 and runtime ABI 8, with fail-closed C++17, exception model, static MSVC CRT, Android `c++_shared`, source-integrity, platform, architecture, profile, and runtime validation.
+- Corrected the Godot 4.4 compatibility gate to admit only the exact built-in parser diagnostics caused by newer GDPP-owned syntax while continuing to reject every unrelated import, export, runtime, and PCK diagnostic.
+- Added real Godot 4.4 native stress coverage for reference-backed value self-assignment and repeated dynamic, typed, and static Dictionary release, plus independent provider SDK builds on macOS, Linux, and Windows.
+- Certified the unchanged Pong Duel customer project on official Godot 4.6.1: 29 scenes, 58 nodes, 87 properties, nine AOT Autoload scenes, third-party IPC startup, successful binary export/runtime, and a 372-file PCK with zero source/compiler/SDK leakage.
+
 ## 1.7.0
 
 - Added zero-source-change AOT support for GDScript classes that extend types owned by an independent third-party GDExtension, without rebuilding, relinking, or modifying the provider plugin.

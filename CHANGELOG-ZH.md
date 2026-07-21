@@ -1,3 +1,16 @@
+## 1.7.1
+
+- 完成强类型可变参数函数、构造器、方法、lambda、反射元数据、调用 thunk、缓存指纹和附着式脚本分派，并贯通 Godot 4.4～4.7；语法始终由 GDPP 自有前端解析，不依赖宿主 GDScript parser。
+- 完成跨脚本 preload 命名空间，覆盖根类与嵌套类、枚举、常量、静态字段/函数、强类型资源引用、转换、类型测试、继承和规范化 Inspector 枚举身份。
+- 加固跨版本原生对象 lowering，覆盖 RefCounted 值、裸 Object 指针、singleton 包装、属性 getter 真实返回类型、显式类型化 null 分支、动态调用和协程返回 ABI。
+- 运行时与导出发现链现可解析脚本及场景 Autoload UID，事务式重写被剥离的 Autoload，拒绝 editor-only 运行资源图，并隔离 editor-only 生成注册。
+- 统一以受保护赋值处理 Dictionary、强类型容器、String、StringName、NodePath、Array、PackedArray、Callable 和 Signal，消除原生资源滞留与自赋值损坏；附着式脚本描述符遵循同一规则。
+- 集中传递嵌套 CMake 的 compiler、toolchain file、sysroot、target triple、Apple deployment、MSVC CRT、RC/MT、generator platform 和 toolset；独立构建的 provider 扩展可与打包 SDK 保持一致 CRT 并完成链接。
+- 发行 SDK 升级至 schema 7 / runtime ABI 8，对 C++17、异常模型、MSVC 静态 CRT、Android `c++_shared`、源码完整性、平台、架构、profile 和运行时契约执行失败关闭校验。
+- 修正 Godot 4.4 兼容门禁：仅允许由 GDPP 新语法触发且精确匹配的宿主内置 parser 提示，所有其他导入、导出、运行时与 PCK 诊断仍严格失败。
+- 新增 Godot 4.4 真实原生压力测试，覆盖引用型值自赋值及动态、强类型、静态 Dictionary 的重复释放，并在 macOS、Linux、Windows 独立构建 provider SDK 消费者。
+- 使用官方 Godot 4.6.1 认证未经客户源码修改的 Pong Duel：29 个场景、58 个节点、87 个属性、9 个 AOT Autoload 场景、第三方 IPC 实际启动，二进制导出/运行成功；372 文件 PCK 的源码、compiler、SDK 泄漏为 0。
+
 ## 1.7.0
 
 - 新增 GDScript 继承独立第三方 GDExtension 类型的零源码改动 AOT 支持，无需重新构建、重新链接或修改供应商插件。
