@@ -160,6 +160,7 @@ class CodeGenerator final {
     [[nodiscard]] std::string container_object_runtime_name(std::string_view type_name) const;
     [[nodiscard]] std::string inner_cpp_type(std::string_view name) const;
     [[nodiscard]] std::string inner_godot_base_type(std::string_view name) const;
+    [[nodiscard]] bool is_ref_counted_object(const Type& type) const noexcept;
     [[nodiscard]] std::string native_super_owner(std::string_view owner) const;
     [[nodiscard]] std::string script_method_native_name(const ScriptClassSymbol& owner,
                                                         const ScriptMemberSymbol& method) const;

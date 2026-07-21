@@ -480,7 +480,19 @@ std::string to_pascal_case(std::string_view value) {
     return result.empty() ? "GeneratedScript" : result;
 }
 
+std::string godot_cpp_class_name(const std::string_view name) {
+    // godot-cpp owns godot::ClassDB for extension registration. The engine singleton therefore
+    // uses the generated ClassDBSingleton wrapper even though GDScript exposes it as ClassDB.
+    if (name == "ClassDB")
+        return "ClassDBSingleton";
+    return std::string{name};
+}
+
 std::string header_for_base(const std::string& base) {
+    if (base == "ClassDB")
+        return "godot_cpp/classes/class_db_singleton.hpp";
+    if (base == "Object")
+        return "godot_cpp/core/object.hpp";
     return "godot_cpp/classes/" + to_snake_case(base) + ".hpp";
 }
 
@@ -568,6 +580,18 @@ void collect_expression_types(const ir::Expression& expression, NativeTypeInclud
                               const GodotApi& api, const ScriptSymbolTable* script_symbols) {
     collect_type(expression.type, includes, api, script_symbols);
     collect_type(expression.storage_type, includes, api, script_symbols);
+    // A GDScript property can intentionally publish a broader type than its native getter. For
+    // example, SceneTree.root is a Node property while godot-cpp returns Window*. Include the
+    // concrete getter result so C++ can see the inheritance needed for the implicit upcast.
+    if (expression.resolution == ir::ResolutionKind::godot_property &&
+        !expression.getter.empty()) {
+        if (const auto* getter = api.find_method(expression.resolved_owner, expression.getter)) {
+            if (std::string_view{getter->return_type}.size() != 0) {
+                collect_type(type_from_godot_api(getter->return_type), includes, api,
+                             script_symbols);
+            }
+        }
+    }
     if ((expression.resolution == ir::ResolutionKind::script_autoload ||
          expression.resolution == ir::ResolutionKind::script_type) &&
         !expression.resolved_owner.empty()) {
@@ -1155,8 +1179,8 @@ std::string CodeGenerator::cpp_type(const Type& type) const {
             return "godot::Variant";
         }
         if (api_.inherits(type.name, "RefCounted"))
-            return "godot::Ref<godot::" + type.name + ">";
-        return "godot::" + type.name + "*";
+            return "godot::Ref<godot::" + godot_cpp_class_name(type.name) + ">";
+        return "godot::" + godot_cpp_class_name(type.name) + "*";
     default:
         return "godot::Variant";
     }
@@ -1375,6 +1399,35 @@ std::string CodeGenerator::inner_godot_base_type(std::string_view name) const {
     return found == inner_godot_base_types_.end() ? std::string{name} : found->second;
 }
 
+bool CodeGenerator::is_ref_counted_object(const Type& type) const noexcept {
+    if (type.kind != TypeKind::object)
+        return false;
+    if (api_.inherits(type.name, "RefCounted"))
+        return true;
+    if (script_symbols_) {
+        auto* script = script_symbols_->find_class(type.name);
+        if (!script)
+            script = script_symbols_->find_native_class(type.name);
+        if (!script && current_script_ &&
+            (current_script_->script_name == type.name ||
+             current_script_->native_class_name == type.name)) {
+            script = current_script_;
+        }
+        if (script)
+            return api_.inherits(script->godot_base_type, "RefCounted");
+        const auto* inner = script_symbols_->find_inner_native(type.name);
+        if (!inner) {
+            const auto native = inner_cpp_type(type.name);
+            if (!native.empty())
+                inner = script_symbols_->find_inner_native(native);
+        }
+        if (inner)
+            return api_.inherits(inner->godot_base_type, "RefCounted");
+    }
+    const auto native = inner_cpp_type(type.name);
+    return !native.empty() && api_.inherits(inner_godot_base_type(type.name), "RefCounted");
+}
+
 std::string CodeGenerator::native_super_owner(std::string_view owner) const {
     const auto inner = inner_cpp_type(owner);
     return inner.empty() ? std::string{owner} : inner;
@@ -1511,8 +1564,12 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
         return "godot::Variant(" + value + ")";
     if (target == source)
         return value;
-    if (source.kind == TypeKind::nil && target.kind == TypeKind::object)
-        return "{}";
+    if (source.kind == TypeKind::nil && target.kind == TypeKind::object) {
+        const auto target_cpp = cpp_type(target);
+        return !target_cpp.empty() && target_cpp.back() == '*'
+                   ? "static_cast<" + target_cpp + ">(nullptr)"
+                   : target_cpp + "{}";
+    }
     if (describe_container_type(target)) {
         if (is_explicitly_typed_container(target) && target != source) {
             return "gdpp::runtime::strict_typed_storage<" + cpp_type(target) + ">(godot::Variant(" +
@@ -1525,14 +1582,7 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
         auto source_object = value;
         if (source_external)
             source_object = "(godot::Variant(" + source_object + ")).get_validated_object()";
-        bool source_ref_counted =
-            api_.inherits(source.name, "RefCounted") || !inner_cpp_type(source.name).empty();
-        if (!source_ref_counted && script_symbols_) {
-            const auto* symbol = script_symbols_->find_class(source.name);
-            if (!symbol && current_script_ && current_script_->script_name == source.name)
-                symbol = current_script_;
-            source_ref_counted = symbol && api_.inherits(symbol->godot_base_type, "RefCounted");
-        }
+        const bool source_ref_counted = is_ref_counted_object(source);
         if (source_ref_counted && !source_external)
             source_object = "(" + source_object + ").ptr()";
         const auto target_cpp = cpp_type(target);
@@ -2130,14 +2180,7 @@ std::string CodeGenerator::emit_truthy(const ir::Expression& expression) const {
     if (expression.type.kind == TypeKind::object) {
         if (script_symbols_ && script_symbols_->find_external(expression.type.name))
             return "(godot::Variant(" + value + ")).booleanize()";
-        bool ref_counted = api_.inherits(expression.type.name, "RefCounted") ||
-                           !inner_cpp_type(expression.type.name).empty();
-        if (!ref_counted && script_symbols_) {
-            const auto* symbol = script_symbols_->find_class(expression.type.name);
-            if (!symbol && current_script_ && current_script_->script_name == expression.type.name)
-                symbol = current_script_;
-            ref_counted = symbol && api_.inherits(symbol->godot_base_type, "RefCounted");
-        }
+        const bool ref_counted = is_ref_counted_object(expression.type);
         if (value == "this")
             return "true";
         return ref_counted ? "(" + value + ").is_valid()" : "(" + value + " != nullptr)";
@@ -2237,13 +2280,15 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         if (expression.resolution == ir::ResolutionKind::godot_constructor)
             return cpp_type(expression.type);
         if (expression.resolution == ir::ResolutionKind::godot_singleton)
-            return "godot::" + expression.resolved_owner + "::get_singleton()";
+            return "godot::" + godot_cpp_class_name(expression.resolved_owner) +
+                   "::get_singleton()";
         if (expression.resolution == ir::ResolutionKind::external_singleton)
             return "gdpp::runtime::find_engine_singleton(" + godot_string_name(expression.value) +
                    ")";
         if (expression.resolution == ir::ResolutionKind::godot_type)
-            return expression.type.kind == TypeKind::object ? "godot::" + expression.resolved_owner
-                                                            : cpp_type(expression.type);
+            return expression.type.kind == TypeKind::object
+                       ? "godot::" + godot_cpp_class_name(expression.resolved_owner)
+                       : cpp_type(expression.type);
         if (expression.resolution == ir::ResolutionKind::external_type)
             return godot_string_name(expression.resolved_owner);
         if (expression.resolution == ir::ResolutionKind::external_callable)
@@ -2254,6 +2299,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                    "), " + godot_string_name(expression.value) + ")";
         if (expression.resolution == ir::ResolutionKind::script_type)
             return godot_string_name(expression.resolved_owner);
+        if (expression.resolution == ir::ResolutionKind::script_resource)
+            return cpp_type(expression.type) + "{}";
         if (expression.resolution == ir::ResolutionKind::inner_type)
             return inner_cpp_type(expression.resolved_owner);
         if (expression.resolution == ir::ResolutionKind::script_super)
@@ -2492,7 +2539,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                                             ? target.resolved_owner
                                         : target.resolution == ir::ResolutionKind::inner_type
                                             ? inner_cpp_type(target.resolved_owner)
-                                            : "godot::" + target.resolved_owner;
+                                            : "godot::" +
+                                                  godot_cpp_class_name(target.resolved_owner);
                 std::string object_value;
                 if (value.type.kind == TypeKind::nil) {
                     object_value = "nullptr";
@@ -2507,13 +2555,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                     if (external_value)
                         object_value =
                             "(godot::Variant(" + object_value + ")).get_validated_object()";
-                    bool ref_counted = api_.inherits(value.type.name, "RefCounted") ||
-                                       !inner_cpp_type(value.type.name).empty();
-                    if (!ref_counted && script_symbols_) {
-                        if (const auto* symbol = script_symbols_->find_global(value.type.name)) {
-                            ref_counted = api_.inherits(symbol->godot_base_type, "RefCounted");
-                        }
-                    }
+                    const bool ref_counted = is_ref_counted_object(value.type);
                     if (ref_counted && !external_value && emitted_value != "this")
                         object_value = "(" + object_value + ").ptr()";
                 }
@@ -2557,18 +2599,13 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                                             ? target.resolved_owner
                                         : target.resolution == ir::ResolutionKind::inner_type
                                             ? inner_cpp_type(target.resolved_owner)
-                                            : "godot::" + target.resolved_owner;
+                                            : "godot::" +
+                                                  godot_cpp_class_name(target.resolved_owner);
                 auto object = value.type.is_dynamic()
                                   ? "(" + emitted_value + ").get_validated_object()"
                                   : emitted_value;
                 if (!value.type.is_dynamic() && value.type.kind == TypeKind::object) {
-                    bool ref_counted = api_.inherits(value.type.name, "RefCounted") ||
-                                       !inner_cpp_type(value.type.name).empty();
-                    if (!ref_counted && script_symbols_) {
-                        if (const auto* symbol = script_symbols_->find_class(value.type.name)) {
-                            ref_counted = api_.inherits(symbol->godot_base_type, "RefCounted");
-                        }
-                    }
+                    const bool ref_counted = is_ref_counted_object(value.type);
                     if (ref_counted && emitted_value != "this")
                         object = "(" + object + ").ptr()";
                 }
@@ -2596,12 +2633,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                     emit_expression(object) + ", godot::Variant()))";
                 return operation == "==" ? "(" + equality + ")" : "(!(" + equality + "))";
             }
-            auto ref_counted = api_.inherits(object.type.name, "RefCounted") ||
-                               !inner_cpp_type(object.type.name).empty();
-            if (!ref_counted && script_symbols_) {
-                if (const auto* symbol = script_symbols_->find_global(object.type.name))
-                    ref_counted = api_.inherits(symbol->godot_base_type, "RefCounted");
-            }
+            const bool ref_counted = is_ref_counted_object(object.type);
             const auto null_test = ref_counted ? emit_expression(object) + ".is_null()"
                                                : emit_expression(object) + " == nullptr";
             return operation == "==" ? "(" + null_test + ")" : "(!(" + null_test + "))";
@@ -2718,7 +2750,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         }
         if (callee.resolution == ir::ResolutionKind::godot_constructor &&
             callee.type.kind == TypeKind::object) {
-            const auto native_type = "godot::" + callee.resolved_owner;
+            const auto native_type = "godot::" + godot_cpp_class_name(callee.resolved_owner);
             if (api_.inherits(callee.resolved_owner, "RefCounted"))
                 return cpp_type(callee.type) + "(memnew(" + native_type + "))";
             return "memnew(" + native_type + ")";
@@ -3019,14 +3051,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             std::string object = self_object_expression();
             if (callee.kind == ir::ExpressionKind::member) {
                 object = emit_expression(*callee.operands.at(0));
-                bool ref_counted = api_.inherits(callee.operands.at(0)->type.name, "RefCounted") ||
-                                   !inner_cpp_type(callee.operands.at(0)->type.name).empty();
-                if (!ref_counted && script_symbols_) {
-                    if (const auto* symbol =
-                            script_symbols_->find_global(callee.operands.at(0)->type.name)) {
-                        ref_counted = api_.inherits(symbol->godot_base_type, "RefCounted");
-                    }
-                }
+                const bool ref_counted = is_ref_counted_object(callee.operands.at(0)->type);
                 if (ref_counted)
                     object = "(" + object + ").ptr()";
             }
@@ -3136,7 +3161,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                                             ? provided - vararg_positional_count
                                             : std::size_t{0};
                 std::string result = "([]()";
-                if (expression.type.kind != TypeKind::void_type) {
+                if (expression.coroutine_call || expression.type.kind != TypeKind::void_type) {
                     result += " -> " + (expression.coroutine_call ? std::string{"godot::Variant"}
                                                                   : cpp_type(expression.type));
                 }
@@ -3168,7 +3193,9 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 if (vararg_positional_count != 0)
                     call += ", ";
                 call += rest + ")";
-                result += expression.type.kind == TypeKind::void_type ? call : "return " + call;
+                result += expression.coroutine_call || expression.type.kind != TypeKind::void_type
+                              ? "return " + call
+                              : call;
                 return result + "; }())";
             }
             direct += '(';
@@ -3225,7 +3252,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             return godot_method ? emit_api_return(expression.type, call) : call;
         }
         std::string result = "([&]()";
-        if (expression.type.kind != TypeKind::void_type)
+        if (expression.coroutine_call || expression.type.kind != TypeKind::void_type)
             result += " -> " + (expression.coroutine_call ? std::string{"godot::Variant"}
                                                           : cpp_type(expression.type));
         result += " { " + receiver_setup;
@@ -3236,7 +3263,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                                               "' on a null or freed object at " + location);
             result +=
                 "if (!gdpp::runtime::is_instance_valid(godot::Variant(" + receiver_name + "))) { ";
-            result += expression.type.kind == TypeKind::void_type
+            result += !expression.coroutine_call &&
+                              expression.type.kind == TypeKind::void_type
                           ? "ERR_FAIL_EDMSG(" + message + "); "
                           : "ERR_FAIL_V_EDMSG({}, " + message + "); ";
             result += "} ";
@@ -3289,7 +3317,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         if (!direct_vararg)
             append_required_variant_defaults(call, provided);
         call += ")";
-        if (expression.type.kind != TypeKind::void_type) {
+        if (expression.coroutine_call || expression.type.kind != TypeKind::void_type) {
             result += "return " +
                       (godot_method ? emit_api_return(expression.type, std::move(call)) : call);
         } else {
@@ -3323,28 +3351,14 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                    "::" + sanitize_identifier(expression.value);
         if (expression.resolution == ir::ResolutionKind::script_signal) {
             auto object = emit_expression(*expression.operands.at(0));
-            bool ref_counted = api_.inherits(expression.operands.at(0)->type.name, "RefCounted") ||
-                               !inner_cpp_type(expression.operands.at(0)->type.name).empty();
-            if (!ref_counted && script_symbols_) {
-                if (const auto* symbol =
-                        script_symbols_->find_global(expression.operands.at(0)->type.name)) {
-                    ref_counted = api_.inherits(symbol->godot_base_type, "RefCounted");
-                }
-            }
+            const bool ref_counted = is_ref_counted_object(expression.operands.at(0)->type);
             if (ref_counted && object != "this")
                 object = "(" + object + ").ptr()";
             return "godot::Signal(" + object + ", " + godot_string_name(expression.value) + ")";
         }
         if (expression.resolution == ir::ResolutionKind::script_callable) {
             auto object = emit_expression(*expression.operands.at(0));
-            bool ref_counted = api_.inherits(expression.operands.at(0)->type.name, "RefCounted") ||
-                               !inner_cpp_type(expression.operands.at(0)->type.name).empty();
-            if (!ref_counted && script_symbols_) {
-                if (const auto* symbol =
-                        script_symbols_->find_global(expression.operands.at(0)->type.name)) {
-                    ref_counted = api_.inherits(symbol->godot_base_type, "RefCounted");
-                }
-            }
+            const bool ref_counted = is_ref_counted_object(expression.operands.at(0)->type);
             if (ref_counted && object != "this")
                 object = "(" + object + ").ptr()";
             return "godot::Callable(" + object + ", " + godot_string_name(expression.value) + ")";
@@ -3423,6 +3437,10 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         }
         if (expression.resolution == ir::ResolutionKind::script_property &&
             !expression.getter.empty()) {
+            if (expression.operands.at(0)->type.kind == TypeKind::script_resource &&
+                !expression.resolved_owner.empty()) {
+                return expression.resolved_owner + "::" + expression.getter + "()";
+            }
             return finish_object_access(receiver_name + connector + expression.getter + "()");
         }
         if (expression.resolution == ir::ResolutionKind::godot_property &&
@@ -4524,6 +4542,11 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
         if (target.resolution == ir::ResolutionKind::script_property) {
             if (target.kind == ir::ExpressionKind::member) {
                 const auto& owner = *target.operands.at(0);
+                if (owner.type.kind == TypeKind::script_resource &&
+                    !target.resolved_owner.empty()) {
+                    return prefix + target.resolved_owner + "::" + target.setter + "(" + value +
+                           ");\n";
+                }
                 if (owner.resolution == ir::ResolutionKind::script_type ||
                     owner.resolution == ir::ResolutionKind::inner_type) {
                     return prefix + emit_expression(owner) + "::" + target.setter + "(" + value +
@@ -4943,7 +4966,9 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
                                          : nullptr;
     const auto base_cpp = !native_inner_base.empty() ? native_inner_base
                           : native_script_base       ? native_script_base->native_class_name
-                                                     : "godot::" + declaration.base_type;
+                                                     : "godot::" +
+                                                           godot_cpp_class_name(
+                                                               declaration.base_type);
     const auto godot_base = inner_godot_base_type(source_name);
     current_godot_base_type_ = godot_base;
     const auto engine_virtual_for = [&](const ir::Function& function) {
@@ -5883,7 +5908,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     }
     const auto base_cpp = attached_script && native_base_class.empty()
                               ? std::string{"gdpp::runtime::AttachedScriptBehavior"}
-                          : native_base_class.empty() ? "godot::" + base
+                          : native_base_class.empty()
+                              ? "godot::" + godot_cpp_class_name(base)
                                                       : native_base_class;
     const auto initializer =
         std::find_if(module.functions.begin(), module.functions.end(),
@@ -6006,7 +6032,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         header << "#include <godot_cpp/variant/" << to_snake_case(type) << ".hpp>\n";
     }
     for (const auto& type : native_types.objects) {
-        header << "#include <godot_cpp/classes/" << to_snake_case(type) << ".hpp>\n";
+        header << "#include <" << header_for_base(type) << ">\n";
     }
     if (native_types.typed_array)
         header << "#include <godot_cpp/variant/typed_array.hpp>\n";
@@ -6067,8 +6093,18 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
            << "#include <memory>\n"
            << "#include <mutex>\n"
            << "#include <type_traits>\n"
-           << "#include <utility>\n\n"
-           << "namespace " << detail_namespace_ << " {\n";
+           << "#include <utility>\n\n";
+    // Inner classes are flattened into namespace-scope native classes. Their source ordering is
+    // constrained by inheritance, but fields and signatures may refer to any sibling or nested
+    // class declared later in the GDScript file. Declare the complete class family before emitting
+    // definitions so those references remain valid C++ on every compiler.
+    for (const auto& [qualified, declaration] : ordered_inner_classes) {
+        static_cast<void>(declaration);
+        header << "class " << inner_native_names_.at(qualified) << ";\n";
+    }
+    if (!ordered_inner_classes.empty())
+        header << '\n';
+    header << "namespace " << detail_namespace_ << " {\n";
     for (const auto& type_name : native_types.container_objects) {
         header << "struct ContainerObjectTag_" << sanitize_identifier(type_name) << " {\n"
                << "    static godot::StringName get_class_static() { return "
