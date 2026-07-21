@@ -63,25 +63,12 @@ bool requires_static_initialization(const std::vector<ir::Field>& fields,
 }
 
 bool managed_static_constant(const Type& type) {
-    switch (type.kind) {
-    case TypeKind::unknown:
-    case TypeKind::variant:
-    case TypeKind::string:
-    case TypeKind::string_name:
-    case TypeKind::array:
-    case TypeKind::dictionary:
-    case TypeKind::builtin:
-    case TypeKind::object:
-        return true;
-    case TypeKind::nil:
-    case TypeKind::boolean:
-    case TypeKind::integer:
-    case TypeKind::floating:
-    case TypeKind::enumeration:
-    case TypeKind::script_resource:
-    case TypeKind::void_type:
-        return false;
-    }
+    // Even scalar GDScript constants may use constant-foldable Godot utility calls such as
+    // deg_to_rad(). A namespace-scope C++ initializer would execute those calls from DllMain,
+    // before godot-cpp receives the GDExtension interface, and make LoadLibrary fail on Windows.
+    // Keep every script constant behind function-local storage so initialization cannot run
+    // before the extension entry point has completed.
+    (void)type;
     return true;
 }
 

@@ -2071,8 +2071,8 @@ TEST_CASE("project compiler lowers cross-script constants enums and resource fac
 
     REQUIRE(result.success);
     const auto base_header = read_text(options.output_directory / "generated/shared_values.gd.hpp");
-    REQUIRE(base_header.find("static const int64_t LIMIT;") != std::string::npos);
-    REQUIRE(base_header.find("static const int64_t MASK;") != std::string::npos);
+    REQUIRE(base_header.find("static const int64_t& LIMIT();") != std::string::npos);
+    REQUIRE(base_header.find("static const int64_t& MASK();") != std::string::npos);
     const auto& base_class = native_class_for(result, "base.gd");
     REQUIRE(base_header.find(base_class + "(godot::Variant _gdpp_argument_value = "
                                           "gdpp::runtime::default_argument())") !=
@@ -2088,10 +2088,9 @@ TEST_CASE("project compiler lowers cross-script constants enums and resource fac
         read_text(options.output_directory / "generated/shared_consumer.gd.cpp");
     REQUIRE(consumer_source.find("SharedValues_") != std::string::npos);
     REQUIRE(consumer_source.find("::State::_gdpp_enum_BOOST") != std::string::npos);
-    REQUIRE(consumer_source.find("::LIMIT") != std::string::npos);
+    REQUIRE(consumer_source.find("::LIMIT()") != std::string::npos);
     REQUIRE(consumer_source.find("::_gdpp_enum_ANONYMOUS") != std::string::npos);
-    REQUIRE(consumer_source.find("::MASK") != std::string::npos);
-    REQUIRE(consumer_source.find("::MASK()") == std::string::npos);
+    REQUIRE(consumer_source.find("::MASK()") != std::string::npos);
     REQUIRE(consumer_source.find("ScriptResource<GDPPNative_SharedValues_") != std::string::npos);
     REQUIRE(consumer_source.find(">{}.instantiate(") != std::string::npos);
     REQUIRE(consumer_source.find("godot::StringName(\"" + base_class + "\")") != std::string::npos);

@@ -758,9 +758,22 @@ TEST_CASE("compiler resolves forward constants before field initializers") {
                                                                 "const MIN_SPEED = TAU * 0.25\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.header.find("static const double MIN_SPEED;") != std::string::npos);
-    REQUIRE(result.unit.source.find("speed = MIN_SPEED;") != std::string::npos);
-    REQUIRE(result.unit.source.find("speed = MIN_SPEED();") == std::string::npos);
+    REQUIRE(result.unit.header.find("static const double& MIN_SPEED();") != std::string::npos);
+    REQUIRE(result.unit.source.find("speed = MIN_SPEED();") != std::string::npos);
+}
+
+TEST_CASE("compiler defers scalar Godot constants until after extension initialization") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "constant_utility.gd",
+        "extends Node2D\nconst MAX_ANGLE: float = deg_to_rad(10.0)\n"
+        "func angle() -> float:\n    return MAX_ANGLE\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("static const double& MAX_ANGLE();") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_constant_MAX_ANGLE_storage()") != std::string::npos);
+    REQUIRE(result.unit.source.find("::MAX_ANGLE =") == std::string::npos);
+    REQUIRE(result.unit.source.find("return MAX_ANGLE();") != std::string::npos);
 }
 
 TEST_CASE("compiler completes coroutine state inside structured await continuations") {
@@ -2653,14 +2666,15 @@ last"""
     REQUIRE(result.unit.header.find("_gdpp_enum_HEX = 65280") != std::string::npos);
     REQUIRE(result.unit.header.find("_gdpp_enum_BINARY = 165") != std::string::npos);
     REQUIRE(result.unit.header.find("_gdpp_enum_DECIMAL = 12345") != std::string::npos);
-    REQUIRE(result.unit.source.find("const double GDPPNative_LiteralContract::LEADING = 0.5") !=
+    REQUIRE(result.unit.source.find("_gdpp_constant_LEADING_storage() = 0.5") !=
             std::string::npos);
-    REQUIRE(result.unit.source.find("const double GDPPNative_LiteralContract::TRAILING = 4.0") !=
+    REQUIRE(result.unit.source.find("_gdpp_constant_TRAILING_storage() = 4.0") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("12.50e+10") != std::string::npos);
     REQUIRE(result.unit.source.find("Math_INF") != std::string::npos);
     REQUIRE(result.unit.source.find("Math_NAN") != std::string::npos);
-    REQUIRE(result.unit.source.find("::UNDERFLOW = 0.0") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_constant_UNDERFLOW_storage() = 0.0") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find("0xff_00") == std::string::npos);
     REQUIRE(result.unit.source.find("0b1010_0101") == std::string::npos);
     REQUIRE(result.unit.source.find("\\a\\b\\f\\vA") != std::string::npos);
