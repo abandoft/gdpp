@@ -8,6 +8,7 @@ add_executable(
     parser_test.cpp
     flow_test.cpp
     type_test.cpp
+    script_symbols_test.cpp
     iteration_test.cpp
     ir_test.cpp
     mir_test.cpp

@@ -63,10 +63,15 @@ struct ScriptClassSymbol {
     std::string header_file_name;
     std::string godot_base_type{"Node"};
     std::string base_script_path;
+    // Non-empty when this script hierarchy is rooted in a ClassDB class owned by another
+    // GDExtension. Such scripts are emitted as attached behaviors instead of illegal native
+    // cross-library subclasses.
+    std::string external_base_name;
     std::string autoload_name;
     bool globally_named{false};
     bool is_abstract{false};
     bool is_tool{false};
+    bool attached{false};
     std::vector<ScriptMemberSymbol> members;
     std::vector<ScriptEnumSymbol> enums;
     std::vector<ScriptInnerClassSymbol> inner_classes;
@@ -108,6 +113,8 @@ class ScriptSymbolTable final {
     find_native_class(const std::string& name) const noexcept;
     [[nodiscard]] const ScriptClassSymbol* find_autoload(const std::string& name) const noexcept;
     [[nodiscard]] const ExternalClassSymbol* find_external(const std::string& name) const noexcept;
+    [[nodiscard]] const ExternalClassSymbol*
+    external_base_of(const ScriptClassSymbol& owner) const noexcept;
     [[nodiscard]] const ScriptMemberSymbol*
     find_external_member(const ExternalClassSymbol& owner, const std::string& name) const noexcept;
     [[nodiscard]] const ScriptEnumSymbol*

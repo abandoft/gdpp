@@ -1,0 +1,102 @@
+#include "support/test.hpp"
+
+#include "gdpp/semantic/script_symbols.hpp"
+
+#include <algorithm>
+#include <string>
+
+namespace {
+
+gdpp::ScriptMemberSymbol method(std::string name) {
+    gdpp::ScriptMemberSymbol result;
+    result.kind = gdpp::ScriptMemberKind::function;
+    result.name = std::move(name);
+    result.type = {gdpp::TypeKind::integer, "int"};
+    return result;
+}
+
+TEST_CASE("attached script symbols inherit external ClassDB contracts") {
+    gdpp::ScriptSymbolTable symbols;
+
+    gdpp::ExternalClassSymbol vendor;
+    vendor.name = "VendorCharacter";
+    vendor.godot_base_type = "Node3D";
+    vendor.provider_abi = "vendor:7";
+    vendor.members_complete = true;
+    vendor.members.push_back(method("vendor_tick"));
+    gdpp::ScriptMemberSymbol property;
+    property.kind = gdpp::ScriptMemberKind::field;
+    property.name = "stamina";
+    property.type = {gdpp::TypeKind::floating, "float"};
+    vendor.members.push_back(property);
+    gdpp::ScriptEnumSymbol state;
+    state.name = "State";
+    state.entries.push_back({"IDLE", 0});
+    vendor.enums.push_back(state);
+    symbols.add_external(std::move(vendor));
+
+    gdpp::ScriptClassSymbol root;
+    root.path = "player.gd";
+    root.script_name = "Player";
+    root.native_class_name = "GDPPNative_Player";
+    root.header_file_name = "player.gd.hpp";
+    root.godot_base_type = "Node3D";
+    root.external_base_name = "VendorCharacter";
+    root.attached = true;
+    root.members.push_back(method("move_player"));
+    symbols.add(std::move(root));
+
+    gdpp::ScriptClassSymbol child;
+    child.path = "elite_player.gd";
+    child.script_name = "ElitePlayer";
+    child.native_class_name = "GDPPNative_ElitePlayer";
+    child.header_file_name = "elite_player.gd.hpp";
+    child.godot_base_type = "Node3D";
+    child.base_script_path = "player.gd";
+    child.attached = true;
+    symbols.add(std::move(child));
+
+    const auto* derived = symbols.find_path("elite_player.gd");
+    REQUIRE(derived != nullptr);
+    REQUIRE(symbols.external_base_of(*derived) != nullptr);
+    REQUIRE(symbols.find_member(*derived, "vendor_tick") != nullptr);
+    REQUIRE(symbols.find_member(*derived, "stamina") != nullptr);
+    REQUIRE(symbols.find_enum(*derived, "State") != nullptr);
+    REQUIRE(symbols.requires_dynamic_dispatch(*derived, "move_player"));
+
+    const auto inherited = symbols.inherited_members(*derived);
+    REQUIRE(std::any_of(inherited.begin(), inherited.end(),
+                        [](const auto* item) { return item->name == "move_player"; }));
+    REQUIRE(std::any_of(inherited.begin(), inherited.end(),
+                        [](const auto* item) { return item->name == "vendor_tick"; }));
+    REQUIRE(std::any_of(inherited.begin(), inherited.end(),
+                        [](const auto* item) { return item->name == "stamina"; }));
+}
+
+TEST_CASE("attached script declarations shadow external members") {
+    gdpp::ScriptSymbolTable symbols;
+    gdpp::ExternalClassSymbol vendor;
+    vendor.name = "VendorNode";
+    vendor.members.push_back(method("run"));
+    symbols.add_external(std::move(vendor));
+
+    gdpp::ScriptClassSymbol script;
+    script.path = "runner.gd";
+    script.script_name = "Runner";
+    script.native_class_name = "GDPPNative_Runner";
+    script.header_file_name = "runner.gd.hpp";
+    script.external_base_name = "VendorNode";
+    script.attached = true;
+    auto override = method("run");
+    override.type = {gdpp::TypeKind::string, "String"};
+    script.members.push_back(override);
+    symbols.add(std::move(script));
+
+    const auto* owner = symbols.find_path("runner.gd");
+    REQUIRE(owner != nullptr);
+    const auto* resolved = symbols.find_member(*owner, "run");
+    REQUIRE(resolved != nullptr);
+    REQUIRE_EQ(resolved->type, override.type);
+}
+
+} // namespace

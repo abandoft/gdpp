@@ -144,6 +144,17 @@ ScriptSymbolTable::find_external(const std::string& name) const noexcept {
     return found == external_names_.end() ? nullptr : &external_classes_[found->second];
 }
 
+const ExternalClassSymbol*
+ScriptSymbolTable::external_base_of(const ScriptClassSymbol& owner) const noexcept {
+    const ScriptClassSymbol* current = &owner;
+    for (std::size_t depth = 0; current && depth <= classes_.size(); ++depth) {
+        if (!current->external_base_name.empty())
+            return find_external(current->external_base_name);
+        current = base_of(*current);
+    }
+    return nullptr;
+}
+
 const ScriptMemberSymbol*
 ScriptSymbolTable::find_external_member(const ExternalClassSymbol& owner,
                                         const std::string& name) const noexcept {
@@ -177,6 +188,8 @@ const ScriptMemberSymbol* ScriptSymbolTable::find_member(const ScriptClassSymbol
         current =
             current->base_script_path.empty() ? nullptr : find_path(current->base_script_path);
     }
+    if (const auto* external = external_base_of(owner))
+        return find_external_member(*external, name);
     return nullptr;
 }
 
@@ -191,6 +204,8 @@ const ScriptEnumSymbol* ScriptSymbolTable::find_enum(const ScriptClassSymbol& ow
         current =
             current->base_script_path.empty() ? nullptr : find_path(current->base_script_path);
     }
+    if (const auto* external = external_base_of(owner))
+        return find_external_enum(*external, name);
     return nullptr;
 }
 
@@ -241,6 +256,12 @@ ScriptSymbolTable::inherited_members(const ScriptClassSymbol& owner) const {
         current =
             current->base_script_path.empty() ? nullptr : find_path(current->base_script_path);
     }
+    if (const auto* external = external_base_of(owner)) {
+        for (const auto& member : external->members) {
+            if (names.insert(member.name).second)
+                result.push_back(&member);
+        }
+    }
     return result;
 }
 
@@ -274,6 +295,8 @@ bool ScriptSymbolTable::requires_dynamic_dispatch(const ScriptClassSymbol& owner
     const auto* contract = find_member(owner, method);
     if (!contract || contract->kind != ScriptMemberKind::function || contract->is_static)
         return false;
+    if (owner.attached)
+        return true;
     const auto same_native_abi = [](const ScriptMemberSymbol& left,
                                     const ScriptMemberSymbol& right) {
         return left.type == right.type && left.parameters == right.parameters &&
