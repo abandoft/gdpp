@@ -172,6 +172,9 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
             "profiles": "development,debug,release",
             "platform_minimum": host.platform_minimum,
             "gdpp_version": version,
+            "cxx_standard": "17",
+            "exceptions": "disabled",
+            "msvc_runtime": "static" if host.platform == "windows" else "not_applicable",
         },
     )
     require_profile_libraries(sdk / "lib", ("editor", "template_debug", "template_release"))
@@ -189,7 +192,11 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
             "profiles": "debug,release",
             "platform_minimum": "Android_9",
             "android_api_level": "28",
+            "android_stl": "c++_shared",
             "gdpp_version": version,
+            "cxx_standard": "17",
+            "exceptions": "disabled",
+            "msvc_runtime": "not_applicable",
         },
     )
     require_profile_libraries(sdk / "android/arm64/lib", ("template_debug", "template_release"))
@@ -225,6 +232,9 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
                 "ios_deployment_target": "16.0",
                 "ios_slices": "device-arm64,simulator-arm64,simulator-x86_64",
                 "gdpp_version": version,
+                "cxx_standard": "17",
+                "exceptions": "disabled",
+                "msvc_runtime": "not_applicable",
             },
         )
         require_profile_libraries(ios / "lib/device", ("template_debug", "template_release"))

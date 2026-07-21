@@ -33,6 +33,10 @@ RUNTIME_FIELDS = {
     "attached_runtime_language_source_sha256": "f" * 64,
     "integer_semantics_header_sha256": "0" * 64,
 }
+COMMON_ABI_FIELDS = {
+    "cxx_standard": "17",
+    "exceptions": "disabled",
+}
 
 
 def write(path: Path, content: str = "fixture") -> None:
@@ -75,6 +79,8 @@ def create_addon(root: Path, host_name: str, godot_version: str = "4.6") -> Path
             "profiles": "development,debug,release",
             "platform_minimum": host.platform_minimum,
             "gdpp_version": "1.0.0",
+            **COMMON_ABI_FIELDS,
+            "msvc_runtime": "static" if host.platform == "windows" else "not_applicable",
             **RUNTIME_FIELDS,
         },
     )
@@ -91,7 +97,10 @@ def create_addon(root: Path, host_name: str, godot_version: str = "4.6") -> Path
             "profiles": "debug,release",
             "platform_minimum": "Android_9",
             "android_api_level": "28",
+            "android_stl": "c++_shared",
             "gdpp_version": "1.0.0",
+            **COMMON_ABI_FIELDS,
+            "msvc_runtime": "not_applicable",
             **RUNTIME_FIELDS,
         },
     )
@@ -112,6 +121,8 @@ def create_addon(root: Path, host_name: str, godot_version: str = "4.6") -> Path
                 "ios_deployment_target": "16.0",
                 "ios_slices": "device-arm64,simulator-arm64,simulator-x86_64",
                 "gdpp_version": "1.0.0",
+                **COMMON_ABI_FIELDS,
+                "msvc_runtime": "not_applicable",
                 **RUNTIME_FIELDS,
             },
         )
@@ -188,6 +199,33 @@ class ReleasePackagingTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "platform_minimum"):
             package_release.validate_source(
                 addon, package_release.HOSTS["windows-x64"], "4.6"
+            )
+
+    def test_native_abi_manifest_mismatch_fails_closed(self) -> None:
+        addon = create_addon(self.temporary / "bad-abi", "windows-x64")
+        host_manifest = addon / "sdk/4.6/sdk.manifest"
+        host_manifest.write_text(
+            host_manifest.read_text(encoding="utf-8").replace(
+                "msvc_runtime static", "msvc_runtime dynamic"
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "msvc_runtime"):
+            package_release.validate_source(
+                addon, package_release.HOSTS["windows-x64"], "4.6"
+            )
+
+        addon = create_addon(self.temporary / "bad-stl", "linux-x64")
+        android_manifest = addon / "sdk/4.6/android/arm64/sdk.manifest"
+        android_manifest.write_text(
+            android_manifest.read_text(encoding="utf-8").replace(
+                "android_stl c++_shared", "android_stl c++_static"
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "android_stl"):
+            package_release.validate_source(
+                addon, package_release.HOSTS["linux-x64"], "4.6"
             )
 
     def test_changelog_uses_unprefixed_exact_version_section(self) -> None:
