@@ -1813,6 +1813,8 @@ TEST_CASE("project compiler lowers cross-script constants enums and resource fac
             std::string::npos);
     const auto consumer_header =
         read_text(options.output_directory / "generated/shared_consumer.gd.hpp");
+    REQUIRE(consumer_header.find("#include <gdpp/runtime/attached_script.hpp>") !=
+            std::string::npos);
     REQUIRE(consumer_header.find("ScriptResource<GDPPNative_SharedValues_") != std::string::npos);
     REQUIRE(consumer_header.find("operator godot::Variant() const") != std::string::npos);
     REQUIRE(consumer_header.find("godot::StringName(T::get_class_static())") != std::string::npos);
