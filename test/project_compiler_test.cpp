@@ -902,7 +902,7 @@ TEST_CASE("project compiler identifies unsupported third-party native base class
     }));
 }
 
-TEST_CASE("project compiler rejects unsafe cross-library native GDExtension inheritance") {
+TEST_CASE("project compiler attaches scripts to third-party GDExtension instances") {
     const auto root = fixture_root("project-extension-bridge");
     std::error_code error;
     std::filesystem::remove_all(root, error);
@@ -931,13 +931,24 @@ TEST_CASE("project compiler rejects unsafe cross-library native GDExtension inhe
     const auto options = project_options(root);
     const auto result = gdpp::ProjectCompiler{}.compile(options);
 
-    REQUIRE(!result.success);
-    REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(), [](const auto& item) {
-        return item.diagnostic.code == "PRJ0020" &&
-               item.diagnostic.message.find("provider headers and link libraries do not remove") !=
-                   std::string::npos;
-    }));
-    REQUIRE(!std::filesystem::exists(options.output_directory / "manifest.txt"));
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.scripts.size(), std::size_t{1});
+    REQUIRE(result.scripts.front().is_attached);
+    REQUIRE_EQ(result.scripts.front().external_base_name, "VendorBase");
+    const auto header = read_text(options.output_directory / "generated/bridged_derived.gd.hpp");
+    const auto source = read_text(options.output_directory / "generated/bridged_derived.gd.cpp");
+    const auto cmake = read_text(options.output_directory / "CMakeLists.txt");
+    const auto registration = read_text(options.output_directory / "register_types.cpp");
+    const auto descriptor = read_text(options.output_directory / "gdpp_project.gdextension");
+    REQUIRE(header.find("public gdpp::runtime::AttachedScriptBehavior") != std::string::npos);
+    REQUIRE(header.find("vendor_base.hpp") == std::string::npos);
+    REQUIRE(source.find("descriptor.native_base_type = godot::StringName(\"VendorBase\")") !=
+            std::string::npos);
+    REQUIRE(cmake.find("attached_script_instance.cpp") != std::string::npos);
+    REQUIRE(cmake.find("libvendor") == std::string::npos);
+    REQUIRE(registration.find("register_attached_script") != std::string::npos);
+    REQUIRE(registration.find("register_singleton") != std::string::npos);
+    REQUIRE(descriptor.find("reloadable = false") != std::string::npos);
 }
 
 TEST_CASE("project compiler dynamically bridges a binary-only GDExtension class") {
@@ -1251,7 +1262,7 @@ TEST_CASE("project compiler hoists a script-local class used as the root base") 
                         [](const auto& item) { return item.diagnostic.code == "GDS4149"; }));
 }
 
-TEST_CASE("project compiler rejects unsafe third-party bridge paths transactionally") {
+TEST_CASE("attached bridges ignore obsolete provider development paths") {
     const auto root = fixture_root("project-extension-bridge-invalid");
     std::error_code error;
     std::filesystem::remove_all(root, error);
@@ -1268,14 +1279,17 @@ TEST_CASE("project compiler rejects unsafe third-party bridge paths transactiona
 
     const auto result = gdpp::ProjectCompiler{}.compile(options);
 
-    REQUIRE(!result.success);
-    REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
-                        [](const auto& item) { return item.diagnostic.code == "PRJ0020"; }));
-    REQUIRE(!std::filesystem::exists(options.output_directory / "manifest.txt"));
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.scripts.size(), std::size_t{1});
+    const auto header =
+        read_text(options.output_directory / "generated" / result.scripts.front().header_file_name);
+    const auto cmake = read_text(options.output_directory / "CMakeLists.txt");
+    REQUIRE(header.find("outside.hpp") == std::string::npos);
+    REQUIRE(cmake.find("outside.hpp") == std::string::npos);
 }
 
 #ifndef _WIN32
-TEST_CASE("project compiler rejects third-party bridge paths escaping through symlinks") {
+TEST_CASE("attached bridges never traverse obsolete provider header symlinks") {
     const auto root = fixture_root("project-extension-bridge-symlink");
     const auto outside = fixture_root("project-extension-bridge-symlink-outside");
     std::error_code error;
@@ -1297,10 +1311,13 @@ TEST_CASE("project compiler rejects third-party bridge paths escaping through sy
 
     const auto result = gdpp::ProjectCompiler{}.compile(options);
 
-    REQUIRE(!result.success);
-    REQUIRE(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
-                        [](const auto& item) { return item.diagnostic.code == "PRJ0020"; }));
-    REQUIRE(!std::filesystem::exists(options.output_directory / "manifest.txt"));
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.scripts.size(), std::size_t{1});
+    const auto header =
+        read_text(options.output_directory / "generated" / result.scripts.front().header_file_name);
+    const auto cmake = read_text(options.output_directory / "CMakeLists.txt");
+    REQUIRE(header.find("vendor_base.hpp") == std::string::npos);
+    REQUIRE(cmake.find("include/vendor_base.hpp") == std::string::npos);
 }
 #endif
 
