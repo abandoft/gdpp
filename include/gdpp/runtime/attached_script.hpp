@@ -118,10 +118,61 @@ class AttachedCompiledLanguage : public godot::ScriptLanguageExtension {
                                  const godot::String& function_name,
                                  const godot::PackedStringArray& function_args) const override;
     bool _can_make_function() const override;
+    godot::Error _open_in_external_editor(const godot::Ref<godot::Script>& script,
+                                          std::int32_t line, std::int32_t column) override;
+    bool _overrides_external_editor() override;
+    godot::ScriptLanguage::ScriptNameCasing _preferred_file_name_casing() const override;
+    godot::Dictionary _complete_code(const godot::String& code, const godot::String& path,
+                                     godot::Object* owner) const override;
+    godot::Dictionary _lookup_code(const godot::String& code, const godot::String& symbol,
+                                   const godot::String& path,
+                                   godot::Object* owner) const override;
+    godot::String _auto_indent_code(const godot::String& code, std::int32_t from_line,
+                                    std::int32_t to_line) const override;
+    void _add_global_constant(const godot::StringName& name,
+                              const godot::Variant& value) override;
+    void _add_named_global_constant(const godot::StringName& name,
+                                    const godot::Variant& value) override;
+    void _remove_named_global_constant(const godot::StringName& name) override;
+    void _thread_enter() override;
+    void _thread_exit() override;
+    godot::String _debug_get_error() const override;
+    std::int32_t _debug_get_stack_level_count() const override;
+    std::int32_t _debug_get_stack_level_line(std::int32_t level) const override;
+    godot::String _debug_get_stack_level_function(std::int32_t level) const override;
+    godot::String _debug_get_stack_level_source(std::int32_t level) const override;
+    godot::Dictionary _debug_get_stack_level_locals(std::int32_t level,
+                                                     std::int32_t max_subitems,
+                                                     std::int32_t max_depth) override;
+    godot::Dictionary _debug_get_stack_level_members(std::int32_t level,
+                                                      std::int32_t max_subitems,
+                                                      std::int32_t max_depth) override;
+    void* _debug_get_stack_level_instance(std::int32_t level) override;
+    godot::Dictionary _debug_get_globals(std::int32_t max_subitems,
+                                         std::int32_t max_depth) override;
+    godot::String _debug_parse_stack_level_expression(std::int32_t level,
+                                                       const godot::String& expression,
+                                                       std::int32_t max_subitems,
+                                                       std::int32_t max_depth) override;
+    godot::TypedArray<godot::Dictionary> _debug_get_current_stack_info() override;
+    void _reload_all_scripts() override;
+    void _reload_scripts(const godot::Array& scripts, bool soft_reload) override;
+    void _reload_tool_script(const godot::Ref<godot::Script>& script,
+                             bool soft_reload) override;
     godot::PackedStringArray _get_recognized_extensions() const override;
     godot::TypedArray<godot::Dictionary> _get_public_functions() const override;
     godot::Dictionary _get_public_constants() const override;
     godot::TypedArray<godot::Dictionary> _get_public_annotations() const override;
+    void _profiling_start() override;
+    void _profiling_stop() override;
+    void _profiling_set_save_native_calls(bool enable) override;
+    std::int32_t _profiling_get_accumulated_data(
+        godot::ScriptLanguageExtensionProfilingInfo* info_array,
+        std::int32_t info_max) override;
+    std::int32_t _profiling_get_frame_data(
+        godot::ScriptLanguageExtensionProfilingInfo* info_array,
+        std::int32_t info_max) override;
+    void _frame() override;
     bool _handles_global_class_type(const godot::String& type) const override;
     godot::Dictionary _get_global_class_name(const godot::String& path) const override;
 
