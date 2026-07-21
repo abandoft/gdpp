@@ -864,6 +864,18 @@ if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
             TIMEOUT 600
     )
     add_test(
+        NAME gdpp.godot.attached_extension_reset
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ATTACHED_TEST_ROOT}/extension_list.compiler.cfg"
+                "${GDPP_ATTACHED_TEST_ROOT}/.godot/extension_list.cfg"
+    )
+    set_tests_properties(
+        gdpp.godot.attached_extension_reset
+        PROPERTIES
+            FIXTURES_SETUP gdpp_attached_extension_compiler_registry
+            TIMEOUT 30
+    )
+    add_test(
         NAME gdpp.godot.attached_extension_compile
         COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --path "${GDPP_ATTACHED_TEST_ROOT}"
                 --script addons/gdpp/build/compile_attached.gd
@@ -872,6 +884,7 @@ if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
         gdpp.godot.attached_extension_compile
         PROPERTIES
             PASS_REGULAR_EXPRESSION "GDPP_ATTACHED_COMPILE_OK"
+            FIXTURES_REQUIRED gdpp_attached_extension_compiler_registry
             FIXTURES_SETUP gdpp_attached_extension_native
             TIMEOUT 600
     )
@@ -886,6 +899,18 @@ if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
             PASS_REGULAR_EXPRESSION "GDPP_ATTACHED_RUNTIME_OK"
             FIXTURES_REQUIRED gdpp_attached_extension_native
             TIMEOUT 120
+    )
+    add_test(
+        NAME gdpp.godot.attached_extension_restore
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ATTACHED_TEST_ROOT}/extension_list.compiler.cfg"
+                "${GDPP_ATTACHED_TEST_ROOT}/.godot/extension_list.cfg"
+    )
+    set_tests_properties(
+        gdpp.godot.attached_extension_restore
+        PROPERTIES
+            FIXTURES_CLEANUP gdpp_attached_extension_native
+            TIMEOUT 30
     )
 endif()
 
