@@ -224,7 +224,11 @@ GDPP 自身使用 CMake、Python 和 godot-cpp 生成器，以保证开发构建
   PackedArray 的同步快速路径引用原容器并逐轮读取实时长度，Dictionary/Variant 使用三阶段协议；
   迭代器推进必须位于循环更新边，确保容器变更、`continue` 与普通落出路径行为一致。
 - Callable 参数必须先按源码顺序物化，再执行 `.call(...)`。
-- 用户侧构建命令使用参数数组，不经过 shell 字符串拼接。
+- 用户侧构建参数逐项构造，不允许把客户输入拼成可执行的 shell 文本。
+- Godot 编辑器与导出器的直接原生构建严格串行调度编译/链接命令，隐藏捕获 stdout/stderr 并在
+  每个翻译单元完成后推进进度；不得用并行 `cl.exe`/C++ frontend 突发换取吞吐量。Windows
+  `vcvars64.bat` 引导是唯一受控的 `cmd.exe /c` 边界，其负载必须使用 cmd 原生命令边界，不能再
+  交给 C 运行时 argv 引号算法二次转义。
 - Godot 资源、项目清单、桥接锁、CMake 文本和进程参数统一使用 UTF-8；文件系统路径只在
   `path_from_utf8`/`path_to_utf8` 边界转换，不能依赖 Windows 活动代码页。
 - Windows 生成工程必须用有界 MSVC 作业池治理并发，不能把调用者的无界 `--parallel` 直接

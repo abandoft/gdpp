@@ -120,7 +120,9 @@ GDPP 公开构建 profile 与产物角色固定如下：
 ```
 
 默认编译器在 Unix 类平台为 `c++`，Windows 为 `cl.exe`，可通过
-`gdpp/build/cpp_compiler` 指定绝对路径。调用不经过 shell，带空格的路径作为独立参数传递。
+`gdpp/build/cpp_compiler` 指定绝对路径。Unix 工具直接按参数数组启动；Windows 在 Godot 未继承
+MSVC 环境时仅以隐藏的 `cmd.exe` 调用一次命令所需的 `vcvars64.bat`，其负载使用专用的 `/c`
+边界而不是通用 argv 二次转义。编译器参数仍逐项构造，带空格的路径不会拼成客户可控 shell 文本。
 
 对象文件位于
 `res://addons/gdpp/build/project/native-direct/<version>/<platform>/<arch>/<profile>/objects`。
@@ -128,9 +130,11 @@ GDPP 公开构建 profile 与产物角色固定如下：
 和目标 ABI 静态库都未变化时，编译和链接命令会完全跳过。每个原生缓存目录还保存
 `build-configuration.txt`，内容包含原生构建修订、API、平台、架构、profile 和编译器绝对路径；
 任一项变化都会强制重编译，不能只依赖容易受时钟偏差影响的文件 mtime。Release 在 MSVC 使用
-`/Gy /Gw /OPT:REF /OPT:ICF`，在 GCC/Clang 使用 section 拆分和 dead-strip/gc-sections。Windows
-生成的 Ninja 工程使用可配置的 `GDPP_MSVC_COMPILE_JOBS` 作业池（默认 4，链接 1），即使调用者
-传入 `--parallel` 也不会在大型脚本项目上无限并发 `cl.exe`、耗尽编译器堆空间。
+`/Gy /Gw /OPT:REF /OPT:ICF`，在 GCC/Clang 使用 section 拆分和 dead-strip/gc-sections。Godot
+编辑器及导出器的直接构建路径严格一次执行一个编译或链接命令，在命令运行期间持续刷新界面，
+完成后按翻译单元推进进度；隐藏进程的 stdout/stderr 会有界捕获并随失败文件、阶段和退出码一起
+返回。供 CLI/独立集成使用的生成式 Windows Ninja 工程仍使用可配置的
+`GDPP_MSVC_COMPILE_JOBS` 作业池（默认 4，链接 1），两条执行路径不能混淆。
 
 项目生成清单使用 `GDPP_MANIFEST 3`。清单头记录插件版本、代码生成契约、项目 Build ID，并为
 每个脚本分别保存实现哈希、公开 ABI、实际引用脚本和第三方 provider ABI。公共头文件、前端、
