@@ -73,15 +73,72 @@ void set_error(godot::String* destination, const godot::String& message) {
         *destination = message;
 }
 
+bool same_property_info(const godot::PropertyInfo& left, const godot::PropertyInfo& right) {
+    return left.type == right.type && left.name == right.name &&
+           left.class_name == right.class_name && left.hint == right.hint &&
+           left.hint_string == right.hint_string && left.usage == right.usage;
+}
+
+bool same_variant(const godot::Variant& left, const godot::Variant& right) {
+    // Variant equality intentionally coerces some scalar families and treats NaN as unequal to
+    // itself. Descriptor identity instead needs exact runtime type plus Godot's hash comparison,
+    // which is the same key-equivalence contract used by Dictionary.
+    return left.get_type() == right.get_type() && left.hash_compare(right);
+}
+
+bool same_method_info(const godot::MethodInfo& left, const godot::MethodInfo& right) {
+    if (left.name != right.name || !same_property_info(left.return_val, right.return_val) ||
+        left.flags != right.flags || left.id != right.id ||
+        left.return_val_metadata != right.return_val_metadata ||
+        left.arguments.size() != right.arguments.size() ||
+        left.default_arguments.size() != right.default_arguments.size() ||
+        left.arguments_metadata.size() != right.arguments_metadata.size()) {
+        return false;
+    }
+    for (decltype(left.arguments.size()) index = 0; index < left.arguments.size(); ++index) {
+        if (!same_property_info(left.arguments[index], right.arguments[index]))
+            return false;
+    }
+    for (decltype(left.default_arguments.size()) index = 0;
+         index < left.default_arguments.size(); ++index) {
+        if (!same_variant(left.default_arguments[index], right.default_arguments[index]))
+            return false;
+    }
+    for (decltype(left.arguments_metadata.size()) index = 0;
+         index < left.arguments_metadata.size(); ++index) {
+        if (left.arguments_metadata[index] != right.arguments_metadata[index])
+            return false;
+    }
+    return true;
+}
+
+bool same_property(const AttachedScriptProperty& left, const AttachedScriptProperty& right) {
+    return same_property_info(left.info, right.info) && left.has_default == right.has_default &&
+           (!left.has_default || same_variant(left.default_value, right.default_value));
+}
+
+template <typename Items, typename Equal>
+bool same_ordered_items(const Items& left, const Items& right, Equal&& equal) {
+    if (left.size() != right.size())
+        return false;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        if (!equal(left[index], right[index]))
+            return false;
+    }
+    return true;
+}
+
 bool same_identity(const AttachedScriptDescriptor& left, const AttachedScriptDescriptor& right) {
     return left.source_path == right.source_path && left.global_name == right.global_name &&
            left.native_base_type == right.native_base_type &&
            left.base_script_path == right.base_script_path &&
            left.behavior_class == right.behavior_class && left.factory == right.factory &&
            left.tool == right.tool && left.abstract == right.abstract &&
-           left.properties.size() == right.properties.size() &&
-           left.methods.size() == right.methods.size() &&
-           left.signals.size() == right.signals.size();
+           same_ordered_items(left.properties, right.properties, same_property) &&
+           same_ordered_items(left.methods, right.methods, same_method_info) &&
+           same_ordered_items(left.signals, right.signals, same_method_info) &&
+           same_variant(godot::Variant{left.constants}, godot::Variant{right.constants}) &&
+           same_variant(left.rpc_config, right.rpc_config);
 }
 
 template <typename Items, typename Name>
