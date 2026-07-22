@@ -2,6 +2,8 @@
 
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/resource.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
+#include <godot_cpp/variant/typed_dictionary.hpp>
 
 #include <cstdint>
 
@@ -16,7 +18,16 @@ class VendorBase final : public godot::Node {
     [[nodiscard]] std::int64_t native_compute(std::int64_t value) const;
     [[nodiscard]] std::int64_t invoke_hook(std::int64_t value);
     void emit_vendor_ping(std::int64_t value);
+    void emit_vendor_contract(const godot::TypedArray<std::int64_t>& values,
+                              const godot::TypedDictionary<godot::String, std::int64_t>& weights);
     [[nodiscard]] std::int64_t get_ready_notifications() const;
+    void set_native_payload(const godot::Variant& value);
+    [[nodiscard]] godot::Variant get_native_payload() const;
+    [[nodiscard]] godot::Variant variant_roundtrip(const godot::Variant& value) const;
+    [[nodiscard]] godot::TypedArray<std::int64_t>
+    typed_array_roundtrip(const godot::TypedArray<std::int64_t>& values) const;
+    [[nodiscard]] godot::TypedDictionary<godot::String, std::int64_t> typed_dictionary_roundtrip(
+        const godot::TypedDictionary<godot::String, std::int64_t>& values) const;
     void _notification(std::int32_t what);
 
   protected:
@@ -25,6 +36,7 @@ class VendorBase final : public godot::Node {
   private:
     std::int64_t native_bias_{5};
     std::int64_t ready_notifications_{0};
+    godot::Variant native_payload_;
 };
 
 class VendorResource final : public godot::Resource {
