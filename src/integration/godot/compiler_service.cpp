@@ -46,7 +46,6 @@
 #include <vector>
 
 #ifdef _WIN32
-#include <process.h>
 #include <windows.h>
 #else
 #include <cerrno>
@@ -759,6 +758,38 @@ bool is_msvc_tool(const std::filesystem::path& executable) {
            filename == L"link.exe";
 }
 
+int64_t execute_hidden_windows_process(const std::vector<std::wstring>& arguments) {
+    if (arguments.empty() || arguments.front().empty())
+        return -1;
+
+    std::wstring command_line;
+    for (const auto& argument : arguments) {
+        if (!command_line.empty())
+            command_line.push_back(L' ');
+        command_line += quote_windows_argument(argument);
+    }
+    std::vector<wchar_t> mutable_command_line{command_line.begin(), command_line.end()};
+    mutable_command_line.push_back(L'\0');
+
+    STARTUPINFOW startup_information{};
+    startup_information.cb = sizeof(startup_information);
+    startup_information.dwFlags = STARTF_USESHOWWINDOW;
+    startup_information.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION process_information{};
+    if (CreateProcessW(nullptr, mutable_command_line.data(), nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW, nullptr, nullptr, &startup_information,
+                       &process_information) == FALSE)
+        return -1;
+
+    CloseHandle(process_information.hThread);
+    const auto wait_result = WaitForSingleObject(process_information.hProcess, INFINITE);
+    DWORD exit_code = 0;
+    const bool completed = wait_result == WAIT_OBJECT_0 &&
+                           GetExitCodeProcess(process_information.hProcess, &exit_code) != FALSE;
+    CloseHandle(process_information.hProcess);
+    return completed ? static_cast<int64_t>(exit_code) : int64_t{-1};
+}
+
 int64_t execute_with_vcvars(const std::wstring& executable,
                             const std::vector<std::wstring>& arguments,
                             const std::filesystem::path& vcvars) {
@@ -768,13 +799,7 @@ int64_t execute_with_vcvars(const std::wstring& executable,
         command += L" " + quote_windows_argument(arguments[index]);
     const std::vector<std::wstring> command_arguments{L"cmd.exe", L"/d", L"/s", L"/c",
                                                       std::move(command)};
-    std::vector<const wchar_t*> pointers;
-    pointers.reserve(command_arguments.size() + 1);
-    for (const auto& argument : command_arguments)
-        pointers.push_back(argument.c_str());
-    pointers.push_back(nullptr);
-    const auto result = _wspawnvp(_P_WAIT, L"cmd.exe", pointers.data());
-    return result < 0 ? int64_t{-1} : static_cast<int64_t>(result);
+    return execute_hidden_windows_process(command_arguments);
 }
 #endif
 
@@ -809,13 +834,7 @@ int64_t execute_native_process(const std::string& executable,
         if (vcvars && !windows_environment(L"INCLUDE"))
             return execute_with_vcvars(wide_executable, wide_arguments, *vcvars);
     }
-    std::vector<const wchar_t*> process_arguments;
-    process_arguments.reserve(wide_arguments.size() + 1);
-    for (const auto& argument : wide_arguments)
-        process_arguments.push_back(argument.c_str());
-    process_arguments.push_back(nullptr);
-    const auto result = _wspawnvp(_P_WAIT, wide_executable.c_str(), process_arguments.data());
-    return result < 0 ? int64_t{-1} : static_cast<int64_t>(result);
+    return execute_hidden_windows_process(wide_arguments);
 #else
     if (executable.empty())
         return -1;
