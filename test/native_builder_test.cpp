@@ -739,9 +739,36 @@ TEST_CASE("native builder enables release dead-code elimination for MSVC") {
     REQUIRE(contains_utf16le_ascii(response_file, "/INCREMENTAL:NO"));
 }
 
-TEST_CASE("native builder keeps debug and development object caches isolated") {
+TEST_CASE("native builder optimizes MSVC debug exports against release bindings") {
+    const auto root =
+        make_sdk_fixture("native-builder-windows-debug", "godot-cpp.template_release.x86_64.lib");
+    gdpp::NativeBuildOptions options;
+    options.project_output_directory = root / "project";
+    options.binary_output_directory = root / "addons/gdpp/binary";
+    options.sdk_root = root / "sdk";
+    options.compiler_executable = "cl.exe";
+    options.platform = gdpp::NativePlatform::windows;
+    options.architecture = "x86_64";
+    options.profile = gdpp::NativeBuildProfile::debug;
+
+    const auto plan = gdpp::NativeBuilder{}.plan(options);
+
+    REQUIRE(plan.success);
+    REQUIRE(contains(plan.commands.front().arguments, "/O2"));
+    REQUIRE(contains(plan.commands.front().arguments, "/DNDEBUG"));
+    REQUIRE(contains(plan.commands.front().arguments, "/DGDPP_SCRIPT_DEBUG_ENABLED"));
+    REQUIRE(!contains(plan.commands.front().arguments, "/Od"));
+    REQUIRE(!contains(plan.commands.front().arguments, "/DDEBUG_ENABLED"));
+    const std::filesystem::path response_file = plan.commands.back().arguments.back().substr(1);
+    REQUIRE(contains_utf16le_ascii(response_file, "godot-cpp.template_release.x86_64.lib"));
+    REQUIRE(contains_utf16le_ascii(response_file, "/OPT:REF"));
+    REQUIRE(contains_utf16le_ascii(response_file, "/OPT:ICF"));
+    REQUIRE(contains_utf16le_ascii(response_file, "/INCREMENTAL:NO"));
+}
+
+TEST_CASE("native builder keeps optimized debug exports in an isolated object cache") {
     const auto root = make_sdk_fixture("native-builder-template-debug",
-                                       "libgodot-cpp.macos.template_debug.arm64.a");
+                                       "libgodot-cpp.macos.template_release.arm64.a");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -756,8 +783,15 @@ TEST_CASE("native builder keeps debug and development object caches isolated") {
     REQUIRE(plan.success);
     REQUIRE_EQ(plan.output_library.filename().string(),
                std::string{"libgdpp_project.debug.macos.arm64.dylib"});
-    REQUIRE(contains(plan.commands.front().arguments, "-DDEBUG_ENABLED"));
-    REQUIRE(contains(plan.commands.front().arguments, "-g"));
+    REQUIRE(contains(plan.commands.front().arguments, "-O3"));
+    REQUIRE(contains(plan.commands.front().arguments, "-DNDEBUG"));
+    REQUIRE(contains(plan.commands.front().arguments, "-DGDPP_SCRIPT_DEBUG_ENABLED"));
+    REQUIRE(!contains(plan.commands.front().arguments, "-DDEBUG_ENABLED"));
+    REQUIRE(!contains(plan.commands.front().arguments, "-g"));
+    REQUIRE(contains(plan.commands.back().arguments, "-Wl,-dead_strip"));
+    REQUIRE(contains(plan.commands.back().arguments, "-Wl,-x"));
+    REQUIRE(contains_path(plan.commands.back().arguments,
+                          root / "sdk/lib/libgodot-cpp.macos.template_release.arm64.a"));
     REQUIRE(std::filesystem::path{plan.commands.front().arguments.back()}.generic_string().find(
                 "native-direct/4.4/macos/arm64/debug/objects") != std::string::npos);
 }
@@ -927,7 +961,7 @@ TEST_CASE("native builder emits a single-threaded WebAssembly side module") {
 
 TEST_CASE("native builder isolates threaded WebAssembly flags and artifacts") {
     const auto root =
-        make_sdk_fixture("native-builder-web-threads", "libgodot-cpp.web.template_debug.wasm32.a");
+        make_sdk_fixture("native-builder-web-threads", "libgodot-cpp.web.template_release.wasm32.a");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -945,13 +979,19 @@ TEST_CASE("native builder isolates threaded WebAssembly flags and artifacts") {
                std::string{"libgdpp_project.debug.web.wasm32.threads.wasm"});
     REQUIRE(contains(plan.commands.front().arguments, "-DTHREADS_ENABLED"));
     REQUIRE(contains(plan.commands.front().arguments, "-sUSE_PTHREADS=1"));
-    REQUIRE(contains(plan.commands.front().arguments, "-g2"));
+    REQUIRE(contains(plan.commands.front().arguments, "-O3"));
+    REQUIRE(contains(plan.commands.front().arguments, "-DNDEBUG"));
+    REQUIRE(contains(plan.commands.front().arguments, "-DGDPP_SCRIPT_DEBUG_ENABLED"));
+    REQUIRE(!contains(plan.commands.front().arguments, "-DDEBUG_ENABLED"));
+    REQUIRE(!contains(plan.commands.front().arguments, "-g2"));
     REQUIRE(!contains(plan.commands.front().arguments, "-g"));
-    REQUIRE(contains(plan.commands.front().arguments, "-fdebug-compilation-dir=/gdpp/project"));
     REQUIRE(contains(plan.commands.back().arguments, "-sUSE_PTHREADS=1"));
-    REQUIRE(contains(plan.commands.back().arguments, "-sASSERTIONS=1"));
-    REQUIRE(contains(plan.commands.back().arguments, "-g2"));
-    REQUIRE(contains(plan.commands.back().arguments, "-fdebug-compilation-dir=/gdpp/project"));
+    REQUIRE(contains(plan.commands.back().arguments, "-Wl,--gc-sections"));
+    REQUIRE(contains(plan.commands.back().arguments, "-s"));
+    REQUIRE(!contains(plan.commands.back().arguments, "-sASSERTIONS=1"));
+    REQUIRE(!contains(plan.commands.back().arguments, "-g2"));
+    REQUIRE(contains_path(plan.commands.back().arguments,
+                          root / "sdk/lib/libgodot-cpp.web.template_release.wasm32.a"));
 }
 
 TEST_CASE("native builder fails closed for incomplete Web target contracts") {

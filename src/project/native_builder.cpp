@@ -710,13 +710,16 @@ NativeBuildCommand compile_command(const NativeBuildOptions& options,
                      "/DTYPED_METHOD_BIND",
                      "/D_HAS_EXCEPTIONS=0",
                      "/DNOMINMAX"};
-        arguments.push_back(options.profile == NativeBuildProfile::debug ? "/Od" : "/O2");
-        if (options.profile != NativeBuildProfile::release)
+        arguments.emplace_back("/O2");
+        if (options.profile == NativeBuildProfile::development) {
             arguments.emplace_back("/DDEBUG_ENABLED");
-        else {
+            arguments.emplace_back("/DGDPP_SCRIPT_DEBUG_ENABLED");
+        } else {
             arguments.emplace_back("/DNDEBUG");
             arguments.emplace_back("/Gy");
             arguments.emplace_back("/Gw");
+            if (options.profile == NativeBuildProfile::debug)
+                arguments.emplace_back("/DGDPP_SCRIPT_DEBUG_ENABLED");
         }
         append_reproducible_path_arguments(arguments, options);
         append_include_arguments(arguments, includes, options.platform);
@@ -737,20 +740,16 @@ NativeBuildCommand compile_command(const NativeBuildOptions& options,
             if (options.web_thread_mode == NativeWebThreadMode::multi_threaded)
                 arguments.emplace_back("-sUSE_PTHREADS=1");
         }
-        if (options.profile == NativeBuildProfile::debug) {
-            arguments.emplace_back("-O0");
-            if (options.platform == NativePlatform::web) {
-                arguments.emplace_back("-g2");
-                arguments.emplace_back("-fdebug-compilation-dir=/gdpp/project");
-            } else {
-                arguments.emplace_back("-g");
-            }
+        arguments.insert(arguments.end(), {"-O3", "-fvisibility=hidden", "-ffunction-sections",
+                                           "-fdata-sections"});
+        if (options.profile == NativeBuildProfile::development) {
+            arguments.emplace_back("-DDEBUG_ENABLED");
+            arguments.emplace_back("-DGDPP_SCRIPT_DEBUG_ENABLED");
         } else {
-            arguments.insert(arguments.end(), {"-O3", "-fvisibility=hidden", "-ffunction-sections",
-                                               "-fdata-sections"});
+            arguments.emplace_back("-DNDEBUG");
+            if (options.profile == NativeBuildProfile::debug)
+                arguments.emplace_back("-DGDPP_SCRIPT_DEBUG_ENABLED");
         }
-        arguments.push_back(options.profile == NativeBuildProfile::release ? "-DNDEBUG"
-                                                                           : "-DDEBUG_ENABLED");
         append_reproducible_path_arguments(arguments, options);
         append_macos_architecture_arguments(arguments, options);
         append_android_target_arguments(arguments, options);
@@ -783,11 +782,14 @@ NativeBuildCommand ios_compile_command(const NativeBuildOptions& options,
         "--sdk",         slice.sdk,       "clang++",         "-target",       slice.target_triple,
         "-std=c++17",    "-fPIC",         "-fno-exceptions", "-DGDEXTENSION", "-DTHREADS_ENABLED",
         "-DIOS_ENABLED", "-DUNIX_ENABLED"};
-    if (options.profile == NativeBuildProfile::debug) {
-        arguments.insert(arguments.end(), {"-O0", "-g", "-DDEBUG_ENABLED"});
+    arguments.insert(arguments.end(), {"-O3", "-fvisibility=hidden", "-ffunction-sections",
+                                       "-fdata-sections"});
+    if (options.profile == NativeBuildProfile::development) {
+        arguments.insert(arguments.end(), {"-DDEBUG_ENABLED", "-DGDPP_SCRIPT_DEBUG_ENABLED"});
     } else {
-        arguments.insert(arguments.end(), {"-O3", "-DNDEBUG", "-fvisibility=hidden",
-                                           "-ffunction-sections", "-fdata-sections"});
+        arguments.emplace_back("-DNDEBUG");
+        if (options.profile == NativeBuildProfile::debug)
+            arguments.emplace_back("-DGDPP_SCRIPT_DEBUG_ENABLED");
     }
     append_reproducible_path_arguments(arguments, options);
     append_include_arguments(arguments, includes, options.platform);
@@ -816,7 +818,7 @@ NativeBuildCommand ios_link_command(const NativeBuildOptions& options, const IOS
         arguments.push_back(path_to_utf8(library));
     arguments.push_back("-Wl,-exported_symbols_list," + path_to_utf8(export_map));
     arguments.emplace_back("-Wl,-install_name,@rpath/libgdpp_project.dylib");
-    if (options.profile == NativeBuildProfile::release) {
+    if (options.profile != NativeBuildProfile::development) {
         arguments.emplace_back("-Wl,-dead_strip");
         arguments.emplace_back("-Wl,-x");
     }
@@ -927,7 +929,7 @@ std::optional<NativeBuildCommand> link_command(const NativeBuildOptions& options
             response_arguments.push_back(library.u8string());
         response_arguments.push_back("/IMPLIB:" + import_library.u8string());
         response_arguments.push_back("/OUT:" + output.u8string());
-        if (options.profile == NativeBuildProfile::release) {
+        if (options.profile != NativeBuildProfile::development) {
             response_arguments.emplace_back("/OPT:REF");
             response_arguments.emplace_back("/OPT:ICF");
             response_arguments.emplace_back("/INCREMENTAL:NO");
@@ -947,11 +949,11 @@ std::optional<NativeBuildCommand> link_command(const NativeBuildOptions& options
         arguments.push_back(path_to_utf8(binding_library));
         for (const auto& library : libraries)
             arguments.push_back(path_to_utf8(library));
-        if (options.profile == NativeBuildProfile::release) {
-            arguments.insert(arguments.end(), {"-O3", "-Wl,--gc-sections", "-s"});
-        } else {
+        if (options.profile == NativeBuildProfile::development) {
             arguments.insert(arguments.end(), {"-O0", "-g2", "-sASSERTIONS=1",
                                                "-fdebug-compilation-dir=/gdpp/project"});
+        } else {
+            arguments.insert(arguments.end(), {"-O3", "-Wl,--gc-sections", "-s"});
         }
         arguments.emplace_back("-o");
         arguments.push_back(path_to_utf8(output));
@@ -977,7 +979,7 @@ std::optional<NativeBuildCommand> link_command(const NativeBuildOptions& options
             // is supplied. Only the GDExtension ABI entry point belongs to the customer binary.
             arguments.push_back("-Wl,-exported_symbols_list," + path_to_utf8(export_map));
         }
-        if (options.profile == NativeBuildProfile::release) {
+        if (options.profile != NativeBuildProfile::development) {
             if (options.platform == NativePlatform::macos) {
                 arguments.emplace_back("-Wl,-dead_strip");
                 // Distribution images do not need the local symbol table. Keep the public
@@ -1261,10 +1263,8 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
     }
     // Godot-cpp uses upstream ABI target names internally. They are deliberately kept out of
     // GDPP's public build-profile API and artifact names.
-    const std::string binding_target = options.profile == NativeBuildProfile::development ? "editor"
-                                       : options.profile == NativeBuildProfile::debug
-                                           ? "template_debug"
-                                           : "template_release";
+    const std::string binding_target =
+        options.profile == NativeBuildProfile::development ? "editor" : "template_release";
     std::filesystem::path binding_library;
     std::filesystem::path ios_device_binding_library;
     std::filesystem::path ios_simulator_binding_library;
