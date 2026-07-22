@@ -1059,6 +1059,16 @@ godot::Dictionary GDPPCompiler::compile_project(
     }
     const auto architecture = target_architecture.is_empty() ? std::string{GDPP_ARCH}
                                                              : native_string(target_architecture);
+    if (!native_architecture_supported(*platform, architecture)) {
+        godot::Dictionary output;
+        output["success"] = false;
+        godot::PackedStringArray diagnostics;
+        diagnostics.push_back("unsupported native architecture '" +
+                              godot::String{architecture.c_str()} + "' for " +
+                              godot::String{platform_value.c_str()});
+        output["diagnostics"] = diagnostics;
+        return output;
+    }
     NativeWebThreadMode web_thread_mode = NativeWebThreadMode::not_applicable;
     const auto variant = native_string(target_variant);
     if (*platform == NativePlatform::web) {
