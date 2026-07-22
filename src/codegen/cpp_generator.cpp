@@ -2947,6 +2947,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 : nullptr;
         const ScriptMemberSymbol* script_method = nullptr;
         const ScriptClassSymbol* script_method_owner = nullptr;
+        const ScriptInnerClassSymbol* inner_method_owner = nullptr;
         if (script_symbols_) {
             const ScriptClassSymbol* owner = nullptr;
             if (callee.kind == ir::ExpressionKind::identifier) {
@@ -2997,6 +2998,60 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                     }
                 }
             }
+            if (current_inner_script_) {
+                const auto method_name =
+                    callee.resolution == ir::ResolutionKind::script_super && !callee.setter.empty()
+                        ? std::string_view{callee.setter}
+                        : std::string_view{callee.value};
+                InnerMethodDeclaration declaration;
+                if (callee.kind == ir::ExpressionKind::identifier) {
+                    declaration = find_inner_method_declaration(
+                        *current_inner_script_, method_name,
+                        callee.resolution != ir::ResolutionKind::script_super);
+                } else if (callee.kind == ir::ExpressionKind::member &&
+                           !callee.operands.empty()) {
+                    const ScriptInnerClassSymbol* receiver_owner = nullptr;
+                    if (callee.resolution == ir::ResolutionKind::script_super) {
+                        receiver_owner = current_inner_script_;
+                    } else {
+                        receiver_owner = script_symbols_->find_inner_native(
+                            callee.operands.at(0)->type.name);
+                        if (!receiver_owner && current_script_) {
+                            receiver_owner = script_symbols_->find_inner(
+                                *current_script_, callee.operands.at(0)->type.name);
+                        }
+                        if (!receiver_owner && callee.operands.at(0)->value == "self")
+                            receiver_owner = current_inner_script_;
+                    }
+                    if (receiver_owner) {
+                        declaration = find_inner_method_declaration(
+                            *receiver_owner, method_name,
+                            callee.resolution != ir::ResolutionKind::script_super);
+                    }
+                }
+                if (declaration.method) {
+                    script_method = declaration.method;
+                    inner_method_owner = declaration.inner_owner;
+                    script_method_owner = declaration.script_owner;
+                }
+            } else if (callee.kind == ir::ExpressionKind::member &&
+                       !callee.operands.empty()) {
+                const auto* receiver_owner =
+                    script_symbols_->find_inner_native(callee.operands.at(0)->type.name);
+                if (!receiver_owner && current_script_) {
+                    receiver_owner = script_symbols_->find_inner(
+                        *current_script_, callee.operands.at(0)->type.name);
+                }
+                if (receiver_owner) {
+                    const auto declaration = find_inner_method_declaration(
+                        *receiver_owner, callee.value, true);
+                    if (declaration.method) {
+                        script_method = declaration.method;
+                        inner_method_owner = declaration.inner_owner;
+                        script_method_owner = declaration.script_owner;
+                    }
+                }
+            }
             if (!script_method && callee.resolution == ir::ResolutionKind::script_constructor) {
                 if (const auto* script_owner =
                         script_symbols_->find_native_class(callee.resolved_owner)) {
@@ -3014,10 +3069,19 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 }
             }
         }
-        const auto script_native_name =
-            script_method && script_method_owner
-                ? script_method_native_name(*script_method_owner, *script_method)
-                : sanitize_identifier(callee.value);
+        const auto script_native_name = [&]() {
+            if (script_method && inner_method_owner) {
+                return callee.resolution == ir::ResolutionKind::script_super
+                           ? inner_method_implementation_name(*inner_method_owner, *script_method)
+                           : inner_method_native_name(*inner_method_owner, *script_method);
+            }
+            if (script_method && script_method_owner) {
+                return callee.resolution == ir::ResolutionKind::script_super
+                           ? script_method_implementation_name(*script_method_owner, *script_method)
+                           : script_method_native_name(*script_method_owner, *script_method);
+            }
+            return sanitize_identifier(callee.value);
+        }();
         const std::vector<Type>* local_parameters = nullptr;
         const ir::Function* local_function = nullptr;
         const ir::Function* constructor_function = nullptr;

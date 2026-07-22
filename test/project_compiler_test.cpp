@@ -1142,6 +1142,41 @@ TEST_CASE("project compiler dynamically dispatches ABI-changing internal overrid
     REQUIRE(source.find("_gdpp_native_override_transform(") != std::string::npos);
 }
 
+TEST_CASE("project compiler preserves internal default vararg and super call ABIs") {
+    const auto root = fixture_root("project-inner-call-abi");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "calls.gd",
+               "extends RefCounted\n"
+               "class Base:\n"
+               "    func combine(value: int = 1) -> int:\n        return value\n"
+               "    func collect(value: int = 2, ...extras: Array) -> int:\n"
+               "        return value + extras.size()\n"
+               "class Derived extends Base:\n"
+               "    func combine(value: int = 1) -> int:\n"
+               "        return super.combine(value) + 1\n"
+               "    func collect(value: int = 2, ...extras: Array) -> int:\n"
+               "        return value + extras.size() + 1\n"
+               "    func local_collect() -> int:\n        return collect()\n"
+               "func dispatch(value: Base) -> int:\n"
+               "    return value.collect(3, 4, 5)\n");
+    const auto options = project_options(root);
+
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.scripts.size(), std::size_t{1});
+    const auto header =
+        read_text(options.output_directory / "generated" / result.scripts.front().header_file_name);
+    const auto source =
+        read_text(options.output_directory / "generated" / result.scripts.front().source_file_name);
+    REQUIRE(header.find("combine(godot::Variant _gdpp_argument_value") != std::string::npos);
+    REQUIRE(header.find("godot::Array extras) override;") != std::string::npos);
+    REQUIRE(source.find("__Base::combine(") != std::string::npos);
+    REQUIRE(source.find("godot::Array _gdpp_call_rest_") != std::string::npos);
+    REQUIRE(source.find("->collect(_gdpp_call_argument_") != std::string::npos);
+}
+
 TEST_CASE("project compiler rejects incompatible script override contracts") {
     const auto root = fixture_root("project-invalid-overrides");
     std::error_code error;
