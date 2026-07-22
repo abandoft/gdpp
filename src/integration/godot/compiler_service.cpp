@@ -777,8 +777,8 @@ std::string windows_text_to_utf8(const std::string& input) {
     if (MultiByteToWideChar(code_page, flags, input.data(), static_cast<int>(input.size()),
                             wide.data(), wide_length) != wide_length)
         return input;
-    const int utf8_length = WideCharToMultiByte(CP_UTF8, 0, wide.data(), wide_length, nullptr, 0,
-                                                nullptr, nullptr);
+    const int utf8_length =
+        WideCharToMultiByte(CP_UTF8, 0, wide.data(), wide_length, nullptr, 0, nullptr, nullptr);
     if (utf8_length == 0)
         return input;
     std::string output(static_cast<std::size_t>(utf8_length), '\0');
@@ -832,8 +832,8 @@ NativeProcessResult execute_hidden_windows_command_line(std::wstring command_lin
     if (CreateProcessW(nullptr, mutable_command_line.data(), nullptr, nullptr, TRUE,
                        CREATE_NO_WINDOW, nullptr, nullptr, &startup_information,
                        &process_information) == FALSE) {
-        result.launch_error = "cannot start the C++ toolchain (Windows error " +
-                              std::to_string(GetLastError()) + ")";
+        result.launch_error =
+            "cannot start the C++ toolchain (Windows error " + std::to_string(GetLastError()) + ")";
         CloseHandle(output_read);
         CloseHandle(output_write);
         return result;
@@ -932,8 +932,8 @@ NativeProcessResult execute_native_process(const std::string& executable,
         return result;
     int output_pipe[2]{};
     if (pipe(output_pipe) != 0) {
-        result.launch_error = "cannot create the toolchain output pipe: " +
-                              std::string{std::strerror(errno)};
+        result.launch_error =
+            "cannot create the toolchain output pipe: " + std::string{std::strerror(errno)};
         return result;
     }
     std::vector<char*> process_arguments;
@@ -960,8 +960,8 @@ NativeProcessResult execute_native_process(const std::string& executable,
     close(output_pipe[1]);
     if (spawn_error != 0) {
         close(output_pipe[0]);
-        result.launch_error = "cannot start the C++ toolchain: " +
-                              std::string{std::strerror(spawn_error)};
+        result.launch_error =
+            "cannot start the C++ toolchain: " + std::string{std::strerror(spawn_error)};
         return result;
     }
     constexpr std::size_t maximum_captured_output = 512U * 1024U;
@@ -970,8 +970,7 @@ NativeProcessResult execute_native_process(const std::string& executable,
     ssize_t bytes_read = 0;
     while ((bytes_read = read(output_pipe[0], buffer, sizeof(buffer))) > 0) {
         const auto remaining = maximum_captured_output - result.output.size();
-        const auto captured =
-            std::min(remaining, static_cast<std::size_t>(bytes_read));
+        const auto captured = std::min(remaining, static_cast<std::size_t>(bytes_read));
         result.output.append(buffer, captured);
         output_truncated = output_truncated || captured != static_cast<std::size_t>(bytes_read);
     }
@@ -982,8 +981,8 @@ NativeProcessResult execute_native_process(const std::string& executable,
         waited = waitpid(process, &status, 0);
     } while (waited < 0 && errno == EINTR);
     if (waited < 0) {
-        result.launch_error = "cannot wait for the C++ toolchain: " +
-                              std::string{std::strerror(errno)};
+        result.launch_error =
+            "cannot wait for the C++ toolchain: " + std::string{std::strerror(errno)};
         return result;
     }
     if (WIFEXITED(status))
@@ -1012,9 +1011,8 @@ std::string native_invocation_label(const NativeInvocation& invocation) {
 }
 
 std::string trimmed_toolchain_output(std::string output) {
-    while (!output.empty() &&
-           (output.back() == '\r' || output.back() == '\n' || output.back() == ' ' ||
-            output.back() == '\t'))
+    while (!output.empty() && (output.back() == '\r' || output.back() == '\n' ||
+                               output.back() == ' ' || output.back() == '\t'))
         output.pop_back();
     return output;
 }
@@ -1130,11 +1128,10 @@ GDPPCompiler::execute_build_commands(const godot::Array& commands,
                 result.exit_code = process_result.exit_code;
                 const auto label = native_invocation_label(invocations[index]);
                 const auto action = invocations[index].stage == 0 ? "compile" : "link";
-                result.diagnostics.push_back(
-                    godot::String::utf8(("C++ " + std::string{action} + " command for '" + label +
-                                         "' failed with exit code " +
-                                         std::to_string(process_result.exit_code))
-                                            .c_str()));
+                result.diagnostics.push_back(godot::String::utf8(
+                    ("C++ " + std::string{action} + " command for '" + label +
+                     "' failed with exit code " + std::to_string(process_result.exit_code))
+                        .c_str()));
                 if (!process_result.launch_error.empty()) {
                     result.diagnostics.push_back(
                         godot::String::utf8(process_result.launch_error.c_str()));
