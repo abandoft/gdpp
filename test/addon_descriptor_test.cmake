@@ -99,6 +99,27 @@ foreach(required_target_service IN ITEMS
             "Compiler target capability service is missing: ${required_target_service}")
     endif()
 endforeach()
+foreach(required_windows_process_contract IN ITEMS
+        "CreateProcessW("
+        "STARTF_USESHOWWINDOW"
+        "SW_HIDE"
+        "CREATE_NO_WINDOW"
+        "return execute_hidden_windows_process(command_arguments);"
+        "return execute_hidden_windows_process(wide_arguments);"
+        "options.generate_cmake = false;")
+    string(FIND "${compiler_service}" "${required_windows_process_contract}"
+        windows_process_offset)
+    if(windows_process_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Background Windows export process contract is missing: "
+            "${required_windows_process_contract}")
+    endif()
+endforeach()
+string(FIND "${compiler_service}" "_wspawnvp(" visible_windows_spawn_offset)
+if(NOT visible_windows_spawn_offset EQUAL -1)
+    message(FATAL_ERROR
+        "Windows export tools must not be launched through a visible console spawn")
+endif()
 foreach(required_scene_compatibility IN ITEMS
         "current.has_method(&\"get_base_scene_state\")"
         "current.call(&\"get_base_scene_state\") as SceneState")
