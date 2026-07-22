@@ -44,6 +44,15 @@ add_test(
 )
 
 add_test(
+    NAME gdpp.release.complete_packaging
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/complete_release_packaging_test.py"
+        "${PROJECT_SOURCE_DIR}"
+        "${PROJECT_BINARY_DIR}/test-complete-release-packaging"
+)
+
+add_test(
     NAME gdpp.web.browser_smoke
     COMMAND
         "${Python3_EXECUTABLE}"
