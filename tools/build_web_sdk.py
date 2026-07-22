@@ -12,7 +12,7 @@ import shutil
 import subprocess
 
 
-PROFILES = {"debug": "template_debug", "release": "template_release"}
+GODOT_TARGET = "template_release"
 VARIANTS = {"threads": True, "nothreads": False}
 
 
@@ -140,44 +140,40 @@ def main() -> int:
     (stage / "godot-cpp/gen").mkdir(parents=True)
     (stage / "lib").mkdir(parents=True)
 
-    generated_include: Path | None = None
-    for profile, godot_target in PROFILES.items():
-        directory = build_root / args.godot_version / variant / profile
-        run(
-            [
-                args.emcmake,
-                "cmake",
-                "-S",
-                str(godot_cpp),
-                "-B",
-                str(directory),
-                "-G",
-                "Ninja",
-                "-DCMAKE_BUILD_TYPE=Release",
-                f"-DGODOTCPP_API_VERSION={args.godot_version}",
-                f"-DGODOTCPP_TARGET={godot_target}",
-                f"-DGODOTCPP_THREADS={'ON' if VARIANTS[variant] else 'OFF'}",
-                "-DGODOTCPP_ENABLE_TESTING=OFF",
-                "-DGODOTCPP_SYSTEM_HEADERS=ON",
-                f"-DCMAKE_CXX_FLAGS=-ffile-prefix-map={source_root}=/gdpp",
-            ]
-        )
-        run(["cmake", "--build", str(directory), "--target", "godot-cpp", "--parallel"])
-        suffix = "" if VARIANTS[variant] else ".nothreads"
-        expected = directory / "bin" / (
-            f"libgodot-cpp.web.{godot_target}.wasm32{suffix}.a"
-        )
-        if not expected.is_file():
-            candidates = sorted((directory / "bin").glob(f"*{godot_target}*wasm32*.a"))
-            if len(candidates) != 1:
-                raise SystemExit(
-                    f"expected one Web {profile}/{variant} godot-cpp library, found {candidates}"
-                )
-            expected = candidates[0]
-        shutil.copy2(expected, stage / "lib" / expected.name)
-        generated_include = directory / "gen/include"
+    directory = build_root / args.godot_version / variant / "release"
+    run(
+        [
+            args.emcmake,
+            "cmake",
+            "-S",
+            str(godot_cpp),
+            "-B",
+            str(directory),
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            f"-DGODOTCPP_API_VERSION={args.godot_version}",
+            f"-DGODOTCPP_TARGET={GODOT_TARGET}",
+            f"-DGODOTCPP_THREADS={'ON' if VARIANTS[variant] else 'OFF'}",
+            "-DGODOTCPP_ENABLE_TESTING=OFF",
+            "-DGODOTCPP_SYSTEM_HEADERS=ON",
+            f"-DCMAKE_CXX_FLAGS=-ffile-prefix-map={source_root}=/gdpp",
+        ]
+    )
+    run(["cmake", "--build", str(directory), "--target", "godot-cpp", "--parallel"])
+    suffix = "" if VARIANTS[variant] else ".nothreads"
+    expected = directory / "bin" / (
+        f"libgodot-cpp.web.{GODOT_TARGET}.wasm32{suffix}.a"
+    )
+    if not expected.is_file():
+        candidates = sorted((directory / "bin").glob(f"*{GODOT_TARGET}*wasm32*.a"))
+        if len(candidates) != 1:
+            raise SystemExit(
+                f"expected one Web {variant} distribution godot-cpp library, found {candidates}"
+            )
+        expected = candidates[0]
+    shutil.copy2(expected, stage / "lib" / expected.name)
 
-    assert generated_include is not None
     shutil.copytree(godot_cpp / "include", stage / "godot-cpp/include", dirs_exist_ok=True)
     run(
         [
@@ -188,7 +184,7 @@ def main() -> int:
             str(class_db_patch),
         ]
     )
-    shutil.copytree(generated_include, stage / "godot-cpp/gen/include", dirs_exist_ok=True)
+    shutil.copytree(directory / "gen/include", stage / "godot-cpp/gen/include", dirs_exist_ok=True)
     shutil.copy2(godot_cpp / "LICENSE.md", stage / "godot-cpp/LICENSE.md")
     shutil.copy2(runtime_header, stage / "include/gdpp/runtime/variant_ops.hpp")
     shutil.copy2(runtime_source, stage / "src/runtime/variant_ops.cpp")

@@ -48,7 +48,7 @@ jobs:
           -DGDPP_WEB_SDK_VERSIONS=${{ matrix.godot }}
           -DGDPP_WEB_VARIANTS=${{ matrix.variant }}
           -DGDPP_WEB_EMCMAKE="$(command -v emcmake)"
-      - name: Build debug and Release target SDK
+      - name: Build Release target SDK
         run: cmake --build --preset dev --target gdpp_web_sdk --parallel
       - name: Validate SDK and thread-mode isolation
         shell: bash
@@ -61,10 +61,10 @@ jobs:
           grep -q '^web_threads ${{ matrix.variant }}$' "$sdk/sdk.manifest"
           grep -q '^compiler Emscripten$' "$sdk/sdk.manifest"
           grep -q '^source_paths mapped$' "$sdk/sdk.manifest"
-          test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_debug*.a' | wc -l)" -eq 1
+          test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_debug*.a' | wc -l)" -eq 0
           test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_release*.a' | wc -l)" -eq 1
           if [[ '${{ matrix.variant }}' == nothreads ]]; then
-            test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*.nothreads.a' | wc -l)" -eq 2
+            test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*.nothreads.a' | wc -l)" -eq 1
           else
             test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*.nothreads.a' | wc -l)" -eq 0
           fi
