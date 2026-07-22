@@ -82,6 +82,19 @@ foreach(required_runtime_export IN ITEMS
             "Single-descriptor export transaction is missing: ${required_runtime_export}")
     endif()
 endforeach()
+foreach(required_target_matrix IN ITEMS
+        "func _target_is_supported(platform: String, architecture: String) -> bool:"
+        "return architecture in [\"arm64\", \"x86_64\", \"universal\"]"
+        "return architecture == \"x86_64\""
+        "return architecture == \"arm64\""
+        "return architecture == \"wasm32\""
+        "if not _target_is_supported(_target_platform, _target_architecture):")
+    string(FIND "${export_plugin}" "${required_target_matrix}" target_matrix_offset)
+    if(target_matrix_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Export target capability preflight is missing: ${required_target_matrix}")
+    endif()
+endforeach()
 foreach(required_scene_compatibility IN ITEMS
         "current.has_method(&\"get_base_scene_state\")"
         "current.call(&\"get_base_scene_state\") as SceneState")
