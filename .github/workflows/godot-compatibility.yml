@@ -150,6 +150,7 @@ jobs:
           set -euo pipefail
           mkdir -p \
             example/addons/gdpp/build/export/aot \
+            example/addons/gdpp/build/export/debug \
             example/addons/gdpp/build/export/gds
           "$GODOT" --headless --editor --path example --quit-after 120 \
             2>&1 | tee example/addons/gdpp/build/export/gdpp-warmup.log
@@ -201,6 +202,42 @@ jobs:
             2>&1 | tee "$output/gdpp-pck-audit.log"
           grep -q '^PCK_AUDIT_VIOLATIONS=0$' "$output/gdpp-pck-audit.log"
           grep -q '^PCK_AUDIT_PROJECT_LIBRARIES=1$' "$output/gdpp-pck-audit.log"
+      - name: Export and run optimized Debug project with script assertions
+        shell: bash
+        env:
+          GODOT: ${{ steps.godot.outputs.executable }}
+          GODOT_VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          output=example/addons/gdpp/build/export
+          sdk_version="$(printf '%s' "$GODOT_VERSION" | cut -d. -f1,2)"
+          test "$(find "example/addons/gdpp/sdk/$sdk_version/lib" -maxdepth 1 \
+            -type f -name '*template_debug*' | wc -l)" -eq 0
+          test "$(find "example/addons/gdpp/sdk/$sdk_version/lib" -maxdepth 1 \
+            -type f -name '*template_release*' | wc -l)" -eq 1
+          "$GODOT" --headless --editor --path example \
+            --export-debug 'Linux x86_64' \
+            "$GITHUB_WORKSPACE/$output/debug/gdpp-runtime-debug.x86_64" \
+            2>&1 | tee "$output/gdpp-debug-export.log"
+          project=example/addons/gdpp/binary/libgdpp_project.debug.linux.x86_64.so
+          test -x "$output/debug/gdpp-runtime-debug.x86_64"
+          test -f "$project"
+          test "$(nm -D --defined-only "$project" | awk 'NF {print $NF}' | wc -l)" -eq 1
+          nm -D --defined-only "$project" | awk 'NF {print $NF}' | \
+            grep -qx gdpp_project_library_init
+          if readelf -S "$project" | grep '\.symtab' >/dev/null; then
+            echo 'Linux Debug project library was not Release-stripped.'
+            exit 1
+          fi
+          timeout 15s "$output/debug/gdpp-runtime-debug.x86_64" --headless --quit-after 2 \
+            2>&1 | tee "$output/gdpp-debug-runtime.log"
+          grep -q '^GDPP_EXPORTED_PROPERTIES_OK$' "$output/gdpp-debug-runtime.log"
+          grep -q 'GDPP_AOT_SUMMARY scenes=' "$output/gdpp-debug-export.log"
+          if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|WARNING:|Unable to open' \
+              "$output/gdpp-debug-export.log" "$output/gdpp-debug-runtime.log"; then
+            echo 'Optimized Debug export or runtime emitted a forbidden diagnostic.'
+            exit 1
+          fi
       - name: Compare GDScript and AOT behavior/performance
         shell: bash
         env:
