@@ -1708,6 +1708,12 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
         return "godot::Variant(" + value + ")";
     if (target == source)
         return value;
+    // Project symbol refinement can express the same nested enum through its source-qualified
+    // name on a declaration and its collision-safe native-qualified name in typed container
+    // storage. Semantic analysis has already rejected unrelated enum assignments; the native
+    // representation of every accepted enum identity is int64_t.
+    if (target.kind == TypeKind::enumeration && source.kind == TypeKind::enumeration)
+        return value;
     if (source.kind == TypeKind::nil && target.kind == TypeKind::object) {
         const auto target_cpp = cpp_type(target);
         return !target_cpp.empty() && target_cpp.back() == '*'

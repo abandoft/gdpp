@@ -1177,6 +1177,31 @@ TEST_CASE("project compiler preserves internal default vararg and super call ABI
     REQUIRE(source.find("->collect(_gdpp_call_argument_") != std::string::npos);
 }
 
+TEST_CASE("project compiler normalizes nested enum identities across typed containers") {
+    const auto root = fixture_root("project-inner-enum-container-identity");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "messages.gd",
+               "extends RefCounted\n"
+               "class Message:\n"
+               "    enum Status { UNKNOWN, READY }\n"
+               "class Collection:\n"
+               "    var values: Array[Message.Status] = []\n"
+               "    func first() -> Message.Status:\n"
+               "        if values.is_empty():\n            return Message.Status.UNKNOWN\n"
+               "        return values[0]\n");
+    const auto options = project_options(root);
+
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.scripts.size(), std::size_t{1});
+    const auto source =
+        read_text(options.output_directory / "generated" / result.scripts.front().source_file_name);
+    REQUIRE(source.find("int64_t ") != std::string::npos);
+    REQUIRE(source.find("::first()") != std::string::npos);
+}
+
 TEST_CASE("project compiler rejects incompatible script override contracts") {
     const auto root = fixture_root("project-invalid-overrides");
     std::error_code error;
