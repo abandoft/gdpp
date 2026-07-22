@@ -43,6 +43,8 @@ if(invalid_compiler_feature)
 endif()
 
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/export_plugin.gd" export_plugin)
+file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/build_progress.gd" build_progress)
+file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/plugin.gd" editor_plugin)
 file(READ "${GDPP_TEST_SOURCE_DIR}/src/integration/godot/compiler_service.cpp" compiler_service)
 string(FIND "${compiler_service}"
     "output[\"attached_script_bases\"] = attached_script_bases;"
@@ -120,6 +122,42 @@ if(NOT visible_windows_spawn_offset EQUAL -1)
     message(FATAL_ERROR
         "Windows export tools must not be launched through a visible console spawn")
 endif()
+foreach(required_build_progress_contract IN ITEMS
+        "extends CanvasLayer"
+        "func begin() -> void:"
+        "func update(profile: String, phase: String, completed: int, total: int) -> void:"
+        "const FILL_COLUMN_COUNT := 424"
+        "track.position = Vector2(28.0, 101.0) * editor_scale"
+        "column.size = Vector2(column_width + 0.5, track.size.y)"
+        "_fill_columns[index].modulate = Color(1.0, 1.0, 1.0, alpha)"
+        "_overall_progress(known_phase, phase_progress)"
+        "RenderingServer.force_draw()")
+    string(FIND "${build_progress}" "${required_build_progress_contract}"
+        build_progress_offset)
+    if(build_progress_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Native build progress overlay is missing: ${required_build_progress_contract}")
+    endif()
+endforeach()
+foreach(required_progress_integration IN ITEMS
+        "_export_plugin.configure(_compiler, _build_progress)"
+        "_build_progress.begin()"
+        "_build_progress.finish()"
+        "Callable(self, \"_on_native_build_progress\")"
+        "godot::D_METHOD(\"compile_project\", \"project_root\""
+        "options.progress_callback ="
+        "ProjectCompilePhase::translate"
+        "godot::D_METHOD(\"execute_project_build\", \"build_plan\", \"progress_callback\")"
+        "report_build_progress(progress_callback, phase")
+    string(FIND
+        "${editor_plugin}\n${export_plugin}\n${compiler_service}"
+        "${required_progress_integration}"
+        progress_integration_offset)
+    if(progress_integration_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Native build progress integration is missing: ${required_progress_integration}")
+    endif()
+endforeach()
 foreach(required_scene_compatibility IN ITEMS
         "current.has_method(&\"get_base_scene_state\")"
         "current.call(&\"get_base_scene_state\") as SceneState")
@@ -180,7 +218,6 @@ foreach(required_attached_contract IN ITEMS
             "Third-party GDExtension export attachment is missing: ${required_attached_contract}")
     endif()
 endforeach()
-file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/plugin.gd" editor_plugin)
 string(FIND "${editor_plugin}"
     "if not DirAccess.dir_exists_absolute(ndk_parent):" safe_ndk_probe)
 if(safe_ndk_probe EQUAL -1)
