@@ -101,10 +101,18 @@ func _define_setting(name: String, default_value: Variant) -> void:
 
 func _default_sdk_root() -> String:
     for version: String in _compiler.get_supported_godot_versions():
-        var packaged_runtime := (
-            "res://addons/gdpp/sdk/%s/src/runtime/variant_ops.cpp" % version
+        var version_root := "res://addons/gdpp/sdk/%s" % version
+        var single_host_manifest := version_root.path_join("sdk.manifest")
+        var complete_host_manifest := version_root.path_join(
+            "%s/%s/sdk.manifest" % [
+                _compiler.get_host_platform(),
+                _compiler.get_host_architecture(),
+            ]
         )
-        if FileAccess.file_exists(packaged_runtime):
+        if (
+            FileAccess.file_exists(single_host_manifest)
+            or FileAccess.file_exists(complete_host_manifest)
+        ):
             return ProjectSettings.globalize_path("res://addons/gdpp/sdk")
     return _compiler.get_default_sdk_root()
 

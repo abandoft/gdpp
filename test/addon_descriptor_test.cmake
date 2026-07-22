@@ -223,6 +223,20 @@ if(safe_ndk_probe EQUAL -1)
     message(FATAL_ERROR
         "Optional Android NDK discovery must not query a missing directory")
 endif()
+foreach(required_complete_package_sdk_probe IN ITEMS
+        "var single_host_manifest := version_root.path_join(\"sdk.manifest\")"
+        "var complete_host_manifest := version_root.path_join("
+        "_compiler.get_host_platform()"
+        "_compiler.get_host_architecture()"
+        "FileAccess.file_exists(complete_host_manifest)")
+    string(FIND "${editor_plugin}" "${required_complete_package_sdk_probe}"
+        complete_package_sdk_probe_offset)
+    if(complete_package_sdk_probe_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Complete package host SDK discovery is missing: "
+            "${required_complete_package_sdk_probe}")
+    endif()
+endforeach()
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/export_presets.cfg" export_presets)
 foreach(forbidden_export_minimum IN ITEMS
         "gradle_build/min_sdk="
