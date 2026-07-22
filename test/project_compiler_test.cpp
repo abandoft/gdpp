@@ -6,12 +6,14 @@
 #include "gdpp/version.hpp"
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -57,6 +59,55 @@ TEST_CASE("SHA-256 matches published empty and abc vectors") {
                                              "27ae41e4649b934ca495991b7852b855"});
     REQUIRE_EQ(gdpp::sha256("abc"), std::string{"ba7816bf8f01cfea414140de5dae2223"
                                                 "b00361a396177a9cb410ff61f20015ad"});
+}
+
+TEST_CASE("project compiler reports ordered per-file frontend progress") {
+    const auto root = fixture_root("project-progress");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "first.gd", "extends Node\nclass_name ProgressFirst\n");
+    write_text(root / "second.gd", "extends Node\nclass_name ProgressSecond\n");
+
+    struct ProgressSample {
+        gdpp::ProjectCompilePhase phase;
+        std::size_t completed;
+        std::size_t total;
+    };
+    std::vector<ProgressSample> samples;
+    auto options = project_options(root);
+    options.progress_callback = [&](const gdpp::ProjectCompilePhase phase,
+                                    const std::size_t completed, const std::size_t total) {
+        samples.push_back({phase, completed, total});
+    };
+
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    const std::array expected_phases{
+        gdpp::ProjectCompilePhase::scan,     gdpp::ProjectCompilePhase::parse,
+        gdpp::ProjectCompilePhase::analyze,  gdpp::ProjectCompilePhase::translate,
+        gdpp::ProjectCompilePhase::generate,
+    };
+    std::size_t sample_index = 0;
+    for (const auto phase : expected_phases) {
+        REQUIRE(sample_index < samples.size());
+        REQUIRE(samples[sample_index].phase == phase);
+        REQUIRE_EQ(samples[sample_index].completed, std::size_t{0});
+        const auto expected_total =
+            phase == gdpp::ProjectCompilePhase::scan || phase == gdpp::ProjectCompilePhase::generate
+                ? std::size_t{1}
+                : std::size_t{2};
+        REQUIRE_EQ(samples[sample_index].total, expected_total);
+        std::size_t previous = 0;
+        while (sample_index < samples.size() && samples[sample_index].phase == phase) {
+            REQUIRE(samples[sample_index].completed >= previous);
+            REQUIRE(samples[sample_index].completed <= samples[sample_index].total);
+            previous = samples[sample_index].completed;
+            ++sample_index;
+        }
+        REQUIRE_EQ(previous, expected_total);
+    }
+    REQUIRE_EQ(sample_index, samples.size());
 }
 
 TEST_CASE("project compiler incrementally generates a unified native extension") {
