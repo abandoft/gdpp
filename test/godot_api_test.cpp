@@ -105,7 +105,13 @@ TEST_CASE("Godot API lookup resolves properties and builtin value methods") {
     REQUIRE_EQ(std::string_view{position->setter}, std::string_view{"set_position"});
     REQUIRE(length != nullptr);
     REQUIRE_EQ(gdpp::type_from_godot_api(length->return_type).kind, gdpp::TypeKind::floating);
-    REQUIRE_EQ(gdpp::type_from_godot_api("typedarray::Node").kind, gdpp::TypeKind::array);
+    const auto typed_array = gdpp::type_from_godot_api("typedarray::Node");
+    const auto typed_dictionary =
+        gdpp::type_from_godot_api("typeddictionary::String;Variant");
+    REQUIRE_EQ(typed_array.kind, gdpp::TypeKind::array);
+    REQUIRE_EQ(typed_array.name, std::string{"Array[Node]"});
+    REQUIRE_EQ(typed_dictionary.kind, gdpp::TypeKind::dictionary);
+    REQUIRE_EQ(typed_dictionary.name, std::string{"Dictionary[String, Variant]"});
     REQUIRE_EQ(gdpp::type_from_godot_api("enum::Error").kind, gdpp::TypeKind::integer);
 }
 

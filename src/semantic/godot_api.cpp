@@ -511,8 +511,15 @@ Type type_from_godot_api(std::string_view raw_type) {
         type.remove_prefix(std::string_view{"typedarray::"}.size());
         return {TypeKind::array, type.empty() ? "Array" : "Array[" + std::string{type} + "]"};
     }
-    if (type.rfind("typeddictionary::", 0) == 0)
-        return {TypeKind::dictionary, "Dictionary"};
+    if (type.rfind("typeddictionary::", 0) == 0) {
+        type.remove_prefix(std::string_view{"typeddictionary::"}.size());
+        const auto separator = type.find(';');
+        if (separator == std::string_view::npos || separator == 0 || separator + 1 >= type.size())
+            return {TypeKind::dictionary, "Dictionary"};
+        return {TypeKind::dictionary,
+                "Dictionary[" + std::string{type.substr(0, separator)} + ", " +
+                    std::string{type.substr(separator + 1)} + "]"};
+    }
     if (type.back() == '*')
         return {TypeKind::variant, "Variant"};
     return type_from_annotation(std::string{type});
