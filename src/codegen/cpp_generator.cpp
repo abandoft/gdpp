@@ -1429,8 +1429,8 @@ bool CodeGenerator::same_native_method_abi(const ScriptMemberSymbol& derived,
     };
     const auto native_parameter_type = [&](const ScriptMemberSymbol& method,
                                            const std::size_t index) {
-        const bool uses_default_slot = index < method.default_parameters.size() &&
-                                       method.default_parameters[index];
+        const bool uses_default_slot =
+            index < method.default_parameters.size() && method.default_parameters[index];
         return uses_default_slot ? std::string{"godot::Variant"}
                                  : cpp_type(method.parameters[index]);
     };
@@ -1475,9 +1475,10 @@ bool CodeGenerator::same_native_function_abi(const ir::Function& derived,
     return true;
 }
 
-const ir::Function* CodeGenerator::find_inherited_inner_function(
-    const std::string_view base, const std::string_view method,
-    std::string* declaration_owner) const noexcept {
+const ir::Function*
+CodeGenerator::find_inherited_inner_function(const std::string_view base,
+                                             const std::string_view method,
+                                             std::string* declaration_owner) const noexcept {
     std::string current{base};
     std::unordered_set<std::string> visited;
     while (!current.empty() && visited.insert(current).second) {
@@ -1531,8 +1532,9 @@ std::string CodeGenerator::script_method_native_name(const ScriptClassSymbol& ow
     return same_native_abi ? source_name : "_gdpp_native_override_" + source_name;
 }
 
-std::string CodeGenerator::script_method_implementation_name(
-    const ScriptClassSymbol& owner, const ScriptMemberSymbol& method) const {
+std::string
+CodeGenerator::script_method_implementation_name(const ScriptClassSymbol& owner,
+                                                 const ScriptMemberSymbol& method) const {
     const auto source_name = sanitize_identifier(method.name);
     const auto script_native_name = script_method_native_name(owner, method);
     const auto* engine_method =
@@ -1555,9 +1557,10 @@ CodeGenerator::inner_base_of(const ScriptInnerClassSymbol& owner) const noexcept
                         : nullptr;
 }
 
-CodeGenerator::InnerMethodDeclaration CodeGenerator::find_inner_method_declaration(
-    const ScriptInnerClassSymbol& owner, const std::string_view method,
-    const bool include_owner) const noexcept {
+CodeGenerator::InnerMethodDeclaration
+CodeGenerator::find_inner_method_declaration(const ScriptInnerClassSymbol& owner,
+                                             const std::string_view method,
+                                             const bool include_owner) const noexcept {
     const ScriptInnerClassSymbol* current = include_owner ? &owner : inner_base_of(owner);
     std::unordered_set<const ScriptInnerClassSymbol*> visited;
     while (current && visited.insert(current).second) {
@@ -1574,12 +1577,12 @@ CodeGenerator::InnerMethodDeclaration CodeGenerator::find_inner_method_declarati
         if (script_symbols_) {
             const auto* script_base = script_symbols_->base_of(*current);
             while (script_base) {
-                const auto script_declared = std::find_if(
-                    script_base->members.begin(), script_base->members.end(),
-                    [&](const auto& candidate) {
-                        return candidate.kind == ScriptMemberKind::function &&
-                               candidate.name == method;
-                    });
+                const auto script_declared =
+                    std::find_if(script_base->members.begin(), script_base->members.end(),
+                                 [&](const auto& candidate) {
+                                     return candidate.kind == ScriptMemberKind::function &&
+                                            candidate.name == method;
+                                 });
                 if (script_declared != script_base->members.end())
                     return {&*script_declared, nullptr, script_base};
                 script_base = script_symbols_->base_of(*script_base);
@@ -1593,8 +1596,7 @@ CodeGenerator::InnerMethodDeclaration CodeGenerator::find_inner_method_declarati
             const auto declared = std::find_if(
                 script_base->members.begin(), script_base->members.end(),
                 [&](const auto& candidate) {
-                    return candidate.kind == ScriptMemberKind::function &&
-                           candidate.name == method;
+                    return candidate.kind == ScriptMemberKind::function && candidate.name == method;
                 });
             if (declared != script_base->members.end())
                 return {&*declared, nullptr, script_base};
@@ -1612,19 +1614,18 @@ std::string CodeGenerator::inner_method_native_name(const ScriptInnerClassSymbol
     const auto inherited = find_inner_method_declaration(owner, method.name, false);
     if (!inherited.method || inherited.method->is_static)
         return source_name;
-    const auto base_godot_type = inherited.inner_owner
-                                     ? std::string_view{inherited.inner_owner->godot_base_type}
-                                 : inherited.script_owner
-                                     ? std::string_view{inherited.script_owner->godot_base_type}
-                                     : std::string_view{owner.godot_base_type};
-    return same_native_method_abi(method, owner.godot_base_type, *inherited.method,
-                                  base_godot_type)
+    const auto base_godot_type =
+        inherited.inner_owner    ? std::string_view{inherited.inner_owner->godot_base_type}
+        : inherited.script_owner ? std::string_view{inherited.script_owner->godot_base_type}
+                                 : std::string_view{owner.godot_base_type};
+    return same_native_method_abi(method, owner.godot_base_type, *inherited.method, base_godot_type)
                ? source_name
                : "_gdpp_native_override_" + source_name;
 }
 
-std::string CodeGenerator::inner_method_implementation_name(
-    const ScriptInnerClassSymbol& owner, const ScriptMemberSymbol& method) const {
+std::string
+CodeGenerator::inner_method_implementation_name(const ScriptInnerClassSymbol& owner,
+                                                const ScriptMemberSymbol& method) const {
     const auto source_name = sanitize_identifier(method.name);
     const auto script_native_name = inner_method_native_name(owner, method);
     const auto* engine_method =
@@ -1643,11 +1644,10 @@ bool CodeGenerator::inner_overrides_method(const ScriptInnerClassSymbol& owner,
     const auto inherited = find_inner_method_declaration(owner, method.name, false);
     if (!inherited.method || inherited.method->is_static)
         return false;
-    const auto base_godot_type = inherited.inner_owner
-                                     ? std::string_view{inherited.inner_owner->godot_base_type}
-                                 : inherited.script_owner
-                                     ? std::string_view{inherited.script_owner->godot_base_type}
-                                     : std::string_view{owner.godot_base_type};
+    const auto base_godot_type =
+        inherited.inner_owner    ? std::string_view{inherited.inner_owner->godot_base_type}
+        : inherited.script_owner ? std::string_view{inherited.script_owner->godot_base_type}
+                                 : std::string_view{owner.godot_base_type};
     return same_native_method_abi(method, owner.godot_base_type, *inherited.method,
                                   base_godot_type);
 }
@@ -2580,12 +2580,12 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             return expression.resolved_owner;
         if (current_inner_script_ &&
             local_functions_.find(expression.value) != local_functions_.end()) {
-            const auto member = std::find_if(
-                current_inner_script_->members.begin(), current_inner_script_->members.end(),
-                [&](const auto& candidate) {
-                    return candidate.kind == ScriptMemberKind::function &&
-                           candidate.name == expression.value;
-                });
+            const auto member =
+                std::find_if(current_inner_script_->members.begin(),
+                             current_inner_script_->members.end(), [&](const auto& candidate) {
+                                 return candidate.kind == ScriptMemberKind::function &&
+                                        candidate.name == expression.value;
+                             });
             if (member != current_inner_script_->members.end())
                 return inner_method_implementation_name(*current_inner_script_, *member);
         }
@@ -3014,14 +3014,13 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                     declaration = find_inner_method_declaration(
                         *current_inner_script_, method_name,
                         callee.resolution != ir::ResolutionKind::script_super);
-                } else if (callee.kind == ir::ExpressionKind::member &&
-                           !callee.operands.empty()) {
+                } else if (callee.kind == ir::ExpressionKind::member && !callee.operands.empty()) {
                     const ScriptInnerClassSymbol* receiver_owner = nullptr;
                     if (callee.resolution == ir::ResolutionKind::script_super) {
                         receiver_owner = current_inner_script_;
                     } else {
-                        receiver_owner = script_symbols_->find_inner_native(
-                            callee.operands.at(0)->type.name);
+                        receiver_owner =
+                            script_symbols_->find_inner_native(callee.operands.at(0)->type.name);
                         if (!receiver_owner && current_script_) {
                             receiver_owner = script_symbols_->find_inner(
                                 *current_script_, callee.operands.at(0)->type.name);
@@ -3040,17 +3039,16 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                     inner_method_owner = declaration.inner_owner;
                     script_method_owner = declaration.script_owner;
                 }
-            } else if (callee.kind == ir::ExpressionKind::member &&
-                       !callee.operands.empty()) {
+            } else if (callee.kind == ir::ExpressionKind::member && !callee.operands.empty()) {
                 const auto* receiver_owner =
                     script_symbols_->find_inner_native(callee.operands.at(0)->type.name);
                 if (!receiver_owner && current_script_) {
-                    receiver_owner = script_symbols_->find_inner(
-                        *current_script_, callee.operands.at(0)->type.name);
+                    receiver_owner = script_symbols_->find_inner(*current_script_,
+                                                                 callee.operands.at(0)->type.name);
                 }
                 if (receiver_owner) {
-                    const auto declaration = find_inner_method_declaration(
-                        *receiver_owner, callee.value, true);
+                    const auto declaration =
+                        find_inner_method_declaration(*receiver_owner, callee.value, true);
                     if (declaration.method) {
                         script_method = declaration.method;
                         inner_method_owner = declaration.inner_owner;
@@ -5220,12 +5218,12 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
     const auto function_symbol = [&](const ir::Function& function) {
         if (!current_inner_script_)
             return static_cast<const ScriptMemberSymbol*>(nullptr);
-        const auto member = std::find_if(
-            current_inner_script_->members.begin(), current_inner_script_->members.end(),
-            [&](const auto& candidate) {
-                return candidate.kind == ScriptMemberKind::function &&
-                       candidate.name == function.name;
-            });
+        const auto member =
+            std::find_if(current_inner_script_->members.begin(),
+                         current_inner_script_->members.end(), [&](const auto& candidate) {
+                             return candidate.kind == ScriptMemberKind::function &&
+                                    candidate.name == function.name;
+                         });
         return member == current_inner_script_->members.end() ? nullptr : &*member;
     };
     const auto function_native_name = [&](const ir::Function& function) {
@@ -5239,9 +5237,8 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
         const bool same_abi =
             inherited && same_native_function_abi(function, godot_base, *inherited,
                                                   inner_godot_base_type(base_owner));
-        const auto script_native = inherited && !same_abi
-                                       ? "_gdpp_native_override_" + source
-                                       : source;
+        const auto script_native =
+            inherited && !same_abi ? "_gdpp_native_override_" + source : source;
         if (!engine_virtual_for(function))
             return script_native;
         return script_native == source ? "_gdpp_virtual_impl_" + source
@@ -5392,9 +5389,7 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
             header << " override;\n";
         }
         header << "    " << (function.is_static ? "static " : "virtual ")
-               << function_return_type(function) << ' '
-               << function_native_name(function)
-               << '(';
+               << function_return_type(function) << ' ' << function_native_name(function) << '(';
         for (std::size_t index = 0; index < function.parameters.size(); ++index) {
             if (index != 0)
                 header << ", ";
@@ -5476,12 +5471,12 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
     const auto function_symbol = [&](const ir::Function& function) {
         if (!current_inner_script_)
             return static_cast<const ScriptMemberSymbol*>(nullptr);
-        const auto member = std::find_if(
-            current_inner_script_->members.begin(), current_inner_script_->members.end(),
-            [&](const auto& candidate) {
-                return candidate.kind == ScriptMemberKind::function &&
-                       candidate.name == function.name;
-            });
+        const auto member =
+            std::find_if(current_inner_script_->members.begin(),
+                         current_inner_script_->members.end(), [&](const auto& candidate) {
+                             return candidate.kind == ScriptMemberKind::function &&
+                                    candidate.name == function.name;
+                         });
         return member == current_inner_script_->members.end() ? nullptr : &*member;
     };
     const auto function_native_name = [&](const ir::Function& function) {
@@ -5495,9 +5490,8 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         const bool same_abi =
             inherited && same_native_function_abi(function, godot_base, *inherited,
                                                   inner_godot_base_type(base_owner));
-        const auto script_native = inherited && !same_abi
-                                       ? "_gdpp_native_override_" + source
-                                       : source;
+        const auto script_native =
+            inherited && !same_abi ? "_gdpp_native_override_" + source : source;
         if (!engine_virtual_for(function))
             return script_native;
         return script_native == source ? "_gdpp_virtual_impl_" + source
@@ -6009,9 +6003,8 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
             function.name == "_static_init" || engine_virtual_for(function)) {
             continue;
         }
-        source << emit_vararg_callback_definition(function, native_name,
-                                                  function_native_name(function),
-                                                  function_return_type(function));
+        source << emit_vararg_callback_definition(
+            function, native_name, function_native_name(function), function_return_type(function));
     }
     local_function_parameters_ = previous_function_parameters;
     local_functions_ = previous_functions;
@@ -6280,11 +6273,11 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
             if (!generated_base_declares_method)
                 return false;
         }
-        const auto declared = std::find_if(
-            current_script_->members.begin(), current_script_->members.end(),
-            [&](const auto& member) {
-                return member.kind == ScriptMemberKind::function && member.name == function.name;
-            });
+        const auto declared = std::find_if(current_script_->members.begin(),
+                                           current_script_->members.end(), [&](const auto& member) {
+                                               return member.kind == ScriptMemberKind::function &&
+                                                      member.name == function.name;
+                                           });
         if (declared == current_script_->members.end() || declared->is_static)
             return false;
         const auto inherited = script_symbols_->inherited_members(*current_script_);
@@ -6293,9 +6286,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                 return member->kind == ScriptMemberKind::function && !member->is_static &&
                        member->name == function.name;
             });
-        return has_inherited_method &&
-               script_method_native_name(*current_script_, *declared) ==
-                   sanitize_identifier(function.name);
+        return has_inherited_method && script_method_native_name(*current_script_, *declared) ==
+                                           sanitize_identifier(function.name);
     };
     const auto function_native_name = [&](const ir::Function& function) {
         if (!current_script_ || function.is_static)

@@ -1146,20 +1146,19 @@ TEST_CASE("project compiler preserves internal default vararg and super call ABI
     const auto root = fixture_root("project-inner-call-abi");
     std::error_code error;
     std::filesystem::remove_all(root, error);
-    write_text(root / "calls.gd",
-               "extends RefCounted\n"
-               "class Base:\n"
-               "    func combine(value: int = 1) -> int:\n        return value\n"
-               "    func collect(value: int = 2, ...extras: Array) -> int:\n"
-               "        return value + extras.size()\n"
-               "class Derived extends Base:\n"
-               "    func combine(value: int = 1) -> int:\n"
-               "        return super.combine(value) + 1\n"
-               "    func collect(value: int = 2, ...extras: Array) -> int:\n"
-               "        return value + extras.size() + 1\n"
-               "    func local_collect() -> int:\n        return collect()\n"
-               "func dispatch(value: Base) -> int:\n"
-               "    return value.collect(3, 4, 5)\n");
+    write_text(root / "calls.gd", "extends RefCounted\n"
+                                  "class Base:\n"
+                                  "    func combine(value: int = 1) -> int:\n        return value\n"
+                                  "    func collect(value: int = 2, ...extras: Array) -> int:\n"
+                                  "        return value + extras.size()\n"
+                                  "class Derived extends Base:\n"
+                                  "    func combine(value: int = 1) -> int:\n"
+                                  "        return super.combine(value) + 1\n"
+                                  "    func collect(value: int = 2, ...extras: Array) -> int:\n"
+                                  "        return value + extras.size() + 1\n"
+                                  "    func local_collect() -> int:\n        return collect()\n"
+                                  "func dispatch(value: Base) -> int:\n"
+                                  "    return value.collect(3, 4, 5)\n");
     const auto options = project_options(root);
 
     const auto result = gdpp::ProjectCompiler{}.compile(options);
@@ -1276,19 +1275,16 @@ TEST_CASE("project compiler maps super calls through inherited engine virtual im
     const auto root = fixture_root("project-inherited-engine-virtual-super");
     std::error_code error;
     std::filesystem::remove_all(root, error);
-    write_text(root / "base.gd",
-               "extends Node\n"
-               "class_name EngineVirtualBase\n"
-               "func _ready() -> void:\n"
-               "    pass\n");
-    write_text(root / "middle.gd",
-               "extends EngineVirtualBase\n"
-               "class_name EngineVirtualMiddle\n");
-    write_text(root / "leaf.gd",
-               "extends EngineVirtualMiddle\n"
-               "class_name EngineVirtualLeaf\n"
-               "func _ready() -> void:\n"
-               "    super._ready()\n");
+    write_text(root / "base.gd", "extends Node\n"
+                                 "class_name EngineVirtualBase\n"
+                                 "func _ready() -> void:\n"
+                                 "    pass\n");
+    write_text(root / "middle.gd", "extends EngineVirtualBase\n"
+                                   "class_name EngineVirtualMiddle\n");
+    write_text(root / "leaf.gd", "extends EngineVirtualMiddle\n"
+                                 "class_name EngineVirtualLeaf\n"
+                                 "func _ready() -> void:\n"
+                                 "    super._ready()\n");
     const auto options = project_options(root);
 
     const auto result = gdpp::ProjectCompiler{}.compile(options);
