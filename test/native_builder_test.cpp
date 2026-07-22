@@ -51,6 +51,13 @@ std::string native_abi_manifest_fields(const std::string& platform) {
            (platform == "windows" ? "compiler MSVC\ncompiler_version 19.44.35207.1\n" : "");
 }
 
+std::string binding_manifest_fields(const std::string& platform) {
+    const bool host = platform == "macos" || platform == "linux" || platform == "windows";
+    return std::string{
+               "distribution_binding template_release\ndistribution_optimization Release\n"} +
+           (host ? "editor_binding editor\neditor_optimization Release\n" : "");
+}
+
 std::filesystem::path make_sdk_fixture(const std::string& name, const std::string& library_name) {
     const auto root = std::filesystem::path{GDPP_TEST_BINARY_DIR} / "test-fixtures" / name;
     const std::string platform = name.find("windows") != std::string::npos   ? "windows"
@@ -125,7 +132,8 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
     write_input(root / "sdk/sdk.manifest",
                 "GDPP_SDK " + std::to_string(GDPP_NATIVE_SDK_SCHEMA) + "\napi 4.4\nplatform " +
                     platform + "\narch " + architecture +
-                    "\nprofiles development,debug,release\nruntime_abi " +
+                    "\nprofiles development,debug,release\n" + binding_manifest_fields(platform) +
+                    "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
                     GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\n" + attached_runtime_manifest_fields() +
@@ -388,6 +396,33 @@ TEST_CASE("native builder rejects unsupported architecture names before planning
     REQUIRE(!plan.success);
     REQUIRE(!plan.diagnostics.empty());
     REQUIRE(plan.commands.empty());
+}
+
+TEST_CASE("native builder rejects non-Release distribution binding contracts") {
+    const auto root =
+        make_sdk_fixture("native-builder-binding-contract", "libgodot-cpp.editor.arm64.a");
+    const auto manifest = root / "sdk/sdk.manifest";
+    replace_manifest_field(manifest, "distribution_binding template_release",
+                           "distribution_binding template_debug");
+    gdpp::NativeBuildOptions options;
+    options.project_output_directory = root / "project";
+    options.binary_output_directory = root / "addons/gdpp/binary";
+    options.sdk_root = root / "sdk";
+    options.compiler_executable = "clang++";
+    options.platform = gdpp::NativePlatform::macos;
+    options.architecture = "arm64";
+
+    const auto wrong_binding = gdpp::NativeBuilder{}.plan(options);
+    REQUIRE(!wrong_binding.success);
+    REQUIRE(diagnostic_contains(wrong_binding, "distribution binding mismatch"));
+
+    replace_manifest_field(manifest, "distribution_binding template_debug",
+                           "distribution_binding template_release");
+    replace_manifest_field(manifest, "distribution_optimization Release",
+                           "distribution_optimization Debug");
+    const auto wrong_optimization = gdpp::NativeBuilder{}.plan(options);
+    REQUIRE(!wrong_optimization.success);
+    REQUIRE(diagnostic_contains(wrong_optimization, "distribution optimization mismatch"));
 }
 
 TEST_CASE("native architecture support matches the shipped target matrix") {
@@ -886,7 +921,8 @@ TEST_CASE("native builder fails closed for incomplete iOS target contracts") {
                                        "libgodot-cpp.ios.template_release.arm64.a");
     write_input(root / "sdk/sdk.manifest",
                 "GDPP_SDK " + std::to_string(GDPP_NATIVE_SDK_SCHEMA) +
-                    "\napi 4.4\nplatform ios\narch arm64\nprofiles debug,release\n"
+                    "\napi 4.4\nplatform ios\narch arm64\nprofiles debug,release\n" +
+                    binding_manifest_fields("ios") +
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
@@ -1063,7 +1099,8 @@ TEST_CASE("native builder emits a macOS universal compile and link plan") {
     write_input(root / "sdk/sdk.manifest",
                 "GDPP_SDK " + std::to_string(GDPP_NATIVE_SDK_SCHEMA) +
                     "\napi 4.4\nplatform macos\narch universal\n"
-                    "profiles development,debug,release\nplatform_minimum macOS_11.0\n"
+                    "profiles development,debug,release\n" + binding_manifest_fields("macos") +
+                    "platform_minimum macOS_11.0\n"
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
@@ -1095,7 +1132,8 @@ TEST_CASE("macOS universal SDK can build a thin host development library") {
     write_input(root / "sdk/sdk.manifest",
                 "GDPP_SDK " + std::to_string(GDPP_NATIVE_SDK_SCHEMA) +
                     "\napi 4.4\nplatform macos\narch universal\n"
-                    "profiles development,debug,release\nplatform_minimum macOS_11.0\n"
+                    "profiles development,debug,release\n" + binding_manifest_fields("macos") +
+                    "platform_minimum macOS_11.0\n"
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +

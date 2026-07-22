@@ -247,6 +247,10 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
     std::string architecture;
     std::string api;
     std::string profiles;
+    std::string distribution_binding;
+    std::string distribution_optimization;
+    std::string editor_binding;
+    std::string editor_optimization;
     std::string runtime_abi;
     std::string runtime_header_sha256;
     std::string runtime_source_sha256;
@@ -276,6 +280,14 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
             api = value;
         else if (key == "profiles")
             profiles = value;
+        else if (key == "distribution_binding")
+            distribution_binding = value;
+        else if (key == "distribution_optimization")
+            distribution_optimization = value;
+        else if (key == "editor_binding")
+            editor_binding = value;
+        else if (key == "editor_optimization")
+            editor_optimization = value;
         else if (key == "runtime_abi")
             runtime_abi = value;
         else if (key == "runtime_header_sha256")
@@ -435,6 +447,30 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
         if (padded.find("," + expected + ",") == std::string::npos) {
             diagnostics.push_back("native SDK does not support the required '" + expected +
                                   "' build profile");
+        }
+    }
+    if (distribution_binding != "template_release") {
+        diagnostics.push_back(
+            "native SDK distribution binding mismatch: expected template_release, package "
+            "contains " +
+            (distribution_binding.empty() ? std::string{"<missing>"} : distribution_binding));
+    }
+    if (distribution_optimization != "Release") {
+        diagnostics.push_back(
+            "native SDK distribution optimization mismatch: expected Release, package contains " +
+            (distribution_optimization.empty() ? std::string{"<missing>"}
+                                               : distribution_optimization));
+    }
+    if (options.profile == NativeBuildProfile::development) {
+        if (editor_binding != "editor") {
+            diagnostics.push_back("native SDK editor binding mismatch: expected editor, package "
+                                  "contains " +
+                                  (editor_binding.empty() ? std::string{"<missing>"}
+                                                          : editor_binding));
+        }
+        if (editor_optimization.empty()) {
+            diagnostics.emplace_back(
+                "native SDK manifest does not declare the editor binding optimization");
         }
     }
     const auto expected_runtime_abi = std::to_string(GDPP_NATIVE_RUNTIME_ABI);
