@@ -5,6 +5,7 @@
 #include "gdpp/core/source.hpp"
 #include "gdpp/project/native_builder.hpp"
 #include "gdpp/project/project_compiler.hpp"
+#include "gdpp/semantic/godot_api.hpp"
 #include "gdpp/support/path_utf8.hpp"
 #include "gdpp/support/sha256.hpp"
 
@@ -283,14 +284,47 @@ std::string reflected_type_name(const godot::Dictionary& info, const bool allow_
     if (raw_type < godot::Variant::NIL || raw_type >= godot::Variant::VARIANT_MAX)
         return "Variant";
     const auto type = static_cast<godot::Variant::Type>(raw_type);
-    if (type == godot::Variant::NIL)
-        return allow_void ? "void" : "Variant";
+    const auto usage =
+        info.has("usage")
+            ? static_cast<std::uint64_t>(static_cast<std::int64_t>(info["usage"]))
+            : std::uint64_t{0};
+    if (type == godot::Variant::NIL) {
+        return (usage & godot::PROPERTY_USAGE_NIL_IS_VARIANT) != 0 || !allow_void ? "Variant"
+                                                                                  : "void";
+    }
     if ((type == godot::Variant::OBJECT || type == godot::Variant::INT) && info.has("class_name")) {
         const godot::StringName class_name = info["class_name"];
         if (!class_name.is_empty())
             return native_string(godot::String{class_name});
     }
+    const auto hint =
+        info.has("hint") ? static_cast<std::int64_t>(info["hint"]) : std::int64_t{-1};
+    const auto hint_string = info.has("hint_string")
+                                 ? native_string(static_cast<godot::String>(info["hint_string"]))
+                                 : std::string{};
+    if (type == godot::Variant::ARRAY && hint == godot::PROPERTY_HINT_ARRAY_TYPE) {
+        return type_from_godot_api("typedarray::" + hint_string).name;
+    }
+    if (type == godot::Variant::DICTIONARY && hint == godot::PROPERTY_HINT_DICTIONARY_TYPE) {
+        return type_from_godot_api("typeddictionary::" + hint_string).name;
+    }
+    if (type == godot::Variant::OBJECT && hint == godot::PROPERTY_HINT_RESOURCE_TYPE &&
+        !hint_string.empty()) {
+        return hint_string;
+    }
     return native_string(godot::Variant::get_type_name(type));
+}
+
+bool reflected_nil_is_variant(const godot::Dictionary& info) {
+    if (!info.has("type") ||
+        static_cast<std::int64_t>(info["type"]) != godot::Variant::NIL) {
+        return false;
+    }
+    const auto usage =
+        info.has("usage")
+            ? static_cast<std::uint64_t>(static_cast<std::int64_t>(info["usage"]))
+            : std::uint64_t{0};
+    return (usage & godot::PROPERTY_USAGE_NIL_IS_VARIANT) != 0;
 }
 
 std::string reflected_name(const godot::Dictionary& info) {
@@ -419,7 +453,8 @@ std::vector<ExtensionBridge> reflect_extension_contracts() {
                 member.name = reflected_name(property);
                 if (member.name.empty() ||
                     (property.has("type") &&
-                     static_cast<std::int64_t>(property["type"]) == godot::Variant::NIL)) {
+                     static_cast<std::int64_t>(property["type"]) == godot::Variant::NIL &&
+                     !reflected_nil_is_variant(property))) {
                     continue;
                 }
                 member.type = reflected_type_name(property, false);

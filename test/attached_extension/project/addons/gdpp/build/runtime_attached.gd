@@ -2,6 +2,8 @@ extends SceneTree
 
 var _child_ping := -1
 var _vendor_ping := -1
+var _vendor_contract_values: Array = []
+var _vendor_contract_weights: Dictionary = {}
 
 
 func _init() -> void:
@@ -26,6 +28,11 @@ func _on_child_ping(value: int) -> void:
 
 func _on_vendor_ping(value: int) -> void:
     _vendor_ping = value
+
+
+func _on_vendor_contract(values: Array, weights: Dictionary) -> void:
+    _vendor_contract_values = values
+    _vendor_contract_weights = weights
 
 
 func _run() -> void:
@@ -92,9 +99,21 @@ func _run() -> void:
         return
     node.connect(&"child_ping", _on_child_ping)
     node.connect(&"vendor_ping", _on_vendor_ping)
+    node.connect(&"vendor_contract", _on_vendor_contract)
     node.call("emit_vendor_ping", 41)
     if _vendor_ping != 41:
         _fail("provider signal was not preserved")
+        return
+    var contract_values: Array[int] = [2, 3, 5]
+    var contract_weights: Dictionary[String, int] = {"alpha": 7, "beta": 11}
+    var contract_result: Variant = node.call(
+        "verify_vendor_contract", "variant-payload", contract_values, contract_weights
+    )
+    if contract_result != "variant-payload" or node.get("native_payload") != contract_result:
+        _fail("provider Variant method or property contract was not preserved")
+        return
+    if _vendor_contract_values != contract_values or _vendor_contract_weights != contract_weights:
+        _fail("provider typed container method or signal contract was not preserved")
         return
 
     get_root().add_child(node)

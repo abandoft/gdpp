@@ -29,6 +29,19 @@ func hook(value: int) -> int:
     return value * 3 + bonus
 
 
+func verify_vendor_contract(
+    payload: Variant,
+    values: Array[int],
+    weights: Dictionary[String, int]
+) -> Variant:
+    native_payload = payload
+    var echoed: Variant = super.variant_roundtrip(native_payload)
+    var returned_values: Array[int] = super.typed_array_roundtrip(values)
+    var returned_weights: Dictionary[String, int] = super.typed_dictionary_roundtrip(weights)
+    super.emit_vendor_contract(returned_values, returned_weights)
+    return echoed
+
+
 @rpc("any_peer", "call_local", "reliable", 2)
 func inherited_rpc(value: int) -> int:
     return value + bonus
