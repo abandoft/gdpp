@@ -25,6 +25,8 @@ const GODOT_EXPORT_CACHE_DIRECTORY := "res://.godot/exported"
 const EXPORT_TRANSFORM_REVISION := 19
 
 var _compiler: Object
+var _build_progress: CanvasLayer
+var _active_build_label := ""
 var _ready := false
 var _script_classes: Dictionary = {}
 var _attached_script_bases: Dictionary = {}
@@ -60,8 +62,9 @@ var _copied_property_count := 0
 var _strict_failure_injected := false
 
 
-func configure(compiler: Object) -> void:
+func configure(compiler: Object, build_progress: CanvasLayer) -> void:
     _compiler = compiler
+    _build_progress = build_progress
 
 
 func _get_name() -> String:
@@ -483,6 +486,15 @@ func _serialize_export_resource(
 
 
 func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
+    if _build_progress != null:
+        _build_progress.begin()
+    var success := _prepare_export_impl(features, is_debug)
+    if _build_progress != null:
+        _build_progress.finish()
+    return success
+
+
+func _prepare_export_impl(features: PackedStringArray, is_debug: bool) -> bool:
     if _compiler == null:
         _fail_export("compiler service is not available; keeping GDScript sources")
         return false
@@ -520,6 +532,12 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
     var sdk_root := str(ProjectSettings.get_setting(SDK_SETTING, ""))
     var cpp_compiler := str(ProjectSettings.get_setting(COMPILER_SETTING, ""))
 
+    if _build_progress != null:
+        _build_progress.set_translation_profile("development")
+    _active_build_label = "development"
+    var development_progress := Callable()
+    if _build_progress != null and _build_progress.is_available():
+        development_progress = Callable(self, "_on_native_build_progress")
     var development_result: Dictionary = _compiler.compile_project(
         "res://",
         OUTPUT_DIRECTORY,
@@ -528,7 +546,9 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
         target_version,
         "development",
         _compiler.get_host_platform(),
-        _compiler.get_host_architecture()
+        _compiler.get_host_architecture(),
+        "",
+        development_progress
     )
     if not _execute_build(development_result, "development"):
         return false
@@ -557,6 +577,12 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
         if distribution_compiler.is_empty():
             return false
 
+    if _build_progress != null:
+        _build_progress.set_translation_profile(_build_profile)
+    _active_build_label = _build_profile
+    var distribution_progress := Callable()
+    if _build_progress != null and _build_progress.is_available():
+        distribution_progress = Callable(self, "_on_native_build_progress")
     var distribution_result: Dictionary = _compiler.compile_project(
         "res://",
         OUTPUT_DIRECTORY,
@@ -566,7 +592,8 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
         _build_profile,
         _target_platform,
         _target_architecture,
-        _target_variant
+        _target_variant,
+        distribution_progress
     )
     if not _execute_build(distribution_result, _build_profile):
         return false
@@ -621,7 +648,11 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
 
 
 func _execute_build(result: Dictionary, label: String) -> bool:
-    var execution: Dictionary = _compiler.execute_project_build(result)
+    _active_build_label = label
+    var progress_callback := Callable()
+    if _build_progress != null and _build_progress.is_available():
+        progress_callback = Callable(self, "_on_native_build_progress")
+    var execution: Dictionary = _compiler.execute_project_build(result, progress_callback)
     if not execution.get("success", false):
         for diagnostic in execution.get("diagnostics", []):
             _fail_export("%s build: %s" % [label, diagnostic])
@@ -632,6 +663,11 @@ func _execute_build(result: Dictionary, label: String) -> bool:
     if removed > 0:
         print("GDPP: removed %d stale development project libraries" % removed)
     return true
+
+
+func _on_native_build_progress(phase: String, completed: int, total: int) -> void:
+    if _build_progress != null:
+        _build_progress.update(_active_build_label, phase, completed, total)
 
 
 func _load_development_project_extension(current_library: String) -> bool:

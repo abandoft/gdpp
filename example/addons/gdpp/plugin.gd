@@ -14,6 +14,7 @@ const COMPILER_DESCRIPTOR_BACKUP := "res://.godot/gdpp_compiler_descriptor.expor
 
 var _compiler: Object
 var _export_plugin: EditorExportPlugin
+var _build_progress: CanvasLayer
 var _building := false
 
 
@@ -47,8 +48,10 @@ func _enter_tree() -> void:
         "hint": PROPERTY_HINT_ENUM,
         "hint_string": ",".join(_compiler.get_supported_godot_versions()),
     })
+    _build_progress = preload("res://addons/gdpp/build_progress.gd").new()
+    EditorInterface.get_base_control().add_child(_build_progress)
     _export_plugin = preload("res://addons/gdpp/export_plugin.gd").new()
-    _export_plugin.configure(_compiler)
+    _export_plugin.configure(_compiler, _build_progress)
     add_export_plugin(_export_plugin)
     add_tool_menu_item("Build GDPP Native Library", _compile_project)
 
@@ -84,6 +87,9 @@ func _exit_tree() -> void:
     if _export_plugin != null:
         remove_export_plugin(_export_plugin)
         _export_plugin = null
+    if _build_progress != null:
+        _build_progress.queue_free()
+        _build_progress = null
     _compiler = null
 
 
@@ -147,17 +153,28 @@ func _compile_project() -> void:
         return
     _building = true
     var target_version := str(ProjectSettings.get_setting(TARGET_VERSION_SETTING, "4.4"))
+    var progress_callback := Callable()
+    if _build_progress != null and _build_progress.is_available():
+        _build_progress.begin()
+        _build_progress.set_translation_profile("development")
+        progress_callback = Callable(self, "_on_manual_build_progress")
     print("GDPP: analyzing project scripts for Godot %s..." % target_version)
     var result: Dictionary = _compiler.compile_project(
         "res://",
         OUTPUT_DIRECTORY,
         ProjectSettings.get_setting(SDK_SETTING),
         ProjectSettings.get_setting(COMPILER_SETTING),
-        target_version
+        target_version,
+        "development",
+        _compiler.get_host_platform(),
+        _compiler.get_host_architecture(),
+        "",
+        progress_callback
     )
     if not result.get("success", false):
         for diagnostic in result.get("diagnostics", []):
             push_error(diagnostic)
+        _finish_manual_build_progress()
         _building = false
         return
 
@@ -168,7 +185,8 @@ func _compile_project() -> void:
             result.removed_count,
         ]
     )
-    if not _execute_project_build(result):
+    if not _execute_project_build(result, progress_callback):
+        _finish_manual_build_progress()
         _building = false
         return
 
@@ -177,11 +195,12 @@ func _compile_project() -> void:
         print("GDPP: native project library is up to date")
     else:
         print("GDPP: native project library built successfully")
+    _finish_manual_build_progress()
     _building = false
 
 
-func _execute_project_build(build_plan: Dictionary) -> bool:
-    var execution: Dictionary = _compiler.execute_project_build(build_plan)
+func _execute_project_build(build_plan: Dictionary, progress_callback: Callable) -> bool:
+    var execution: Dictionary = _compiler.execute_project_build(build_plan, progress_callback)
     if not execution.get("success", false):
         for diagnostic in execution.get("diagnostics", []):
             push_error("GDPP: %s" % diagnostic)
@@ -192,3 +211,13 @@ func _execute_project_build(build_plan: Dictionary) -> bool:
     if removed > 0:
         print("GDPP: removed %d stale development project libraries" % removed)
     return true
+
+
+func _on_manual_build_progress(phase: String, completed: int, total: int) -> void:
+    if _build_progress != null:
+        _build_progress.update("development", phase, completed, total)
+
+
+func _finish_manual_build_progress() -> void:
+    if _build_progress != null and _build_progress.is_available():
+        _build_progress.finish()
