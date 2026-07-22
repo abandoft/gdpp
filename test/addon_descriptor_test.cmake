@@ -104,6 +104,7 @@ endforeach()
 foreach(required_windows_process_contract IN ITEMS
         "CreateProcessW("
         "CreatePipe(&output_read, &output_write"
+        "CreateFileW(L\"NUL\""
         "STARTF_USESHOWWINDOW"
         "STARTF_USESTDHANDLES"
         "SW_HIDE"

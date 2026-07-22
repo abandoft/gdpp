@@ -820,6 +820,16 @@ NativeProcessResult execute_hidden_windows_command_line(std::wstring command_lin
         CloseHandle(output_write);
         return result;
     }
+    HANDLE input_handle =
+        CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &security_attributes,
+                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (input_handle == INVALID_HANDLE_VALUE) {
+        result.launch_error = "cannot open the null toolchain input (Windows error " +
+                              std::to_string(GetLastError()) + ")";
+        CloseHandle(output_read);
+        CloseHandle(output_write);
+        return result;
+    }
 
     STARTUPINFOW startup_information{};
     startup_information.cb = sizeof(startup_information);
@@ -827,18 +837,20 @@ NativeProcessResult execute_hidden_windows_command_line(std::wstring command_lin
     startup_information.wShowWindow = SW_HIDE;
     startup_information.hStdOutput = output_write;
     startup_information.hStdError = output_write;
-    startup_information.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startup_information.hStdInput = input_handle;
     PROCESS_INFORMATION process_information{};
     if (CreateProcessW(nullptr, mutable_command_line.data(), nullptr, nullptr, TRUE,
                        CREATE_NO_WINDOW, nullptr, nullptr, &startup_information,
                        &process_information) == FALSE) {
         result.launch_error =
             "cannot start the C++ toolchain (Windows error " + std::to_string(GetLastError()) + ")";
+        CloseHandle(input_handle);
         CloseHandle(output_read);
         CloseHandle(output_write);
         return result;
     }
 
+    CloseHandle(input_handle);
     CloseHandle(process_information.hThread);
     CloseHandle(output_write);
     constexpr std::size_t maximum_captured_output = 512U * 1024U;
