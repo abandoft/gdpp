@@ -1,3 +1,15 @@
+## 1.7.2
+
+- Completed lossless third-party GDExtension reflection for Variant, typed Array/Dictionary, Signal, object classes, engine-typed Dictionary contracts, and encoded container metadata, preserving provider APIs without source changes.
+- Reworked internal-class overrides around the emitted C++ ABI: compatible overrides now use the native virtual slot, incompatible GDScript contracts receive private implementation symbols, and Variant receivers retain dynamic dispatch.
+- Propagated internal method contracts through receiver, `super`, default-argument, variadic, and coroutine calls so inherited behavior no longer falls back to name-only or semantic-type guesses.
+- Canonicalized nested enum identities across generated declarations, parameters, returns, containers, and cross-script references, eliminating invalid C++ type names in large multi-script builds.
+- Made attached-script descriptor replacement compare complete property, method, signal, constant, default-value, metadata, and RPC identities; hardened Callable copy/move assignment against self-aliasing.
+- Advanced the packaged SDK to schema 8, requiring the MSVC frontend, a declared 19.x toolset, static CRT compatibility, and matching manifest metadata before Windows commands are created.
+- Centralized the delivered target matrix and now reject unavailable Windows arm64, Linux arm64, and Android x86_64 exports before project generation; generated descriptors no longer advertise missing desktop ARM64 libraries.
+- Expanded independent-provider, dual-load-order, strict generated-C++ and official Godot 4.6.x regression gates, including a large multi-script compatibility corpus.
+- Kept the zero-source-change workflow export-only: ordinary editing and runtime continue to use the project's existing `.gd` files; extended or new `.gdpp` syntax is outside this release.
+
 ## 1.7.1
 
 - Completed typed variadic functions, constructors, methods, lambdas, reflection metadata, call thunks, cache fingerprints, and attached-script dispatch across Godot 4.4–4.7 while keeping the grammar owned by GDPP rather than the host GDScript parser.
