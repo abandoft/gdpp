@@ -8,6 +8,10 @@
 - Optimize, dead-strip, and hide symbols in Debug-export project libraries with the same commercial native pipeline used for Release exports.
 - Advance the packaged SDK to schema 9, declaring the distribution binding and optimization profile explicitly and rejecting stale, debug-bound, or mixed SDK installations before compilation.
 - Add real Godot 4.4–4.7 Debug-export execution gates that prove script assertions remain active while only the Release binding is installed.
+- Add `gdpp-4.4.zip` through `gdpp-4.7.zip` as per-SDK-version complete plugin packages, each combining the macOS arm64, Linux x86_64, and Windows x86_64 editor binaries and desktop SDKs with Android arm64, iOS device/Universal Simulator, and Web threads/nothreads export SDKs.
+- Auto-select the current desktop host SDK from the complete package's platform-scoped layout while retaining compatibility with the smaller single-host packages.
+- Make complete-package assembly reproducible and fail closed on missing hosts or targets, static add-on conflicts, runtime ABI/hash disagreements, mixed SDK versions, nested archives, generated products, or forbidden Debug bindings.
+- Remove the standalone third-party notices aggregation from the installed add-on and every release archive.
 
 ## 1.7.3
 
