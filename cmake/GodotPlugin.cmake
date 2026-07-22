@@ -43,15 +43,11 @@ gdpp_collect_native_cmake_contract(GDPP_NATIVE_CMAKE_CONTRACT_ARGS)
 function(gdpp_add_sdk_binding target_name api_version godot_target output_variable)
     set(build_directory "${CMAKE_BINARY_DIR}/sdk/${target_name}")
 
-    # The Godot target profile and the native optimizer profile are one contract.  A Debug
-    # compiler plugin still has to package an optimized template_release binding; otherwise every
-    # generated game crosses an -O0 godot-cpp ABI boundary and the hottest Variant/container paths
-    # become slower than GDScript.  Conversely, template_debug must retain debuggable bindings even
-    # when this parent build produces a commercial Release package.
+    # Distribution profiles share one optimized godot-cpp binding. Script-level Debug behavior is
+    # controlled independently by GDPP, so shipping a second template_debug archive would add
+    # hundreds of megabytes without changing the GDExtension ABI used by exported games.
     if(godot_target STREQUAL "template_release")
         set(binding_build_type Release)
-    elseif(godot_target STREQUAL "template_debug")
-        set(binding_build_type Debug)
     else()
         set(binding_build_type "${CMAKE_BUILD_TYPE}")
     endif()
@@ -119,16 +115,6 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
     if(GDPP_SDK_VERSION STREQUAL GDPP_GODOT_API_VERSION)
         list(APPEND ${GDPP_SDK_DEPENDENCY_VARIABLE} godot-cpp)
     endif()
-
-    set(GDPP_DEBUG_TARGET "gdpp_godot_cpp_${GDPP_SDK_SUFFIX}_debug")
-    gdpp_add_sdk_binding(
-        "${GDPP_DEBUG_TARGET}"
-        "${GDPP_SDK_VERSION}"
-        template_debug
-        "GDPP_SDK_DEBUG_BUILD_${GDPP_SDK_SUFFIX}"
-    )
-    list(APPEND GDPP_SDK_BINDING_TARGETS "${GDPP_DEBUG_TARGET}")
-    list(APPEND ${GDPP_SDK_DEPENDENCY_VARIABLE} "${GDPP_DEBUG_TARGET}")
 
     set(GDPP_RELEASE_TARGET "gdpp_godot_cpp_${GDPP_SDK_SUFFIX}_release")
     gdpp_add_sdk_binding(
@@ -503,9 +489,6 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
         )
     endif()
     list(APPEND GDPP_SDK_PACKAGE_COMMANDS
-        COMMAND "${CMAKE_COMMAND}" -E copy_directory
-                "${GDPP_SDK_DEBUG_BUILD_${GDPP_SDK_SUFFIX}}/bin"
-                "${GDPP_SDK_DIRECTORY}/lib"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${GDPP_SDK_RELEASE_BUILD_${GDPP_SDK_SUFFIX}}/bin"
                 "${GDPP_SDK_DIRECTORY}/lib"
