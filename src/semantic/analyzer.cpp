@@ -2322,8 +2322,20 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     if (member) {
                         validate_script_call(*member, argument_types, expression, expression.span);
                         result = member->type;
-                        if (current_inner_class_)
+                        if (current_inner_class_) {
+                            const bool dynamic_dispatch =
+                                !member->is_static && script_symbols_->requires_dynamic_dispatch(
+                                                          *current_inner_class_, callee.value());
+                            if (dynamic_dispatch) {
+                                mark_coroutine_call(script_symbols_->may_dispatch_coroutine(
+                                    *current_inner_class_, callee.value()));
+                                model_.api_resolutions_.insert_or_assign(
+                                    &callee,
+                                    ApiResolution{ApiResolutionKind::dynamic_method, "", "", "",
+                                                  result, 0, 0, true, false});
+                            }
                             break;
+                        }
                         const bool external_member =
                             script_symbols_->member_is_external(*current_script_, callee.value());
                         if (external_member) {
@@ -2590,7 +2602,13 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 }
                 validate_script_call(*member, argument_types, expression, expression.span);
                 result = member->type;
-                mark_coroutine_call(member->is_coroutine);
+                const bool dynamic_dispatch =
+                    !called_on_type && !called_on_super && !member->is_static && script_symbols_ &&
+                    script_symbols_->requires_dynamic_dispatch(*inner, callee.value());
+                mark_coroutine_call(
+                    member->is_coroutine ||
+                    (dynamic_dispatch &&
+                     script_symbols_->may_dispatch_coroutine(*inner, callee.value())));
                 if (called_on_super) {
                     model_.api_resolutions_.insert_or_assign(
                         &callee,
@@ -2599,6 +2617,10 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                       static_cast<std::uint16_t>(member->required_arguments),
                                       static_cast<std::uint16_t>(member->parameters.size()),
                                       member->is_vararg, true});
+                } else if (dynamic_dispatch) {
+                    model_.api_resolutions_.insert_or_assign(
+                        &callee, ApiResolution{ApiResolutionKind::dynamic_method, "", "", "",
+                                               result, 0, 0, true, false});
                 }
                 break;
             }

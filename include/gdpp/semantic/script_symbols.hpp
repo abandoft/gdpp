@@ -127,6 +127,8 @@ class ScriptSymbolTable final {
     [[nodiscard]] const ScriptClassSymbol* base_of(const ScriptClassSymbol& owner) const noexcept;
     [[nodiscard]] const ScriptClassSymbol*
     base_of(const ScriptInnerClassSymbol& owner) const noexcept;
+    [[nodiscard]] const ScriptInnerClassSymbol*
+    inner_base_of(const ScriptInnerClassSymbol& owner) const noexcept;
     [[nodiscard]] const ScriptMemberSymbol* find_member(const ScriptClassSymbol& owner,
                                                         const std::string& name) const noexcept;
     [[nodiscard]] bool member_is_external(const ScriptClassSymbol& owner,
@@ -152,7 +154,11 @@ class ScriptSymbolTable final {
     // dynamic method dispatcher when the receiver is typed as the base script.
     [[nodiscard]] bool requires_dynamic_dispatch(const ScriptClassSymbol& owner,
                                                  const std::string& method) const noexcept;
+    [[nodiscard]] bool requires_dynamic_dispatch(const ScriptInnerClassSymbol& owner,
+                                                 const std::string& method) const noexcept;
     [[nodiscard]] bool may_dispatch_coroutine(const ScriptClassSymbol& owner,
+                                              const std::string& method) const noexcept;
+    [[nodiscard]] bool may_dispatch_coroutine(const ScriptInnerClassSymbol& owner,
                                               const std::string& method) const noexcept;
 
   private:

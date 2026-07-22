@@ -147,4 +147,53 @@ TEST_CASE("script symbols resolve project-wide internal native identities") {
                std::string{"Array[GDPPNative_Messages_v2__Message]"});
 }
 
+TEST_CASE("script symbols traverse internal inheritance and classify dynamic dispatch") {
+    gdpp::ScriptSymbolTable symbols;
+    gdpp::ScriptClassSymbol script;
+    script.path = "strategies.gd";
+    script.script_name = "Strategies";
+    script.native_class_name = "GDPPNative_Strategies";
+    script.header_file_name = "strategies.gd.hpp";
+
+    gdpp::ScriptInnerClassSymbol base;
+    base.name = "Base";
+    base.native_class_name = "GDPPNative_Strategies__Base";
+    auto transform = method("transform");
+    transform.parameters.push_back({gdpp::TypeKind::object, "Node"});
+    base.members.push_back(transform);
+
+    gdpp::ScriptInnerClassSymbol compatible;
+    compatible.name = "Compatible";
+    compatible.native_class_name = "GDPPNative_Strategies__Compatible";
+    compatible.base_class_name = "Base";
+    compatible.members.push_back(transform);
+
+    gdpp::ScriptInnerClassSymbol coroutine;
+    coroutine.name = "Coroutine";
+    coroutine.native_class_name = "GDPPNative_Strategies__Coroutine";
+    coroutine.base_class_name = "Compatible";
+    auto async_transform = transform;
+    async_transform.is_coroutine = true;
+    coroutine.members.push_back(async_transform);
+
+    script.inner_classes.push_back(std::move(base));
+    script.inner_classes.push_back(std::move(compatible));
+    script.inner_classes.push_back(std::move(coroutine));
+    symbols.add(std::move(script));
+
+    const auto* owner = symbols.find_path("strategies.gd");
+    REQUIRE(owner != nullptr);
+    const auto* base_symbol = symbols.find_inner(*owner, "Base");
+    const auto* compatible_symbol = symbols.find_inner(*owner, "Compatible");
+    const auto* coroutine_symbol = symbols.find_inner(*owner, "Coroutine");
+    REQUIRE(base_symbol != nullptr);
+    REQUIRE(compatible_symbol != nullptr);
+    REQUIRE(coroutine_symbol != nullptr);
+    REQUIRE(symbols.inner_base_of(*compatible_symbol) == base_symbol);
+    REQUIRE(symbols.inner_base_of(*coroutine_symbol) == compatible_symbol);
+    REQUIRE(symbols.find_inner_member(*coroutine_symbol, "transform") != nullptr);
+    REQUIRE(symbols.requires_dynamic_dispatch(*base_symbol, "transform"));
+    REQUIRE(symbols.may_dispatch_coroutine(*base_symbol, "transform"));
+}
+
 } // namespace

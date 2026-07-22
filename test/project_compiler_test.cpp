@@ -1110,6 +1110,38 @@ TEST_CASE("project compiler compares internal script overrides by emitted native
     REQUIRE(header.find("_gdpp_native_override_MergeFrom") == std::string::npos);
 }
 
+TEST_CASE("project compiler dynamically dispatches ABI-changing internal overrides") {
+    const auto root = fixture_root("project-inner-dynamic-dispatch");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "strategies.gd",
+               "extends RefCounted\n"
+               "class Base:\n"
+               "    func transform(value: Node) -> Node:\n        return value\n"
+               "class Derived extends Base:\n"
+               "    func transform(value: Object) -> Node2D:\n        return null\n"
+               "    func local_transform(value: Object) -> Node2D:\n"
+               "        return transform(value)\n"
+               "func dispatch(value: Base, input: Node) -> Node:\n"
+               "    return value.transform(input)\n");
+    const auto options = project_options(root);
+
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.scripts.size(), std::size_t{1});
+    const auto header =
+        read_text(options.output_directory / "generated" / result.scripts.front().header_file_name);
+    const auto source =
+        read_text(options.output_directory / "generated" / result.scripts.front().source_file_name);
+    REQUIRE(header.find("_gdpp_native_override_transform(godot::Object* value)") !=
+            std::string::npos);
+    REQUIRE(header.find("_gdpp_native_override_transform(godot::Object* value) override") ==
+            std::string::npos);
+    REQUIRE(source.find("gdpp::runtime::call_dynamic(") != std::string::npos);
+    REQUIRE(source.find("_gdpp_native_override_transform(") != std::string::npos);
+}
+
 TEST_CASE("project compiler rejects incompatible script override contracts") {
     const auto root = fixture_root("project-invalid-overrides");
     std::error_code error;

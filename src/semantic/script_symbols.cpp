@@ -203,6 +203,21 @@ ScriptSymbolTable::base_of(const ScriptInnerClassSymbol& owner) const noexcept {
     return owner.base_script_path.empty() ? nullptr : find_path(owner.base_script_path);
 }
 
+const ScriptInnerClassSymbol*
+ScriptSymbolTable::inner_base_of(const ScriptInnerClassSymbol& owner) const noexcept {
+    if (owner.base_class_name.empty())
+        return nullptr;
+    const ScriptInnerClassSymbol* canonical = &owner;
+    const auto* script_owner = owner_of(owner);
+    if (!script_owner && !owner.native_class_name.empty()) {
+        canonical = find_inner_native(owner.native_class_name);
+        script_owner = canonical ? owner_of(*canonical) : nullptr;
+    }
+    return script_owner && canonical
+               ? find_inner(*script_owner, canonical->base_class_name)
+               : nullptr;
+}
+
 const ScriptMemberSymbol* ScriptSymbolTable::find_member(const ScriptClassSymbol& owner,
                                                          const std::string& name) const noexcept {
     const ScriptClassSymbol* current = &owner;
@@ -295,12 +310,21 @@ ScriptSymbolTable::owner_of(const ScriptInnerClassSymbol& inner) const noexcept 
 const ScriptMemberSymbol*
 ScriptSymbolTable::find_inner_member(const ScriptInnerClassSymbol& owner,
                                      const std::string& name) const noexcept {
-    const auto found = std::find_if(owner.members.begin(), owner.members.end(),
-                                    [&](const auto& member) { return member.name == name; });
-    if (found != owner.members.end())
-        return &*found;
-    const auto* base = base_of(owner);
-    return base ? find_member(*base, name) : nullptr;
+    const ScriptInnerClassSymbol* current = &owner;
+    std::unordered_set<const ScriptInnerClassSymbol*> visited;
+    while (current && visited.insert(current).second) {
+        const auto found = std::find_if(current->members.begin(), current->members.end(),
+                                        [&](const auto& member) { return member.name == name; });
+        if (found != current->members.end())
+            return &*found;
+        if (const auto* local_base = inner_base_of(*current)) {
+            current = local_base;
+            continue;
+        }
+        const auto* script_base = base_of(*current);
+        return script_base ? find_member(*script_base, name) : nullptr;
+    }
+    return nullptr;
 }
 
 std::vector<const ScriptMemberSymbol*>
@@ -389,6 +413,55 @@ bool ScriptSymbolTable::requires_dynamic_dispatch(const ScriptClassSymbol& owner
     return false;
 }
 
+bool ScriptSymbolTable::requires_dynamic_dispatch(const ScriptInnerClassSymbol& owner,
+                                                  const std::string& method) const noexcept {
+    const auto* canonical = !owner.native_class_name.empty()
+                                ? find_inner_native(owner.native_class_name)
+                                : &owner;
+    if (!canonical)
+        canonical = &owner;
+    const auto* contract = find_inner_member(*canonical, method);
+    if (!contract || contract->kind != ScriptMemberKind::function || contract->is_static)
+        return false;
+    const auto same_native_abi = [](const ScriptMemberSymbol& left,
+                                    const ScriptMemberSymbol& right) {
+        return left.type == right.type && left.parameters == right.parameters &&
+               left.default_parameters == right.default_parameters &&
+               left.is_vararg == right.is_vararg && left.is_coroutine == right.is_coroutine;
+    };
+    const auto same_inner = [](const ScriptInnerClassSymbol& left,
+                               const ScriptInnerClassSymbol& right) {
+        return &left == &right ||
+               (!left.native_class_name.empty() &&
+                left.native_class_name == right.native_class_name);
+    };
+    for (const auto& script : classes_) {
+        for (const auto& candidate : script.inner_classes) {
+            if (same_inner(candidate, *canonical))
+                continue;
+            bool descendant = false;
+            const auto* base = inner_base_of(candidate);
+            for (std::size_t depth = 0; base && depth <= script.inner_classes.size(); ++depth) {
+                if (same_inner(*base, *canonical)) {
+                    descendant = true;
+                    break;
+                }
+                base = inner_base_of(*base);
+            }
+            if (!descendant)
+                continue;
+            const auto override = std::find_if(
+                candidate.members.begin(), candidate.members.end(), [&](const auto& member) {
+                    return member.kind == ScriptMemberKind::function && !member.is_static &&
+                           member.name == method;
+                });
+            if (override != candidate.members.end() && !same_native_abi(*contract, *override))
+                return true;
+        }
+    }
+    return false;
+}
+
 bool ScriptSymbolTable::may_dispatch_coroutine(const ScriptClassSymbol& owner,
                                                const std::string& method) const noexcept {
     if (const auto* contract = find_member(owner, method);
@@ -416,6 +489,48 @@ bool ScriptSymbolTable::may_dispatch_coroutine(const ScriptClassSymbol& owner,
                                            });
         if (override != candidate.members.end() && override->is_coroutine)
             return true;
+    }
+    return false;
+}
+
+bool ScriptSymbolTable::may_dispatch_coroutine(const ScriptInnerClassSymbol& owner,
+                                               const std::string& method) const noexcept {
+    const auto* canonical = !owner.native_class_name.empty()
+                                ? find_inner_native(owner.native_class_name)
+                                : &owner;
+    if (!canonical)
+        canonical = &owner;
+    if (const auto* contract = find_inner_member(*canonical, method);
+        contract && contract->kind == ScriptMemberKind::function && contract->is_coroutine) {
+        return true;
+    }
+    const auto same_inner = [](const ScriptInnerClassSymbol& left,
+                               const ScriptInnerClassSymbol& right) {
+        return &left == &right ||
+               (!left.native_class_name.empty() &&
+                left.native_class_name == right.native_class_name);
+    };
+    for (const auto& script : classes_) {
+        for (const auto& candidate : script.inner_classes) {
+            bool descendant = false;
+            const auto* base = inner_base_of(candidate);
+            for (std::size_t depth = 0; base && depth <= script.inner_classes.size(); ++depth) {
+                if (same_inner(*base, *canonical)) {
+                    descendant = true;
+                    break;
+                }
+                base = inner_base_of(*base);
+            }
+            if (!descendant)
+                continue;
+            const auto override = std::find_if(
+                candidate.members.begin(), candidate.members.end(), [&](const auto& member) {
+                    return member.kind == ScriptMemberKind::function && !member.is_static &&
+                           member.name == method;
+                });
+            if (override != candidate.members.end() && override->is_coroutine)
+                return true;
+        }
     }
     return false;
 }
