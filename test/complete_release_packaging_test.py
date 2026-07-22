@@ -314,6 +314,13 @@ class CompleteReleasePackagingTest(unittest.TestCase):
                 components, self.temporary / "release", "4.6"
             )
 
+    def test_single_target_artifacts_download_into_named_component_roots(self) -> None:
+        workflow = (SOURCE_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        for target in ("android-arm64", "ios-arm64"):
+            artifact = f"gdpp-target-{target}-godot-${{{{ matrix.godot }}}}"
+            self.assertIn(f"name: {artifact}\n", workflow)
+            self.assertIn(f"path: build/complete-components/{artifact}\n", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
