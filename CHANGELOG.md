@@ -1,3 +1,11 @@
+## 1.7.5
+
+- Correct Windows MSVC environment bootstrapping so the raw `cmd.exe /c` payload reaches `vcvars64.bat` and `cl.exe` without C-runtime quote escaping corrupting the nested command.
+- Execute generated translation-unit compilation and linking strictly one command at a time, preventing export-time process bursts and avoiding toolchain memory contention on large projects.
+- Keep the Godot editor responsive while each serialized native command runs and advance compilation progress after every completed translation unit.
+- Capture hidden toolchain stdout and stderr on Windows, macOS, and Linux, preserve the failing file, phase, and exit code, and surface the bounded original diagnostics in the Godot export result.
+- Add cross-platform execution regressions that prove command serialization and stderr retention, plus delivery gates that reject a return to parallel native-export dispatch.
+
 ## 1.7.4
 
 - Include the native-build progress overlay in every commercial plugin archive so fresh installations can load the editor plugin before export.
