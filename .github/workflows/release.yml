@@ -168,14 +168,18 @@ jobs:
           grep -q '^api ${{ matrix.godot }}$' "$sdk/sdk.manifest"
           grep -q '^platform ${{ matrix.sdk_platform }}$' "$sdk/sdk.manifest"
           grep -q '^arch ${{ matrix.sdk_arch }}$' "$sdk/sdk.manifest"
+          grep -q '^distribution_binding template_release$' "$sdk/sdk.manifest"
+          grep -q '^distribution_optimization Release$' "$sdk/sdk.manifest"
+          grep -q '^editor_binding editor$' "$sdk/sdk.manifest"
+          grep -q '^editor_optimization Release$' "$sdk/sdk.manifest"
           grep -q '^platform_minimum ${{ matrix.platform_minimum }}$' "$sdk/sdk.manifest"
           version="$(sed -n 's/^version="\([^"]*\)"$/\1/p' "$package/plugin.cfg")"
           test -n "$version"
           grep -q "^gdpp_version $version$" "$sdk/sdk.manifest"
           test "$(find "$package/sdk" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
-          test -n "$(find "$sdk/lib" -maxdepth 1 -type f -name '*editor*' -print -quit)"
-          test -n "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_debug*' -print -quit)"
-          test -n "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_release*' -print -quit)"
+          test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*editor*' | wc -l)" -eq 1
+          test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_debug*' | wc -l)" -eq 0
+          test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_release*' | wc -l)" -eq 1
           grep -q '^compatibility_minimum = "4.4"$' "$package/gdpp.gdextension"
       - name: Validate macOS arm64 and 11.0 minimum
         if: runner.os == 'macOS'
@@ -353,6 +357,10 @@ jobs:
           test -f "$archive"
           unzip -Z1 "$archive" > build/archive-contents.txt
           grep -q '^addons/gdpp/build_progress.gd$' build/archive-contents.txt
+          if grep -q 'template_debug' build/archive-contents.txt; then
+            echo 'Release ZIP contains a forbidden template_debug binding.'
+            exit 1
+          fi
           test "$(grep -Ec '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/sdk\.manifest$' \
             build/archive-contents.txt)" -eq 1
           grep -q '^addons/gdpp/sdk/${{ matrix.godot }}/android/arm64/sdk.manifest$' \
