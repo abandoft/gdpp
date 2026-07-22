@@ -383,6 +383,95 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  complete-packages:
+    name: ZIP / Complete / Godot ${{ matrix.godot }}
+    needs: [host-components, android-components, ios-components, web-gate]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        godot: [4.4, 4.5, 4.6, 4.7]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: gdpp-host-*-godot-${{ matrix.godot }}
+          path: build/complete-components
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: gdpp-target-android-*-godot-${{ matrix.godot }}
+          path: build/complete-components
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: gdpp-target-ios-*-godot-${{ matrix.godot }}
+          path: build/complete-components
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: gdpp-web-godot-${{ matrix.godot }}-*
+          path: build/complete-components
+      - name: Assemble the install-ready complete plugin ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/package_complete_release.py \
+            --components build/complete-components \
+            --output build/release \
+            --godot-version ${{ matrix.godot }}
+      - name: Audit all desktop and export target components
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="build/release/gdpp-${{ matrix.godot }}.zip"
+          test -f "$archive"
+          unzip -Z1 "$archive" > build/complete-archive-contents.txt
+          contents=build/complete-archive-contents.txt
+          grep -q '^addons/gdpp/build_progress.gd$' "$contents"
+          grep -q '^addons/gdpp/PACKAGE_MANIFEST.txt$' "$contents"
+          for binary in \
+            libgdpp_compiler.macos.arm64.dylib \
+            libgdpp_fallback.macos.arm64.dylib \
+            libgdpp_compiler.linux.x86_64.so \
+            libgdpp_fallback.linux.x86_64.so \
+            gdpp_compiler.windows.x86_64.dll \
+            gdpp_fallback.windows.x86_64.dll; do
+            grep -q "^addons/gdpp/binary/$binary$" "$contents"
+          done
+          test "$(grep -Ec '^addons/gdpp/binary/[^/]+$' "$contents")" -eq 6
+          for host_sdk in macos/arm64 linux/x86_64 windows/x86_64; do
+            grep -q \
+              "^addons/gdpp/sdk/${{ matrix.godot }}/$host_sdk/sdk.manifest$" \
+              "$contents"
+          done
+          for target_sdk in \
+            android/arm64 \
+            ios/arm64 \
+            web/wasm32/nothreads \
+            web/wasm32/threads; do
+            grep -q \
+              "^addons/gdpp/sdk/${{ matrix.godot }}/$target_sdk/sdk.manifest$" \
+              "$contents"
+          done
+          test "$(grep -Ec '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/.*/sdk\.manifest$' \
+            "$contents")" -eq 7
+          if grep -q "^addons/gdpp/sdk/${{ matrix.godot }}/sdk.manifest$" "$contents"; then
+            echo 'Complete package contains an ambiguous root host SDK manifest.'
+            exit 1
+          fi
+          test "$(grep -Eo '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/' "$contents" \
+            | sort -u | wc -l)" -eq 1
+          if grep -Eq 'template_debug|\.zip$|/build/|gdpp_project|\.DS_Store$|/\._' \
+              "$contents"; then
+            echo 'Complete package contains a forbidden nested or generated product.'
+            exit 1
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: gdpp-release-complete-godot-${{ matrix.godot }}
+          path: build/release/gdpp-${{ matrix.godot }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
   readiness:
     name: Release readiness / All gates passed
     if: always()
@@ -398,6 +487,7 @@ jobs:
       - android-components
       - ios-components
       - packages
+      - complete-packages
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -415,14 +505,16 @@ jobs:
           ANDROID_COMPONENTS: ${{ needs.android-components.result }}
           IOS_COMPONENTS: ${{ needs.ios-components.result }}
           PACKAGES: ${{ needs.packages.result }}
+          COMPLETE_PACKAGES: ${{ needs.complete-packages.result }}
         run: |
           set -euo pipefail
           for result in \
             "$QUALITY" "$CORE" "$NATIVE" "$GODOT" "$ANDROID" "$WEB" "$IOS" \
-            "$HOST_COMPONENTS" "$ANDROID_COMPONENTS" "$IOS_COMPONENTS" "$PACKAGES"; do
+            "$HOST_COMPONENTS" "$ANDROID_COMPONENTS" "$IOS_COMPONENTS" "$PACKAGES" \
+            "$COMPLETE_PACKAGES"; do
             test "$result" = success
           done
-          printf '### Complete delivery gate passed\n\nAll tests and 12 packages passed.\n' \
+          printf '### Complete delivery gate passed\n\nAll tests and 16 packages passed.\n' \
             >> "$GITHUB_STEP_SUMMARY"
 
   publish:
@@ -442,7 +534,7 @@ jobs:
           pattern: gdpp-release-*
           path: build/release
           merge-multiple: true
-      - name: Validate unprefixed version and 12-archive matrix
+      - name: Validate unprefixed version and 16-archive matrix
         shell: bash
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -467,11 +559,12 @@ jobs:
             exit 1
           fi
           for godot in 4.4 4.5 4.6 4.7; do
+            test -f "build/release/gdpp-$godot.zip"
             for host in mac-arm64 linux-x64 windows-x64; do
               test -f "build/release/gdpp-$godot-$host.zip"
             done
           done
-          test "$(find build/release -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 12
+          test "$(find build/release -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 16
       - name: Read release notes from CHANGELOG.md
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}
@@ -506,11 +599,13 @@ jobs:
           test "$(jq -r '.draft' <<< "$release")" = false
           test "$(jq -r '.prerelease' <<< "$release")" = false
           test "$(jq '[.assets[] | select(.state == "uploaded" and .size > 0)] | length' \
-            <<< "$release")" -eq 13
-          test "$(jq '.assets | length' <<< "$release")" -eq 13
+            <<< "$release")" -eq 17
+          test "$(jq '.assets | length' <<< "$release")" -eq 17
           test "$(jq '[.assets[] | select(.name | endswith(".zip"))] | length' \
-            <<< "$release")" -eq 12
+            <<< "$release")" -eq 16
           for godot in 4.4 4.5 4.6 4.7; do
+            test "$(jq --arg name "gdpp-$godot.zip" \
+              '[.assets[] | select(.name == $name)] | length' <<< "$release")" -eq 1
             for host in mac-arm64 linux-x64 windows-x64; do
               test "$(jq --arg name "gdpp-$godot-$host.zip" \
                 '[.assets[] | select(.name == $name)] | length' <<< "$release")" -eq 1
