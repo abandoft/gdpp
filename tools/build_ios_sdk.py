@@ -12,7 +12,7 @@ import shutil
 import subprocess
 
 
-PROFILES = {"debug": "template_debug", "release": "template_release"}
+GODOT_TARGET = "template_release"
 SLICES = {
     "device-arm64": ("OS64", "arm64"),
     "simulator-arm64": ("SIMULATORARM64", "arm64"),
@@ -141,60 +141,57 @@ def main() -> int:
         directory.mkdir(parents=True)
 
     generated_include: Path | None = None
-    for profile_name, godot_target in PROFILES.items():
-        archives: dict[str, Path] = {}
-        for slice_name, (toolchain_platform, architecture) in SLICES.items():
-            directory = build_root / args.godot_version / profile_name / slice_name
-            run(
-                [
-                    "cmake",
-                    "-S",
-                    str(godot_cpp),
-                    "-B",
-                    str(directory),
-                    "-G",
-                    "Ninja",
-                    "-DCMAKE_BUILD_TYPE=Release",
-                    f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
-                    f"-DPLATFORM={toolchain_platform}",
-                    f"-DDEPLOYMENT_TARGET={deployment_target}",
-                    f"-DGODOTCPP_API_VERSION={args.godot_version}",
-                    f"-DGODOTCPP_TARGET={godot_target}",
-                    "-DGODOTCPP_ENABLE_TESTING=OFF",
-                    "-DGODOTCPP_SYSTEM_HEADERS=ON",
-                    f"-DCMAKE_CXX_FLAGS=-ffile-prefix-map={source_root}=/gdpp",
-                ]
-            )
-            run(["cmake", "--build", str(directory), "--target", "godot-cpp", "--parallel"])
-            archive = find_archive(directory, godot_target, architecture)
-            actual_architectures = output(["xcrun", "lipo", "-archs", str(archive)]).split()
-            if actual_architectures != [architecture]:
-                raise SystemExit(
-                    f"unexpected architectures in {archive}: {actual_architectures}"
-                )
-            archives[slice_name] = archive
-            generated_include = directory / "gen/include"
-
-        device_name = f"libgodot-cpp.ios.{godot_target}.arm64.a"
-        shutil.copy2(archives["device-arm64"], stage / "lib/device" / device_name)
-        simulator_name = f"libgodot-cpp.ios.{godot_target}.universal.a"
-        simulator_output = stage / "lib/simulator" / simulator_name
+    archives: dict[str, Path] = {}
+    for slice_name, (toolchain_platform, architecture) in SLICES.items():
+        directory = build_root / args.godot_version / "release" / slice_name
         run(
             [
-                "xcrun",
-                "lipo",
-                "-create",
-                str(archives["simulator-arm64"]),
-                str(archives["simulator-x86_64"]),
-                "-output",
-                str(simulator_output),
+                "cmake",
+                "-S",
+                str(godot_cpp),
+                "-B",
+                str(directory),
+                "-G",
+                "Ninja",
+                "-DCMAKE_BUILD_TYPE=Release",
+                f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
+                f"-DPLATFORM={toolchain_platform}",
+                f"-DDEPLOYMENT_TARGET={deployment_target}",
+                f"-DGODOTCPP_API_VERSION={args.godot_version}",
+                f"-DGODOTCPP_TARGET={GODOT_TARGET}",
+                "-DGODOTCPP_ENABLE_TESTING=OFF",
+                "-DGODOTCPP_SYSTEM_HEADERS=ON",
+                f"-DCMAKE_CXX_FLAGS=-ffile-prefix-map={source_root}=/gdpp",
             ]
         )
-        if set(output(["xcrun", "lipo", "-archs", str(simulator_output)]).split()) != {
-            "arm64",
-            "x86_64",
-        }:
-            raise SystemExit(f"Universal Simulator archive is incomplete: {simulator_output}")
+        run(["cmake", "--build", str(directory), "--target", "godot-cpp", "--parallel"])
+        archive = find_archive(directory, GODOT_TARGET, architecture)
+        actual_architectures = output(["xcrun", "lipo", "-archs", str(archive)]).split()
+        if actual_architectures != [architecture]:
+            raise SystemExit(f"unexpected architectures in {archive}: {actual_architectures}")
+        archives[slice_name] = archive
+        generated_include = directory / "gen/include"
+
+    device_name = f"libgodot-cpp.ios.{GODOT_TARGET}.arm64.a"
+    shutil.copy2(archives["device-arm64"], stage / "lib/device" / device_name)
+    simulator_name = f"libgodot-cpp.ios.{GODOT_TARGET}.universal.a"
+    simulator_output = stage / "lib/simulator" / simulator_name
+    run(
+        [
+            "xcrun",
+            "lipo",
+            "-create",
+            str(archives["simulator-arm64"]),
+            str(archives["simulator-x86_64"]),
+            "-output",
+            str(simulator_output),
+        ]
+    )
+    if set(output(["xcrun", "lipo", "-archs", str(simulator_output)]).split()) != {
+        "arm64",
+        "x86_64",
+    }:
+        raise SystemExit(f"Universal Simulator archive is incomplete: {simulator_output}")
 
     assert generated_include is not None
     shutil.copytree(godot_cpp / "include", stage / "godot-cpp/include", dirs_exist_ok=True)

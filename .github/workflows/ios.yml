@@ -26,7 +26,7 @@ jobs:
           submodules: recursive
       - name: Configure iOS target SDK builder
         run: cmake --preset dev -DGDPP_IOS_SDK_VERSIONS=${{ matrix.godot }}
-      - name: Build debug and Release target SDK
+      - name: Build Release target SDK
         run: cmake --build --preset dev --target gdpp_ios_sdk --parallel
       - name: Validate device and Simulator contracts
         shell: bash
@@ -40,8 +40,10 @@ jobs:
             "$sdk/sdk.manifest"
           grep -q '^source_paths mapped$' "$sdk/sdk.manifest"
           grep -q '^ios_deployment_target 16.0$' "$sdk/sdk.manifest"
-          test "$(find "$sdk/lib/device" -type f -name '*.a' | wc -l)" -eq 2
-          test "$(find "$sdk/lib/simulator" -type f -name '*.a' | wc -l)" -eq 2
+          test "$(find "$sdk/lib/device" -type f -name '*template_debug*.a' | wc -l)" -eq 0
+          test "$(find "$sdk/lib/simulator" -type f -name '*template_debug*.a' | wc -l)" -eq 0
+          test "$(find "$sdk/lib/device" -type f -name '*template_release*.a' | wc -l)" -eq 1
+          test "$(find "$sdk/lib/simulator" -type f -name '*template_release*.a' | wc -l)" -eq 1
           while IFS= read -r archive; do
             test "$(xcrun lipo -archs "$archive")" = arm64
           done < <(find "$sdk/lib/device" -type f -name '*.a' | LC_ALL=C sort)
