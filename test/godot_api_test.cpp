@@ -108,10 +108,16 @@ TEST_CASE("Godot API lookup resolves properties and builtin value methods") {
     const auto typed_array = gdpp::type_from_godot_api("typedarray::Node");
     const auto typed_dictionary =
         gdpp::type_from_godot_api("typeddictionary::String;Variant");
+    const auto encoded_resource_array =
+        gdpp::type_from_godot_api("typedarray::24/17:CompositorEffect");
+    const auto encoded_dictionary_array =
+        gdpp::type_from_godot_api("typedarray::27/0:");
     REQUIRE_EQ(typed_array.kind, gdpp::TypeKind::array);
     REQUIRE_EQ(typed_array.name, std::string{"Array[Node]"});
     REQUIRE_EQ(typed_dictionary.kind, gdpp::TypeKind::dictionary);
     REQUIRE_EQ(typed_dictionary.name, std::string{"Dictionary[String, Variant]"});
+    REQUIRE_EQ(encoded_resource_array.name, std::string{"Array[CompositorEffect]"});
+    REQUIRE_EQ(encoded_dictionary_array.name, std::string{"Array[Dictionary]"});
     REQUIRE_EQ(gdpp::type_from_godot_api("enum::Error").kind, gdpp::TypeKind::integer);
 }
 

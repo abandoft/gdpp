@@ -1,6 +1,7 @@
 #include "gdpp/semantic/godot_api.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <iterator>
 #include <string>
 #include <tuple>
@@ -35,6 +36,26 @@ std::string_view first_allowed_type(std::string_view type) {
     while (!type.empty() && type.front() == '-')
         type.remove_prefix(1);
     return type;
+}
+
+std::string collection_element_type(std::string_view type) {
+    const auto colon = type.find(':');
+    if (colon == std::string_view::npos)
+        return std::string{type};
+    const auto slash = type.find('/');
+    const auto type_end = slash == std::string_view::npos || slash > colon ? colon : slash;
+    std::uint32_t raw_type = 0;
+    const auto parsed = std::from_chars(type.data(), type.data() + type_end, raw_type);
+    if (parsed.ec != std::errc{} || parsed.ptr != type.data() + type_end ||
+        raw_type > static_cast<std::uint32_t>(VariantType::packed_vector4_array)) {
+        return std::string{type};
+    }
+    const auto detail = type.substr(colon + 1);
+    if (raw_type == static_cast<std::uint32_t>(VariantType::nil))
+        return "Variant";
+    if (raw_type == static_cast<std::uint32_t>(VariantType::object) && !detail.empty())
+        return std::string{detail};
+    return std::string{variant_type_name(static_cast<VariantType>(raw_type))};
 }
 
 } // namespace
@@ -509,7 +530,8 @@ Type type_from_godot_api(std::string_view raw_type) {
         return {TypeKind::integer, "int"};
     if (type.rfind("typedarray::", 0) == 0) {
         type.remove_prefix(std::string_view{"typedarray::"}.size());
-        return {TypeKind::array, type.empty() ? "Array" : "Array[" + std::string{type} + "]"};
+        return {TypeKind::array,
+                type.empty() ? "Array" : "Array[" + collection_element_type(type) + "]"};
     }
     if (type.rfind("typeddictionary::", 0) == 0) {
         type.remove_prefix(std::string_view{"typeddictionary::"}.size());
@@ -517,8 +539,8 @@ Type type_from_godot_api(std::string_view raw_type) {
         if (separator == std::string_view::npos || separator == 0 || separator + 1 >= type.size())
             return {TypeKind::dictionary, "Dictionary"};
         return {TypeKind::dictionary,
-                "Dictionary[" + std::string{type.substr(0, separator)} + ", " +
-                    std::string{type.substr(separator + 1)} + "]"};
+                "Dictionary[" + collection_element_type(type.substr(0, separator)) + ", " +
+                    collection_element_type(type.substr(separator + 1)) + "]"};
     }
     if (type.back() == '*')
         return {TypeKind::variant, "Variant"};
