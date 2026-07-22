@@ -5230,7 +5230,7 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
         const auto* symbol = function_symbol(function);
         if (symbol)
             return inner_method_implementation_name(*current_inner_script_, *symbol);
-        const auto source = sanitize_identifier(function.name);
+        const auto source_symbol = sanitize_identifier(function.name);
         std::string base_owner;
         const auto* inherited =
             find_inherited_inner_function(source_base, function.name, &base_owner);
@@ -5238,11 +5238,12 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
             inherited && same_native_function_abi(function, godot_base, *inherited,
                                                   inner_godot_base_type(base_owner));
         const auto script_native =
-            inherited && !same_abi ? "_gdpp_native_override_" + source : source;
+            inherited && !same_abi ? "_gdpp_native_override_" + source_symbol : source_symbol;
         if (!engine_virtual_for(function))
             return script_native;
-        return script_native == source ? "_gdpp_virtual_impl_" + source
-                                       : "_gdpp_native_override__gdpp_virtual_impl_" + source;
+        return script_native == source_symbol
+                   ? "_gdpp_virtual_impl_" + source_symbol
+                   : "_gdpp_native_override__gdpp_virtual_impl_" + source_symbol;
     };
     const auto initializer =
         std::find_if(declaration.functions.begin(), declaration.functions.end(),
@@ -5483,7 +5484,7 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         const auto* symbol = function_symbol(function);
         if (symbol)
             return inner_method_implementation_name(*current_inner_script_, *symbol);
-        const auto source = sanitize_identifier(function.name);
+        const auto source_symbol = sanitize_identifier(function.name);
         std::string base_owner;
         const auto* inherited =
             find_inherited_inner_function(source_base, function.name, &base_owner);
@@ -5491,11 +5492,12 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
             inherited && same_native_function_abi(function, godot_base, *inherited,
                                                   inner_godot_base_type(base_owner));
         const auto script_native =
-            inherited && !same_abi ? "_gdpp_native_override_" + source : source;
+            inherited && !same_abi ? "_gdpp_native_override_" + source_symbol : source_symbol;
         if (!engine_virtual_for(function))
             return script_native;
-        return script_native == source ? "_gdpp_virtual_impl_" + source
-                                       : "_gdpp_native_override__gdpp_virtual_impl_" + source;
+        return script_native == source_symbol
+                   ? "_gdpp_virtual_impl_" + source_symbol
+                   : "_gdpp_native_override__gdpp_virtual_impl_" + source_symbol;
     };
     const auto initializer =
         std::find_if(declaration.functions.begin(), declaration.functions.end(),
