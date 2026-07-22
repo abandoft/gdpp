@@ -18,11 +18,11 @@ def preprocess(compiler: pathlib.Path, compiler_id: str, source: pathlib.Path, d
     if compiler_id == "MSVC":
         command = [str(compiler), "/nologo", "/EP", "/TP"]
         if debug:
-            command.append("/DDEBUG_ENABLED")
+            command.append("/DGDPP_SCRIPT_DEBUG_ENABLED")
     else:
         command = [str(compiler), "-E", "-P", "-x", "c++"]
         if debug:
-            command.append("-DDEBUG_ENABLED")
+            command.append("-DGDPP_SCRIPT_DEBUG_ENABLED")
     command.append(str(source))
     result = run(command)
     if result.returncode != 0:
