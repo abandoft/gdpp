@@ -36,6 +36,8 @@ RUNTIME_FIELDS = {
 COMMON_ABI_FIELDS = {
     "cxx_standard": "17",
     "exceptions": "disabled",
+    "distribution_binding": "template_release",
+    "distribution_optimization": "Release",
 }
 
 
@@ -68,7 +70,7 @@ def create_addon(root: Path, host_name: str, godot_version: str = "4.6") -> Path
     sdk = addon / "sdk" / godot_version
     for directory in ("include", "src", "godot-cpp"):
         write(sdk / directory / "fixture")
-    for profile in ("editor", "template_debug", "template_release"):
+    for profile in ("editor", "template_release"):
         write(sdk / "lib" / f"libgodot-cpp.{host.platform}.{profile}.{host.architecture}.a")
     manifest(
         sdk / "sdk.manifest",
@@ -77,6 +79,8 @@ def create_addon(root: Path, host_name: str, godot_version: str = "4.6") -> Path
             "platform": host.platform,
             "arch": host.architecture,
             "profiles": "development,debug,release",
+            "editor_binding": "editor",
+            "editor_optimization": "Release",
             "platform_minimum": host.platform_minimum,
             "gdpp_version": "1.0.0",
             **COMMON_ABI_FIELDS,
@@ -91,7 +95,6 @@ def create_addon(root: Path, host_name: str, godot_version: str = "4.6") -> Path
     )
 
     android = sdk / "android/arm64"
-    write(android / "lib/libgodot-cpp.android.template_debug.arm64.a")
     write(android / "lib/libgodot-cpp.android.template_release.arm64.a")
     manifest(
         android / "sdk.manifest",
@@ -113,7 +116,6 @@ def create_addon(root: Path, host_name: str, godot_version: str = "4.6") -> Path
     if host.platform == "macos":
         ios = sdk / "ios/arm64"
         for target in ("device", "simulator"):
-            write(ios / f"lib/{target}/libgodot-cpp.ios.template_debug.arm64.a")
             write(ios / f"lib/{target}/libgodot-cpp.ios.template_release.arm64.a")
         manifest(
             ios / "sdk.manifest",
@@ -184,6 +186,8 @@ class ReleasePackagingTest(unittest.TestCase):
                     )
                     self.assertFalse(any("/web/" in name for name in names))
                     self.assertFalse(any("gdpp_project" in name for name in names))
+                    self.assertFalse(any("template_debug" in name for name in names))
+                    self.assertTrue(any("template_release" in name for name in names))
                     self.assertTrue(any(name.endswith("sdk/.gdignore") for name in names))
                     self.assertNotIn("addons/gdpp/LICENSE", names)
                     self.assertIn("addons/gdpp/THIRD_PARTY_NOTICES.md", names)
@@ -230,6 +234,14 @@ class ReleasePackagingTest(unittest.TestCase):
             encoding="utf-8",
         )
         with self.assertRaisesRegex(ValueError, "android_stl"):
+            package_release.validate_source(
+                addon, package_release.HOSTS["linux-x64"], "4.6"
+            )
+
+    def test_template_debug_archive_fails_closed(self) -> None:
+        addon = create_addon(self.temporary / "debug-binding", "linux-x64")
+        write(addon / "sdk/4.6/lib/libgodot-cpp.linux.template_debug.x86_64.a")
+        with self.assertRaisesRegex(ValueError, "forbidden template_debug"):
             package_release.validate_source(
                 addon, package_release.HOSTS["linux-x64"], "4.6"
             )

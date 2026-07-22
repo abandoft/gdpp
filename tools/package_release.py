@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 SUPPORTED_GODOT_VERSIONS = ("4.4", "4.5", "4.6", "4.7")
-SDK_SCHEMA = 8
+SDK_SCHEMA = 9
 STATIC_ADDON_FILES = (
     "THIRD_PARTY_NOTICES.md",
     "build_progress.gd",
@@ -137,8 +137,12 @@ def require_profile_libraries(directory: Path, profiles: tuple[str, ...]) -> Non
         fail(f"SDK library directory is missing: {directory}")
     names = [path.name for path in directory.iterdir() if path.is_file()]
     for profile in profiles:
-        if not any(f".{profile}." in name for name in names):
+        matches = [name for name in names if f".{profile}." in name]
+        if len(matches) != 1:
             fail(f"SDK library for {profile} is missing from {directory}")
+    debug_libraries = [name for name in names if ".template_debug." in name]
+    if debug_libraries:
+        fail(f"SDK contains forbidden template_debug libraries in {directory}: {debug_libraries}")
 
 
 def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
@@ -171,6 +175,10 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
             "platform": host.platform,
             "arch": host.architecture,
             "profiles": "development,debug,release",
+            "distribution_binding": "template_release",
+            "distribution_optimization": "Release",
+            "editor_binding": "editor",
+            "editor_optimization": "Release",
             "platform_minimum": host.platform_minimum,
             "gdpp_version": version,
             "cxx_standard": "17",
@@ -183,7 +191,7 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
             fail(f"Windows SDK compiler must be MSVC in {host_manifest}")
         if not re.fullmatch(r"19(?:\.[0-9]+)+", host_fields.get("compiler_version", "")):
             fail(f"Windows SDK compiler_version must identify an MSVC 19.x toolset")
-    require_profile_libraries(sdk / "lib", ("editor", "template_debug", "template_release"))
+    require_profile_libraries(sdk / "lib", ("editor", "template_release"))
 
     android_manifest = sdk / "android/arm64/sdk.manifest"
     android_schema, android_fields = read_sdk_manifest(android_manifest)
@@ -196,6 +204,8 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
             "platform": "android",
             "arch": "arm64",
             "profiles": "debug,release",
+            "distribution_binding": "template_release",
+            "distribution_optimization": "Release",
             "platform_minimum": "Android_9",
             "android_api_level": "28",
             "android_stl": "c++_shared",
@@ -205,7 +215,7 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
             "msvc_runtime": "not_applicable",
         },
     )
-    require_profile_libraries(sdk / "android/arm64/lib", ("template_debug", "template_release"))
+    require_profile_libraries(sdk / "android/arm64/lib", ("template_release",))
 
     runtime_contract = (
         "runtime_abi",
@@ -234,6 +244,8 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
                 "platform": "ios",
                 "arch": "arm64",
                 "profiles": "debug,release",
+                "distribution_binding": "template_release",
+                "distribution_optimization": "Release",
                 "platform_minimum": "iOS_16.0",
                 "ios_deployment_target": "16.0",
                 "ios_slices": "device-arm64,simulator-arm64,simulator-x86_64",
@@ -243,8 +255,8 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
                 "msvc_runtime": "not_applicable",
             },
         )
-        require_profile_libraries(ios / "lib/device", ("template_debug", "template_release"))
-        require_profile_libraries(ios / "lib/simulator", ("template_debug", "template_release"))
+        require_profile_libraries(ios / "lib/device", ("template_release",))
+        require_profile_libraries(ios / "lib/simulator", ("template_release",))
         for field in runtime_contract:
             if ios_fields.get(field) != host_fields.get(field):
                 fail(f"iOS and host SDK disagree on {field}")
