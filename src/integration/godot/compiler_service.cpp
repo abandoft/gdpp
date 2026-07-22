@@ -758,16 +758,9 @@ bool is_msvc_tool(const std::filesystem::path& executable) {
            filename == L"link.exe";
 }
 
-int64_t execute_hidden_windows_process(const std::vector<std::wstring>& arguments) {
-    if (arguments.empty() || arguments.front().empty())
+int64_t execute_hidden_windows_command_line(std::wstring command_line) {
+    if (command_line.empty())
         return -1;
-
-    std::wstring command_line;
-    for (const auto& argument : arguments) {
-        if (!command_line.empty())
-            command_line.push_back(L' ');
-        command_line += quote_windows_argument(argument);
-    }
     std::vector<wchar_t> mutable_command_line{command_line.begin(), command_line.end()};
     mutable_command_line.push_back(L'\0');
 
@@ -790,6 +783,18 @@ int64_t execute_hidden_windows_process(const std::vector<std::wstring>& argument
     return completed ? static_cast<int64_t>(exit_code) : int64_t{-1};
 }
 
+int64_t execute_hidden_windows_process(const std::vector<std::wstring>& arguments) {
+    if (arguments.empty() || arguments.front().empty())
+        return -1;
+    std::wstring command_line;
+    for (const auto& argument : arguments) {
+        if (!command_line.empty())
+            command_line.push_back(L' ');
+        command_line += quote_windows_argument(argument);
+    }
+    return execute_hidden_windows_command_line(std::move(command_line));
+}
+
 int64_t execute_with_vcvars(const std::wstring& executable,
                             const std::vector<std::wstring>& arguments,
                             const std::filesystem::path& vcvars) {
@@ -797,9 +802,13 @@ int64_t execute_with_vcvars(const std::wstring& executable,
                            quote_windows_argument(executable);
     for (std::size_t index = 1; index < arguments.size(); ++index)
         command += L" " + quote_windows_argument(arguments[index]);
-    const std::vector<std::wstring> command_arguments{L"cmd.exe", L"/d", L"/s", L"/c",
-                                                      std::move(command)};
-    return execute_hidden_windows_process(command_arguments);
+    // cmd.exe owns all text after /c. Applying C-runtime argv escaping to the complete payload
+    // inserts backslashes before its nested quotes; cmd treats those backslashes literally and
+    // never reaches cl.exe. Keep the control switches fixed and append the already quoted command
+    // as raw /c input instead.
+    std::wstring command_line = quote_windows_argument(L"cmd.exe") + L" /d /s /c ";
+    command_line += command;
+    return execute_hidden_windows_command_line(std::move(command_line));
 }
 #endif
 
