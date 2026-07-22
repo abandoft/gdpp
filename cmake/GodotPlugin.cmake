@@ -747,6 +747,11 @@ configure_file(
     "${GDPP_PROJECT_BUILD_ROOT}/direct_export_build.gd"
     COPYONLY
 )
+configure_file(
+    "${CMAKE_SOURCE_DIR}/test/godot/toolchain_execution.gd"
+    "${GDPP_PROJECT_BUILD_ROOT}/toolchain_execution.gd"
+    COPYONLY
+)
 
 if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
     add_test(
@@ -782,6 +787,18 @@ if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
         gdpp.godot.service
         PROPERTIES
             PASS_REGULAR_EXPRESSION "GDPP_SMOKE_OK"
+            FIXTURES_REQUIRED gdpp_clean_extension_registry
+            TIMEOUT 60
+    )
+    add_test(
+        NAME gdpp.godot.toolchain_execution
+        COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --path "${GDPP_EXAMPLE_DIRECTORY}"
+                --script addons/gdpp/build/toolchain_execution.gd
+    )
+    set_tests_properties(
+        gdpp.godot.toolchain_execution
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "GDPP_TOOLCHAIN_EXECUTION_OK"
             FIXTURES_REQUIRED gdpp_clean_extension_registry
             TIMEOUT 60
     )
