@@ -51,6 +51,13 @@ add_test(
 )
 
 add_test(
+    NAME gdpp.delivery.download_retry
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/download_with_retry_test.py"
+)
+
+add_test(
     NAME gdpp.addon.clean
     COMMAND "${CMAKE_COMMAND}"
             -DGDPP_TEST_SOURCE_DIR=${PROJECT_SOURCE_DIR}
