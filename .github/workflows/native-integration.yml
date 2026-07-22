@@ -39,6 +39,13 @@ jobs:
           cmake "${arguments[@]}"
       - name: Build compiler, SDK and generated-code smoke target
         run: cmake --build --preset plugin --parallel
+      - name: Test standalone MSVC environment bootstrap
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cmake -E rm -rf example/addons/gdpp/build/project/native-direct
+          env -u INCLUDE -u LIB -u LIBPATH \
+            ctest --test-dir build/plugin -R '^gdpp\.godot\.direct_build$' --output-on-failure
       - name: Run GDExtension and direct-build tests
         run: ctest --preset plugin
       - name: Remove example project native products
