@@ -3,7 +3,10 @@
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/string.hpp>
+
+#include <cstdint>
 
 namespace gdpp::extension {
 
@@ -41,8 +44,14 @@ class GDPPCompiler final : public godot::RefCounted {
     static void _bind_methods();
 
   private:
-    [[nodiscard]] int64_t execute_build_commands(const godot::Array& commands,
-                                                 const godot::Callable& progress_callback) const;
+    struct BuildExecutionResult {
+        int64_t exit_code{-1};
+        godot::PackedStringArray diagnostics;
+    };
+
+    [[nodiscard]] BuildExecutionResult
+    execute_build_commands(const godot::Array& commands,
+                           const godot::Callable& progress_callback) const;
 };
 
 } // namespace gdpp::extension

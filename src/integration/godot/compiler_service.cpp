@@ -36,6 +36,7 @@
 #include <cctype>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
@@ -55,6 +56,7 @@
 #include <cerrno>
 #include <spawn.h>
 #include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 #ifndef _WIN32
@@ -637,6 +639,12 @@ std::filesystem::path versioned_sdk_root(const std::filesystem::path& root, Godo
     return version_root;
 }
 
+struct NativeProcessResult {
+    int64_t exit_code{-1};
+    std::string output;
+    std::string launch_error;
+};
+
 #ifdef _WIN32
 std::wstring utf8_to_wide(const std::string& value) {
     if (value.empty() || value.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
@@ -750,6 +758,36 @@ std::wstring quote_windows_argument(const std::wstring& value) {
     return result;
 }
 
+std::string windows_text_to_utf8(const std::string& input) {
+    if (input.empty())
+        return {};
+    UINT code_page = CP_UTF8;
+    DWORD flags = MB_ERR_INVALID_CHARS;
+    int wide_length = MultiByteToWideChar(code_page, flags, input.data(),
+                                          static_cast<int>(input.size()), nullptr, 0);
+    if (wide_length == 0) {
+        code_page = CP_ACP;
+        flags = 0;
+        wide_length = MultiByteToWideChar(code_page, flags, input.data(),
+                                          static_cast<int>(input.size()), nullptr, 0);
+    }
+    if (wide_length == 0)
+        return input;
+    std::wstring wide(static_cast<std::size_t>(wide_length), L'\0');
+    if (MultiByteToWideChar(code_page, flags, input.data(), static_cast<int>(input.size()),
+                            wide.data(), wide_length) != wide_length)
+        return input;
+    const int utf8_length = WideCharToMultiByte(CP_UTF8, 0, wide.data(), wide_length, nullptr, 0,
+                                                nullptr, nullptr);
+    if (utf8_length == 0)
+        return input;
+    std::string output(static_cast<std::size_t>(utf8_length), '\0');
+    if (WideCharToMultiByte(CP_UTF8, 0, wide.data(), wide_length, output.data(), utf8_length,
+                            nullptr, nullptr) != utf8_length)
+        return input;
+    return output;
+}
+
 bool is_msvc_tool(const std::filesystem::path& executable) {
     auto filename = executable.filename().wstring();
     std::transform(filename.begin(), filename.end(), filename.begin(),
@@ -758,34 +796,78 @@ bool is_msvc_tool(const std::filesystem::path& executable) {
            filename == L"link.exe";
 }
 
-int64_t execute_hidden_windows_command_line(std::wstring command_line) {
+NativeProcessResult execute_hidden_windows_command_line(std::wstring command_line) {
+    NativeProcessResult result;
     if (command_line.empty())
-        return -1;
+        return result;
     std::vector<wchar_t> mutable_command_line{command_line.begin(), command_line.end()};
     mutable_command_line.push_back(L'\0');
 
+    SECURITY_ATTRIBUTES security_attributes{};
+    security_attributes.nLength = sizeof(security_attributes);
+    security_attributes.bInheritHandle = TRUE;
+    HANDLE output_read = nullptr;
+    HANDLE output_write = nullptr;
+    if (CreatePipe(&output_read, &output_write, &security_attributes, 0) == FALSE) {
+        result.launch_error = "cannot create the toolchain output pipe (Windows error " +
+                              std::to_string(GetLastError()) + ")";
+        return result;
+    }
+    if (SetHandleInformation(output_read, HANDLE_FLAG_INHERIT, 0) == FALSE) {
+        result.launch_error = "cannot isolate the toolchain output pipe (Windows error " +
+                              std::to_string(GetLastError()) + ")";
+        CloseHandle(output_read);
+        CloseHandle(output_write);
+        return result;
+    }
+
     STARTUPINFOW startup_information{};
     startup_information.cb = sizeof(startup_information);
-    startup_information.dwFlags = STARTF_USESHOWWINDOW;
+    startup_information.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
     startup_information.wShowWindow = SW_HIDE;
+    startup_information.hStdOutput = output_write;
+    startup_information.hStdError = output_write;
+    startup_information.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     PROCESS_INFORMATION process_information{};
-    if (CreateProcessW(nullptr, mutable_command_line.data(), nullptr, nullptr, FALSE,
+    if (CreateProcessW(nullptr, mutable_command_line.data(), nullptr, nullptr, TRUE,
                        CREATE_NO_WINDOW, nullptr, nullptr, &startup_information,
-                       &process_information) == FALSE)
-        return -1;
+                       &process_information) == FALSE) {
+        result.launch_error = "cannot start the C++ toolchain (Windows error " +
+                              std::to_string(GetLastError()) + ")";
+        CloseHandle(output_read);
+        CloseHandle(output_write);
+        return result;
+    }
 
     CloseHandle(process_information.hThread);
+    CloseHandle(output_write);
+    constexpr std::size_t maximum_captured_output = 512U * 1024U;
+    bool output_truncated = false;
+    char buffer[4096];
+    DWORD bytes_read = 0;
+    while (ReadFile(output_read, buffer, sizeof(buffer), &bytes_read, nullptr) != FALSE &&
+           bytes_read != 0) {
+        const auto remaining = maximum_captured_output - result.output.size();
+        const auto captured = std::min(remaining, static_cast<std::size_t>(bytes_read));
+        result.output.append(buffer, captured);
+        output_truncated = output_truncated || captured != bytes_read;
+    }
+    CloseHandle(output_read);
     const auto wait_result = WaitForSingleObject(process_information.hProcess, INFINITE);
     DWORD exit_code = 0;
     const bool completed = wait_result == WAIT_OBJECT_0 &&
                            GetExitCodeProcess(process_information.hProcess, &exit_code) != FALSE;
     CloseHandle(process_information.hProcess);
-    return completed ? static_cast<int64_t>(exit_code) : int64_t{-1};
+    result.exit_code = completed ? static_cast<int64_t>(exit_code) : int64_t{-1};
+    result.output = windows_text_to_utf8(result.output);
+    if (output_truncated)
+        result.output += "\n[toolchain output truncated after 512 KiB]";
+    return result;
 }
 
-int64_t execute_hidden_windows_process(const std::vector<std::wstring>& arguments) {
+NativeProcessResult execute_hidden_windows_process(const std::vector<std::wstring>& arguments) {
     if (arguments.empty() || arguments.front().empty())
-        return -1;
+        return {};
     std::wstring command_line;
     for (const auto& argument : arguments) {
         if (!command_line.empty())
@@ -795,9 +877,9 @@ int64_t execute_hidden_windows_process(const std::vector<std::wstring>& argument
     return execute_hidden_windows_command_line(std::move(command_line));
 }
 
-int64_t execute_with_vcvars(const std::wstring& executable,
-                            const std::vector<std::wstring>& arguments,
-                            const std::filesystem::path& vcvars) {
+NativeProcessResult execute_with_vcvars(const std::wstring& executable,
+                                        const std::vector<std::wstring>& arguments,
+                                        const std::filesystem::path& vcvars) {
     std::wstring command = L"call " + quote_windows_argument(vcvars.wstring()) + L" >nul && " +
                            quote_windows_argument(executable);
     for (std::size_t index = 1; index < arguments.size(); ++index)
@@ -812,19 +894,19 @@ int64_t execute_with_vcvars(const std::wstring& executable,
 }
 #endif
 
-int64_t execute_native_process(const std::string& executable,
-                               const std::vector<std::string>& arguments) {
+NativeProcessResult execute_native_process(const std::string& executable,
+                                           const std::vector<std::string>& arguments) {
 #ifdef _WIN32
     auto wide_executable = utf8_to_wide(executable);
     if (wide_executable.empty())
-        return -1;
+        return {};
     std::vector<std::wstring> wide_arguments;
     wide_arguments.reserve(arguments.size() + 1);
     wide_arguments.push_back(wide_executable);
     for (const auto& argument : arguments) {
         auto converted = utf8_to_wide(argument);
         if (!argument.empty() && converted.empty())
-            return -1;
+            return {};
         wide_arguments.push_back(std::move(converted));
     }
     if (is_msvc_tool(std::filesystem::path{wide_executable})) {
@@ -845,31 +927,72 @@ int64_t execute_native_process(const std::string& executable,
     }
     return execute_hidden_windows_process(wide_arguments);
 #else
+    NativeProcessResult result;
     if (executable.empty())
-        return -1;
+        return result;
+    int output_pipe[2]{};
+    if (pipe(output_pipe) != 0) {
+        result.launch_error = "cannot create the toolchain output pipe: " +
+                              std::string{std::strerror(errno)};
+        return result;
+    }
     std::vector<char*> process_arguments;
     process_arguments.reserve(arguments.size() + 2);
     process_arguments.push_back(const_cast<char*>(executable.c_str()));
     for (const auto& argument : arguments)
         process_arguments.push_back(const_cast<char*>(argument.c_str()));
     process_arguments.push_back(nullptr);
+    posix_spawn_file_actions_t actions;
+    if (posix_spawn_file_actions_init(&actions) != 0) {
+        close(output_pipe[0]);
+        close(output_pipe[1]);
+        result.launch_error = "cannot initialize toolchain process redirection";
+        return result;
+    }
+    (void)posix_spawn_file_actions_adddup2(&actions, output_pipe[1], STDOUT_FILENO);
+    (void)posix_spawn_file_actions_adddup2(&actions, output_pipe[1], STDERR_FILENO);
+    (void)posix_spawn_file_actions_addclose(&actions, output_pipe[0]);
+    (void)posix_spawn_file_actions_addclose(&actions, output_pipe[1]);
     pid_t process = 0;
-    const int spawn_error = posix_spawnp(&process, executable.c_str(), nullptr, nullptr,
+    const int spawn_error = posix_spawnp(&process, executable.c_str(), &actions, nullptr,
                                          process_arguments.data(), environ);
-    if (spawn_error != 0)
-        return -1;
+    posix_spawn_file_actions_destroy(&actions);
+    close(output_pipe[1]);
+    if (spawn_error != 0) {
+        close(output_pipe[0]);
+        result.launch_error = "cannot start the C++ toolchain: " +
+                              std::string{std::strerror(spawn_error)};
+        return result;
+    }
+    constexpr std::size_t maximum_captured_output = 512U * 1024U;
+    bool output_truncated = false;
+    char buffer[4096];
+    ssize_t bytes_read = 0;
+    while ((bytes_read = read(output_pipe[0], buffer, sizeof(buffer))) > 0) {
+        const auto remaining = maximum_captured_output - result.output.size();
+        const auto captured =
+            std::min(remaining, static_cast<std::size_t>(bytes_read));
+        result.output.append(buffer, captured);
+        output_truncated = output_truncated || captured != static_cast<std::size_t>(bytes_read);
+    }
+    close(output_pipe[0]);
     int status = 0;
     pid_t waited = 0;
     do {
         waited = waitpid(process, &status, 0);
     } while (waited < 0 && errno == EINTR);
-    if (waited < 0)
-        return -1;
+    if (waited < 0) {
+        result.launch_error = "cannot wait for the C++ toolchain: " +
+                              std::string{std::strerror(errno)};
+        return result;
+    }
     if (WIFEXITED(status))
-        return static_cast<int64_t>(WEXITSTATUS(status));
-    if (WIFSIGNALED(status))
-        return static_cast<int64_t>(128 + WTERMSIG(status));
-    return -1;
+        result.exit_code = static_cast<int64_t>(WEXITSTATUS(status));
+    else if (WIFSIGNALED(status))
+        result.exit_code = static_cast<int64_t>(128 + WTERMSIG(status));
+    if (output_truncated)
+        result.output += "\n[toolchain output truncated after 512 KiB]";
+    return result;
 #endif
 }
 
@@ -878,6 +1001,23 @@ struct NativeInvocation {
     std::vector<std::string> arguments;
     std::size_t stage{0};
 };
+
+std::string native_invocation_label(const NativeInvocation& invocation) {
+    for (std::size_t index = 0; index + 1 < invocation.arguments.size(); ++index) {
+        if (invocation.arguments[index] == "/c" || invocation.arguments[index] == "-c")
+            return std::filesystem::path{invocation.arguments[index + 1]}.filename().string();
+    }
+    const auto executable = std::filesystem::path{invocation.executable}.filename().string();
+    return executable.empty() ? invocation.executable : executable;
+}
+
+std::string trimmed_toolchain_output(std::string output) {
+    while (!output.empty() &&
+           (output.back() == '\r' || output.back() == '\n' || output.back() == ' ' ||
+            output.back() == '\t'))
+        output.pop_back();
+    return output;
+}
 
 void refresh_editor_display() {
     if (auto* display_server = godot::DisplayServer::get_singleton())
@@ -930,8 +1070,10 @@ void GDPPCompiler::_bind_methods() {
         &GDPPCompiler::prune_stale_development_libraries);
 }
 
-int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands,
-                                             const godot::Callable& progress_callback) const {
+GDPPCompiler::BuildExecutionResult
+GDPPCompiler::execute_build_commands(const godot::Array& commands,
+                                     const godot::Callable& progress_callback) const {
+    BuildExecutionResult result;
     std::vector<NativeInvocation> invocations;
     invocations.reserve(static_cast<std::size_t>(commands.size()));
     for (int64_t index = 0; index < commands.size(); ++index) {
@@ -943,16 +1085,22 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands,
         invocation.arguments.reserve(static_cast<std::size_t>(arguments.size()));
         for (int64_t argument = 0; argument < arguments.size(); ++argument)
             invocation.arguments.push_back(native_string(arguments[argument]));
-        if (invocation.executable.empty())
-            return -1;
+        if (invocation.executable.empty()) {
+            result.diagnostics.push_back("native build command has no executable");
+            return result;
+        }
         const auto stage = static_cast<int64_t>(item.get("stage", int64_t{0}));
-        if (stage < 0)
-            return -1;
+        if (stage < 0) {
+            result.diagnostics.push_back("native build command has an invalid stage");
+            return result;
+        }
         invocation.stage = static_cast<std::size_t>(stage);
         invocations.push_back(std::move(invocation));
     }
-    if (invocations.empty())
-        return 0;
+    if (invocations.empty()) {
+        result.exit_code = 0;
+        return result;
+    }
 
     std::stable_sort(invocations.begin(), invocations.end(),
                      [](const auto& left, const auto& right) { return left.stage < right.stage; });
@@ -965,10 +1113,11 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands,
         report_build_progress(progress_callback, phase, 0, count);
         for (std::size_t index = begin; index < end; ++index) {
             std::atomic<bool> command_complete{false};
-            int64_t exit_code = -1;
+            NativeProcessResult process_result;
             std::thread worker{[&]() {
                 const auto& invocation = invocations[index];
-                exit_code = execute_native_process(invocation.executable, invocation.arguments);
+                process_result =
+                    execute_native_process(invocation.executable, invocation.arguments);
                 command_complete.store(true);
             }};
             while (!command_complete.load()) {
@@ -977,12 +1126,31 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands,
             }
             worker.join();
             report_build_progress(progress_callback, phase, index - begin + 1, count);
-            if (exit_code != 0)
-                return exit_code;
+            if (process_result.exit_code != 0) {
+                result.exit_code = process_result.exit_code;
+                const auto label = native_invocation_label(invocations[index]);
+                const auto action = invocations[index].stage == 0 ? "compile" : "link";
+                result.diagnostics.push_back(
+                    godot::String::utf8(("C++ " + std::string{action} + " command for '" + label +
+                                         "' failed with exit code " +
+                                         std::to_string(process_result.exit_code))
+                                            .c_str()));
+                if (!process_result.launch_error.empty()) {
+                    result.diagnostics.push_back(
+                        godot::String::utf8(process_result.launch_error.c_str()));
+                }
+                const auto output = trimmed_toolchain_output(std::move(process_result.output));
+                if (!output.empty()) {
+                    result.diagnostics.push_back(godot::String::utf8(
+                        ("toolchain output for '" + label + "':\n" + output).c_str()));
+                }
+                return result;
+            }
         }
         begin = end;
     }
-    return 0;
+    result.exit_code = 0;
+    return result;
 }
 
 godot::Dictionary
@@ -1002,11 +1170,15 @@ GDPPCompiler::execute_project_build(const godot::Dictionary& build_plan,
     }
 
     const godot::Array commands = build_plan.get("build_commands", godot::Array{});
-    const auto exit_code = execute_build_commands(commands, progress_callback);
-    output["exit_code"] = exit_code;
-    if (exit_code != 0) {
-        diagnostics.push_back("C++ toolchain failed with exit code " +
-                              godot::String::num_int64(exit_code));
+    const auto execution = execute_build_commands(commands, progress_callback);
+    output["exit_code"] = execution.exit_code;
+    if (execution.exit_code != 0) {
+        for (const auto& diagnostic : execution.diagnostics)
+            diagnostics.push_back(diagnostic);
+        if (execution.diagnostics.is_empty()) {
+            diagnostics.push_back("C++ toolchain failed with exit code " +
+                                  godot::String::num_int64(execution.exit_code));
+        }
         output["diagnostics"] = diagnostics;
         return output;
     }
