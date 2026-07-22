@@ -53,7 +53,9 @@ file(READ "${GDPP_TEST_SOURCE_DIR}/cmake/GodotPlugin.cmake" GDPP_TEST_PLUGIN_CMA
 foreach(GDPP_TEST_HOST_ABI_FIELD IN ITEMS
         "cxx_standard 17"
         "exceptions disabled"
-        "msvc_runtime \${GDPP_SDK_MSVC_RUNTIME}")
+        "msvc_runtime \${GDPP_SDK_MSVC_RUNTIME}"
+        "compiler \${CMAKE_CXX_COMPILER_ID}"
+        "compiler_version \${CMAKE_CXX_COMPILER_VERSION}")
     string(FIND "${GDPP_TEST_PLUGIN_CMAKE}"
         "${GDPP_TEST_HOST_ABI_FIELD}"
         GDPP_TEST_HOST_ABI_FIELD_OFFSET)

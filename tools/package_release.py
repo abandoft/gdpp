@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 SUPPORTED_GODOT_VERSIONS = ("4.4", "4.5", "4.6", "4.7")
-SDK_SCHEMA = 7
+SDK_SCHEMA = 8
 STATIC_ADDON_FILES = (
     "THIRD_PARTY_NOTICES.md",
     "export_plugin.gd",
@@ -177,6 +177,11 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
             "msvc_runtime": "static" if host.platform == "windows" else "not_applicable",
         },
     )
+    if host.platform == "windows":
+        if host_fields.get("compiler") != "MSVC":
+            fail(f"Windows SDK compiler must be MSVC in {host_manifest}")
+        if not re.fullmatch(r"19(?:\.[0-9]+)+", host_fields.get("compiler_version", "")):
+            fail(f"Windows SDK compiler_version must identify an MSVC 19.x toolset")
     require_profile_libraries(sdk / "lib", ("editor", "template_debug", "template_release"))
 
     android_manifest = sdk / "android/arm64/sdk.manifest"

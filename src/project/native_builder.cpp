@@ -20,7 +20,7 @@
 namespace gdpp {
 namespace {
 
-constexpr std::string_view native_build_revision{"12"};
+constexpr std::string_view native_build_revision{"13"};
 
 struct BridgeBuildInputs {
     std::vector<std::filesystem::path> include_directories;
@@ -185,6 +185,28 @@ bool ends_with(const std::string& value, const std::string& suffix) {
            value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
+bool valid_msvc_compiler_version(const std::string_view value) {
+    const auto separator = value.find('.');
+    if (separator == std::string_view::npos || value.substr(0, separator) != "19" ||
+        separator + 1 == value.size()) {
+        return false;
+    }
+    bool previous_dot = false;
+    for (std::size_t index = separator + 1; index < value.size(); ++index) {
+        const auto character = static_cast<unsigned char>(value[index]);
+        if (value[index] == '.') {
+            if (previous_dot || index + 1 == value.size())
+                return false;
+            previous_dot = true;
+        } else {
+            if (std::isdigit(character) == 0)
+                return false;
+            previous_dot = false;
+        }
+    }
+    return true;
+}
+
 std::string platform_name(NativePlatform platform) {
     if (platform == NativePlatform::macos)
         return "macos";
@@ -243,6 +265,8 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
     std::string cxx_standard;
     std::string exceptions;
     std::string msvc_runtime;
+    std::string compiler;
+    std::string compiler_version;
     while (input >> key >> value) {
         if (key == "platform")
             platform = value;
@@ -288,6 +312,10 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
             exceptions = value;
         else if (key == "msvc_runtime")
             msvc_runtime = value;
+        else if (key == "compiler")
+            compiler = value;
+        else if (key == "compiler_version")
+            compiler_version = value;
     }
     if (platform != platform_name(options.platform))
         diagnostics.push_back("native SDK platform mismatch: expected " +
@@ -327,6 +355,31 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
         diagnostics.push_back("native SDK MSVC runtime mismatch: expected " +
                               expected_msvc_runtime + ", package contains " +
                               (msvc_runtime.empty() ? std::string{"<missing>"} : msvc_runtime));
+    }
+    if (options.platform == NativePlatform::windows) {
+        auto executable_name =
+            std::filesystem::path{options.compiler_executable}.filename().string();
+        std::transform(executable_name.begin(), executable_name.end(), executable_name.begin(),
+                       [](const char character) {
+                           return static_cast<char>(
+                               std::tolower(static_cast<unsigned char>(character)));
+                       });
+        if (executable_name != "cl" && executable_name != "cl.exe") {
+            diagnostics.push_back(
+                "native Windows builds require the MSVC cl.exe frontend; configured compiler is " +
+                options.compiler_executable);
+        }
+        if (compiler != "MSVC") {
+            diagnostics.push_back(
+                "native Windows SDK compiler family mismatch: expected MSVC, package contains " +
+                (compiler.empty() ? std::string{"<missing>"} : compiler));
+        }
+        if (!valid_msvc_compiler_version(compiler_version)) {
+            diagnostics.push_back(
+                "native Windows SDK MSVC toolset is missing or incompatible: expected compiler "
+                "version 19.x, package contains " +
+                (compiler_version.empty() ? std::string{"<missing>"} : compiler_version));
+        }
     }
     if (options.platform == NativePlatform::android) {
         if (android_api_level != "28") {

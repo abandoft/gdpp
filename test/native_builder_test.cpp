@@ -47,7 +47,8 @@ std::string attached_runtime_manifest_fields() {
 std::string native_abi_manifest_fields(const std::string& platform) {
     return "cxx_standard 17\nexceptions disabled\nmsvc_runtime " +
            std::string{platform == "windows" ? "static" : "not_applicable"} + "\n" +
-           (platform == "android" ? "android_stl c++_shared\n" : "");
+           (platform == "android" ? "android_stl c++_shared\n" : "") +
+           (platform == "windows" ? "compiler MSVC\ncompiler_version 19.44.35207.1\n" : "");
 }
 
 std::filesystem::path make_sdk_fixture(const std::string& name, const std::string& library_name) {
@@ -130,7 +131,7 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
                     GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\n" + attached_runtime_manifest_fields() +
                     "integer_semantics_header_sha256 " + GDPP_INTEGER_SEMANTICS_HEADER_SHA256 +
                     "\n" + native_abi_manifest_fields(platform) + platform_contract + web_threads +
-                    ios_contract + "compiler fixture\n");
+                    ios_contract + (platform == "windows" ? "" : "compiler fixture\n"));
     return root;
 }
 
@@ -270,6 +271,37 @@ TEST_CASE("native builder rejects native ABI manifest drift before creating comm
     REQUIRE(!windows.success);
     REQUIRE(windows.commands.empty());
     REQUIRE(diagnostic_contains(windows, "MSVC runtime mismatch"));
+
+    const auto compiler_root =
+        make_sdk_fixture("native-builder-windows-compiler-contract", "godot-cpp.editor.x86_64.lib");
+    replace_manifest_field(compiler_root / "sdk/sdk.manifest", "compiler MSVC", "compiler Clang");
+    const auto compiler = plan_for(compiler_root, gdpp::NativePlatform::windows, "x86_64");
+    REQUIRE(!compiler.success);
+    REQUIRE(compiler.commands.empty());
+    REQUIRE(diagnostic_contains(compiler, "compiler family mismatch"));
+
+    const auto toolset_root =
+        make_sdk_fixture("native-builder-windows-toolset-contract", "godot-cpp.editor.x86_64.lib");
+    replace_manifest_field(toolset_root / "sdk/sdk.manifest", "compiler_version 19.44.35207.1",
+                           "compiler_version 18.0");
+    const auto toolset = plan_for(toolset_root, gdpp::NativePlatform::windows, "x86_64");
+    REQUIRE(!toolset.success);
+    REQUIRE(toolset.commands.empty());
+    REQUIRE(diagnostic_contains(toolset, "MSVC toolset"));
+
+    const auto frontend_root =
+        make_sdk_fixture("native-builder-windows-frontend-contract", "godot-cpp.editor.x86_64.lib");
+    gdpp::NativeBuildOptions frontend_options;
+    frontend_options.project_output_directory = frontend_root / "project";
+    frontend_options.binary_output_directory = frontend_root / "addons/gdpp/binary";
+    frontend_options.sdk_root = frontend_root / "sdk";
+    frontend_options.compiler_executable = "clang-cl.exe";
+    frontend_options.platform = gdpp::NativePlatform::windows;
+    frontend_options.architecture = "x86_64";
+    const auto frontend = gdpp::NativeBuilder{}.plan(frontend_options);
+    REQUIRE(!frontend.success);
+    REQUIRE(frontend.commands.empty());
+    REQUIRE(diagnostic_contains(frontend, "cl.exe frontend"));
 
     const auto android_root =
         make_sdk_fixture("native-builder-android-stl-contract", "libgodot-cpp.editor.arm64.a");

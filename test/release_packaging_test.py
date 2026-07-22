@@ -81,6 +81,11 @@ def create_addon(root: Path, host_name: str, godot_version: str = "4.6") -> Path
             "gdpp_version": "1.0.0",
             **COMMON_ABI_FIELDS,
             "msvc_runtime": "static" if host.platform == "windows" else "not_applicable",
+            **(
+                {"compiler": "MSVC", "compiler_version": "19.44.35207.1"}
+                if host.platform == "windows"
+                else {}
+            ),
             **RUNTIME_FIELDS,
         },
     )
