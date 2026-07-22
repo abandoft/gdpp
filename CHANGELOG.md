@@ -1,3 +1,8 @@
+## 1.7.4
+
+- Include the native-build progress overlay in every commercial plugin archive so fresh installations can load the editor plugin before export.
+- Fail release assembly when the progress overlay is absent from either the staged add-on or the final deterministic ZIP.
+
 ## 1.7.3
 
 - Run Windows export compiler, environment-bootstrap, and linker subprocesses without creating visible console windows.
