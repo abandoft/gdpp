@@ -10,9 +10,11 @@
 #include "gdpp/support/sha256.hpp"
 
 #include <godot_cpp/classes/class_db_singleton.hpp>
+#include <godot_cpp/classes/display_server.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/templates/hashfuncs.hpp>
 #include <godot_cpp/variant/array.hpp>
@@ -32,6 +34,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
+#include <condition_variable>
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
@@ -283,10 +287,9 @@ std::string reflected_type_name(const godot::Dictionary& info, const bool allow_
     if (raw_type < godot::Variant::NIL || raw_type >= godot::Variant::VARIANT_MAX)
         return "Variant";
     const auto type = static_cast<godot::Variant::Type>(raw_type);
-    const auto usage =
-        info.has("usage")
-            ? static_cast<std::uint64_t>(static_cast<std::int64_t>(info["usage"]))
-            : std::uint64_t{0};
+    const auto usage = info.has("usage")
+                           ? static_cast<std::uint64_t>(static_cast<std::int64_t>(info["usage"]))
+                           : std::uint64_t{0};
     if (type == godot::Variant::NIL) {
         return (usage & godot::PROPERTY_USAGE_NIL_IS_VARIANT) != 0 || !allow_void ? "Variant"
                                                                                   : "void";
@@ -296,8 +299,7 @@ std::string reflected_type_name(const godot::Dictionary& info, const bool allow_
         if (!class_name.is_empty())
             return native_string(godot::String{class_name});
     }
-    const auto hint =
-        info.has("hint") ? static_cast<std::int64_t>(info["hint"]) : std::int64_t{-1};
+    const auto hint = info.has("hint") ? static_cast<std::int64_t>(info["hint"]) : std::int64_t{-1};
     const auto hint_string = info.has("hint_string")
                                  ? native_string(static_cast<godot::String>(info["hint_string"]))
                                  : std::string{};
@@ -315,14 +317,12 @@ std::string reflected_type_name(const godot::Dictionary& info, const bool allow_
 }
 
 bool reflected_nil_is_variant(const godot::Dictionary& info) {
-    if (!info.has("type") ||
-        static_cast<std::int64_t>(info["type"]) != godot::Variant::NIL) {
+    if (!info.has("type") || static_cast<std::int64_t>(info["type"]) != godot::Variant::NIL) {
         return false;
     }
-    const auto usage =
-        info.has("usage")
-            ? static_cast<std::uint64_t>(static_cast<std::int64_t>(info["usage"]))
-            : std::uint64_t{0};
+    const auto usage = info.has("usage")
+                           ? static_cast<std::uint64_t>(static_cast<std::int64_t>(info["usage"]))
+                           : std::uint64_t{0};
     return (usage & godot::PROPERTY_USAGE_NIL_IS_VARIANT) != 0;
 }
 
@@ -870,6 +870,22 @@ struct NativeInvocation {
     std::size_t stage{0};
 };
 
+void refresh_editor_display() {
+    if (auto* display_server = godot::DisplayServer::get_singleton())
+        display_server->process_events();
+    if (auto* rendering_server = godot::RenderingServer::get_singleton())
+        rendering_server->force_draw();
+}
+
+void report_build_progress(const godot::Callable& callback, const char* phase,
+                           const std::size_t completed, const std::size_t total) {
+    if (!callback.is_valid())
+        return;
+    (void)callback.call(godot::String{phase}, static_cast<int64_t>(completed),
+                        static_cast<int64_t>(total));
+    refresh_editor_display();
+}
+
 } // namespace
 
 void GDPPCompiler::_bind_methods() {
@@ -893,19 +909,20 @@ void GDPPCompiler::_bind_methods() {
                                 &GDPPCompiler::get_host_platform);
     godot::ClassDB::bind_method(godot::D_METHOD("get_host_architecture"),
                                 &GDPPCompiler::get_host_architecture);
-    godot::ClassDB::bind_method(
-        godot::D_METHOD("is_target_supported", "platform", "architecture"),
-        &GDPPCompiler::is_target_supported);
+    godot::ClassDB::bind_method(godot::D_METHOD("is_target_supported", "platform", "architecture"),
+                                &GDPPCompiler::is_target_supported);
     godot::ClassDB::bind_method(godot::D_METHOD("get_supported_godot_versions"),
                                 &GDPPCompiler::get_supported_godot_versions);
-    godot::ClassDB::bind_method(godot::D_METHOD("execute_project_build", "build_plan"),
-                                &GDPPCompiler::execute_project_build);
+    godot::ClassDB::bind_method(
+        godot::D_METHOD("execute_project_build", "build_plan", "progress_callback"),
+        &GDPPCompiler::execute_project_build, DEFVAL(godot::Callable{}));
     godot::ClassDB::bind_method(
         godot::D_METHOD("prune_stale_development_libraries", "current_library"),
         &GDPPCompiler::prune_stale_development_libraries);
 }
 
-int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands) const {
+int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands,
+                                             const godot::Callable& progress_callback) const {
     std::vector<NativeInvocation> invocations;
     invocations.reserve(static_cast<std::size_t>(commands.size()));
     for (int64_t index = 0; index < commands.size(); ++index) {
@@ -930,6 +947,7 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands) const
 
     std::stable_sort(invocations.begin(), invocations.end(),
                      [](const auto& left, const auto& right) { return left.stage < right.stage; });
+    std::atomic<std::size_t> completed_commands{0};
     for (std::size_t begin = 0; begin < invocations.size();) {
         std::size_t end = begin + 1;
         while (end < invocations.size() && invocations[end].stage == invocations[begin].stage)
@@ -939,27 +957,55 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands) const
         const auto worker_count =
             std::min(count, static_cast<std::size_t>(std::min(hardware_threads, 8U)));
         std::atomic<std::size_t> next{begin};
+        std::atomic<std::size_t> active_workers{worker_count};
         std::atomic<int64_t> first_error{0};
+        std::condition_variable progress_condition;
+        std::mutex progress_mutex;
         std::vector<std::thread> workers;
         workers.reserve(worker_count);
+        const auto* phase = invocations[begin].stage == 0 ? "compile" : "link";
+        report_build_progress(progress_callback, phase, completed_commands.load(),
+                              invocations.size());
+        auto reported_commands = completed_commands.load();
         for (std::size_t worker = 0; worker < worker_count; ++worker) {
             workers.emplace_back([&]() {
                 while (first_error.load() == 0) {
                     const auto index = next.fetch_add(1);
                     if (index >= end)
-                        return;
+                        break;
                     const auto& invocation = invocations[index];
                     const auto exit_code =
                         execute_native_process(invocation.executable, invocation.arguments);
+                    completed_commands.fetch_add(1);
+                    progress_condition.notify_one();
                     if (exit_code != 0) {
                         int64_t expected = 0;
                         (void)first_error.compare_exchange_strong(expected, exit_code);
                     }
                 }
+                active_workers.fetch_sub(1);
+                progress_condition.notify_one();
             });
+        }
+        if (progress_callback.is_valid()) {
+            while (active_workers.load() != 0) {
+                std::unique_lock<std::mutex> lock{progress_mutex};
+                progress_condition.wait_for(lock, std::chrono::milliseconds{50});
+                lock.unlock();
+                const auto current_commands = completed_commands.load();
+                if (current_commands != reported_commands) {
+                    report_build_progress(progress_callback, phase, current_commands,
+                                          invocations.size());
+                    reported_commands = current_commands;
+                } else {
+                    refresh_editor_display();
+                }
+            }
         }
         for (auto& worker : workers)
             worker.join();
+        report_build_progress(progress_callback, phase, completed_commands.load(),
+                              invocations.size());
         if (first_error.load() != 0)
             return first_error.load();
         begin = end;
@@ -967,7 +1013,9 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands) const
     return 0;
 }
 
-godot::Dictionary GDPPCompiler::execute_project_build(const godot::Dictionary& build_plan) const {
+godot::Dictionary
+GDPPCompiler::execute_project_build(const godot::Dictionary& build_plan,
+                                    const godot::Callable& progress_callback) const {
     godot::Dictionary output;
     output["success"] = false;
     output["exit_code"] = int64_t{-1};
@@ -982,7 +1030,7 @@ godot::Dictionary GDPPCompiler::execute_project_build(const godot::Dictionary& b
     }
 
     const godot::Array commands = build_plan.get("build_commands", godot::Array{});
-    const auto exit_code = execute_build_commands(commands);
+    const auto exit_code = execute_build_commands(commands, progress_callback);
     output["exit_code"] = exit_code;
     if (exit_code != 0) {
         diagnostics.push_back("C++ toolchain failed with exit code " +
@@ -1029,6 +1077,8 @@ godot::Dictionary GDPPCompiler::execute_project_build(const godot::Dictionary& b
 
     output["success"] = true;
     output["diagnostics"] = diagnostics;
+    report_build_progress(progress_callback, "complete", static_cast<std::size_t>(commands.size()),
+                          static_cast<std::size_t>(commands.size()));
     return output;
 }
 

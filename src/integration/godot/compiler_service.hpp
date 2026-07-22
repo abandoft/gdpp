@@ -1,6 +1,7 @@
 #pragma once
 
 #include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/string.hpp>
 
@@ -23,7 +24,8 @@ class GDPPCompiler final : public godot::RefCounted {
                     const godot::String& target_platform, const godot::String& target_architecture,
                     const godot::String& target_variant) const;
     [[nodiscard]] godot::Dictionary
-    execute_project_build(const godot::Dictionary& build_plan) const;
+    execute_project_build(const godot::Dictionary& build_plan,
+                          const godot::Callable& progress_callback = {}) const;
     [[nodiscard]] godot::Dictionary
     prune_stale_development_libraries(const godot::String& current_library) const;
     [[nodiscard]] godot::String get_default_sdk_root() const;
@@ -38,7 +40,8 @@ class GDPPCompiler final : public godot::RefCounted {
     static void _bind_methods();
 
   private:
-    [[nodiscard]] int64_t execute_build_commands(const godot::Array& commands) const;
+    [[nodiscard]] int64_t execute_build_commands(const godot::Array& commands,
+                                                 const godot::Callable& progress_callback) const;
 };
 
 } // namespace gdpp::extension
