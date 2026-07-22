@@ -475,23 +475,23 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
                 "${GDPP_SDK_EDITOR_BUILD_${GDPP_SDK_SUFFIX}}/gen/include"
                 "${GDPP_SDK_DIRECTORY}/godot-cpp/gen/include"
     )
+    set(GDPP_EDITOR_LIBRARY_NAME
+        "${CMAKE_STATIC_LIBRARY_PREFIX}godot-cpp.${GDPP_PLATFORM}.editor.${GDPP_ARCH}${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    set(GDPP_RELEASE_LIBRARY_NAME
+        "${CMAKE_STATIC_LIBRARY_PREFIX}godot-cpp.${GDPP_PLATFORM}.template_release.${GDPP_ARCH}${CMAKE_STATIC_LIBRARY_SUFFIX}")
     if(GDPP_SDK_VERSION STREQUAL GDPP_GODOT_API_VERSION)
-        list(APPEND GDPP_SDK_PACKAGE_COMMANDS
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                    "$<TARGET_FILE:godot-cpp>"
-                    "${GDPP_SDK_DIRECTORY}/lib"
-        )
+        set(GDPP_EDITOR_LIBRARY_SOURCE "$<TARGET_FILE:godot-cpp>")
     else()
-        list(APPEND GDPP_SDK_PACKAGE_COMMANDS
-            COMMAND "${CMAKE_COMMAND}" -E copy_directory
-                    "${GDPP_SDK_EDITOR_BUILD_${GDPP_SDK_SUFFIX}}/bin"
-                    "${GDPP_SDK_DIRECTORY}/lib"
-        )
+        set(GDPP_EDITOR_LIBRARY_SOURCE
+            "${GDPP_SDK_EDITOR_BUILD_${GDPP_SDK_SUFFIX}}/bin/${GDPP_EDITOR_LIBRARY_NAME}")
     endif()
     list(APPEND GDPP_SDK_PACKAGE_COMMANDS
-        COMMAND "${CMAKE_COMMAND}" -E copy_directory
-                "${GDPP_SDK_RELEASE_BUILD_${GDPP_SDK_SUFFIX}}/bin"
-                "${GDPP_SDK_DIRECTORY}/lib"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_EDITOR_LIBRARY_SOURCE}"
+                "${GDPP_SDK_DIRECTORY}/lib/${GDPP_EDITOR_LIBRARY_NAME}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_SDK_RELEASE_BUILD_${GDPP_SDK_SUFFIX}}/bin/${GDPP_RELEASE_LIBRARY_NAME}"
+                "${GDPP_SDK_DIRECTORY}/lib/${GDPP_RELEASE_LIBRARY_NAME}"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${GDPP_SDK_MANIFEST}"
                 "${GDPP_SDK_DIRECTORY}/sdk.manifest"
