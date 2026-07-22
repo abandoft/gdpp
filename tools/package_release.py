@@ -18,6 +18,7 @@ SUPPORTED_GODOT_VERSIONS = ("4.4", "4.5", "4.6", "4.7")
 SDK_SCHEMA = 8
 STATIC_ADDON_FILES = (
     "THIRD_PARTY_NOTICES.md",
+    "build_progress.gd",
     "export_plugin.gd",
     "gdpp.gdextension",
     "plugin.cfg",

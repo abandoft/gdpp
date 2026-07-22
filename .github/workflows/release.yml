@@ -352,6 +352,7 @@ jobs:
           archive="build/release/gdpp-${{ matrix.godot }}-${{ matrix.host }}.zip"
           test -f "$archive"
           unzip -Z1 "$archive" > build/archive-contents.txt
+          grep -q '^addons/gdpp/build_progress.gd$' build/archive-contents.txt
           test "$(grep -Ec '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/sdk\.manifest$' \
             build/archive-contents.txt)" -eq 1
           grep -q '^addons/gdpp/sdk/${{ matrix.godot }}/android/arm64/sdk.manifest$' \

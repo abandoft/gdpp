@@ -187,6 +187,7 @@ class ReleasePackagingTest(unittest.TestCase):
                     self.assertTrue(any(name.endswith("sdk/.gdignore") for name in names))
                     self.assertNotIn("addons/gdpp/LICENSE", names)
                     self.assertIn("addons/gdpp/THIRD_PARTY_NOTICES.md", names)
+                    self.assertIn("addons/gdpp/build_progress.gd", names)
         self.assertEqual(len(archives), 12)
 
     def test_zip_is_reproducible(self) -> None:
