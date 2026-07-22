@@ -190,7 +190,7 @@ class ReleasePackagingTest(unittest.TestCase):
                     self.assertTrue(any("template_release" in name for name in names))
                     self.assertTrue(any(name.endswith("sdk/.gdignore") for name in names))
                     self.assertNotIn("addons/gdpp/LICENSE", names)
-                    self.assertIn("addons/gdpp/THIRD_PARTY_NOTICES.md", names)
+                    self.assertNotIn("addons/gdpp/THIRD_PARTY_NOTICES.md", names)
                     self.assertIn("addons/gdpp/build_progress.gd", names)
         self.assertEqual(len(archives), 12)
 

@@ -55,9 +55,9 @@ Windows MSVC 编译器族、19.x 工具集版本、静态 CRT 与 Android `c++_s
 SDK profile 构建和独立 provider fixture 共用 compiler、toolchain、sysroot、deployment target、
 RC/MT 工具参数，避免嵌套 CMake 配置与预编译 godot-cpp 静态库漂移。
 
-SDK profile 不沿用构建 GDPP 编译器插件时的优化级别。`debug` 静态库始终以 Debug 构建，
-`release` 静态库始终以 Release 构建；因此开发者使用 Debug compiler 插件执行 Release 导出时，
-项目动态库及其 godot-cpp ABI 依赖仍是完整优化版本。
+发行 SDK 的 `editor` 与 `template_release` 静态库均以 Release 构建。Debug 与 Release 游戏导出
+共用优化后的 `template_release` 绑定；Debug 脚本语义由 GDPP 自身的编译定义独立保留，发行包
+不再携带 `template_debug` 静态库。
 
 构建后的插件布局为：
 
@@ -69,8 +69,7 @@ example/addons/gdpp/
 ├── gdpp.gdextension         # 编辑态唯一物理 GDExtension 描述符
 ├── export_plugin.gd
 ├── plugin.cfg
-├── plugin.gd
-└── THIRD_PARTY_NOTICES.md
+└── plugin.gd
 ```
 
 ### 产物边界
