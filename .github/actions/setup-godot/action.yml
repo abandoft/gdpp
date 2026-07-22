@@ -30,9 +30,9 @@ runs:
         mkdir -p "$root"
         editor="$root/Godot_v${GODOT_VERSION}-stable_linux.x86_64"
         if [[ ! -x "$editor" ]]; then
-          curl --fail --location --retry 3 \
-            --output "$root/editor.zip" \
-            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          bash "$GITHUB_WORKSPACE/tools/download_with_retry.sh" \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" \
+            "$root/editor.zip"
           unzip -q "$root/editor.zip" -d "$root"
           chmod +x "$editor"
         fi
@@ -47,8 +47,9 @@ runs:
           exit 2
         fi
         archive="$root/export_templates.tpz"
-        curl --fail --location --retry 3 --output "$archive" \
-          "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+        bash "$GITHUB_WORKSPACE/tools/download_with_retry.sh" \
+          "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" \
+          "$archive"
         extracted="$root/export-templates"
         rm -rf "$extracted"
         mkdir -p "$extracted"
