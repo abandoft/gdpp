@@ -496,7 +496,7 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
             % [", ".join(features)]
         )
         return false
-    if not _target_is_supported(_target_platform, _target_architecture):
+    if not _compiler.is_target_supported(_target_platform, _target_architecture):
         _fail_export(
             "unsupported GDPP native export target '%s/%s'; keeping GDScript sources"
             % [_target_platform, _target_architecture]
@@ -846,19 +846,6 @@ func _architecture_from_features(features: PackedStringArray) -> String:
     if matches.is_empty() and _compiler != null:
         return _compiler.get_host_architecture()
     return ""
-
-
-func _target_is_supported(platform: String, architecture: String) -> bool:
-    match platform:
-        "macos":
-            return architecture in ["arm64", "x86_64", "universal"]
-        "linux", "windows":
-            return architecture == "x86_64"
-        "android", "ios":
-            return architecture == "arm64"
-        "web":
-            return architecture == "wasm32"
-    return false
 
 
 func _web_variant_from_features(features: PackedStringArray) -> String:

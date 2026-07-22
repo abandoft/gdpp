@@ -30,6 +30,8 @@ class GDPPCompiler final : public godot::RefCounted {
     [[nodiscard]] godot::String get_default_compiler_executable() const;
     [[nodiscard]] godot::String get_host_platform() const;
     [[nodiscard]] godot::String get_host_architecture() const;
+    [[nodiscard]] bool is_target_supported(const godot::String& platform,
+                                           const godot::String& architecture) const;
     [[nodiscard]] godot::PackedStringArray get_supported_godot_versions() const;
 
   protected:

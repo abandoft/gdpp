@@ -874,6 +874,9 @@ void GDPPCompiler::_bind_methods() {
                                 &GDPPCompiler::get_host_platform);
     godot::ClassDB::bind_method(godot::D_METHOD("get_host_architecture"),
                                 &GDPPCompiler::get_host_architecture);
+    godot::ClassDB::bind_method(
+        godot::D_METHOD("is_target_supported", "platform", "architecture"),
+        &GDPPCompiler::is_target_supported);
     godot::ClassDB::bind_method(godot::D_METHOD("get_supported_godot_versions"),
                                 &GDPPCompiler::get_supported_godot_versions);
     godot::ClassDB::bind_method(godot::D_METHOD("execute_project_build", "build_plan"),
@@ -1243,6 +1246,13 @@ godot::String GDPPCompiler::get_host_platform() const {
 
 godot::String GDPPCompiler::get_host_architecture() const {
     return godot::String{host_process_architecture().c_str()};
+}
+
+bool GDPPCompiler::is_target_supported(const godot::String& platform,
+                                       const godot::String& architecture) const {
+    const auto parsed_platform = parse_native_platform(native_string(platform));
+    return parsed_platform &&
+           native_architecture_supported(*parsed_platform, native_string(architecture));
 }
 
 godot::PackedStringArray GDPPCompiler::get_supported_godot_versions() const {
