@@ -36,6 +36,8 @@ jobs:
           grep -q '^platform ios$' "$sdk/sdk.manifest"
           grep -q '^arch arm64$' "$sdk/sdk.manifest"
           grep -q '^profiles debug,release$' "$sdk/sdk.manifest"
+          grep -q '^distribution_binding template_release$' "$sdk/sdk.manifest"
+          grep -q '^distribution_optimization Release$' "$sdk/sdk.manifest"
           grep -q '^ios_slices device-arm64,simulator-arm64,simulator-x86_64$' \
             "$sdk/sdk.manifest"
           grep -q '^source_paths mapped$' "$sdk/sdk.manifest"

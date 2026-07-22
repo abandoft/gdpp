@@ -48,6 +48,8 @@ jobs:
           grep -q '^platform android$' "$sdk/sdk.manifest"
           grep -q '^arch arm64$' "$sdk/sdk.manifest"
           grep -q '^profiles debug,release$' "$sdk/sdk.manifest"
+          grep -q '^distribution_binding template_release$' "$sdk/sdk.manifest"
+          grep -q '^distribution_optimization Release$' "$sdk/sdk.manifest"
           grep -q '^android_api_level 28$' "$sdk/sdk.manifest"
           test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_debug*.a' | wc -l)" -eq 0
           test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_release*.a' | wc -l)" -eq 1

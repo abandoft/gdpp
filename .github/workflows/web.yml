@@ -58,6 +58,8 @@ jobs:
           grep -q '^platform web$' "$sdk/sdk.manifest"
           grep -q '^arch wasm32$' "$sdk/sdk.manifest"
           grep -q '^profiles debug,release$' "$sdk/sdk.manifest"
+          grep -q '^distribution_binding template_release$' "$sdk/sdk.manifest"
+          grep -q '^distribution_optimization Release$' "$sdk/sdk.manifest"
           grep -q '^web_threads ${{ matrix.variant }}$' "$sdk/sdk.manifest"
           grep -q '^compiler Emscripten$' "$sdk/sdk.manifest"
           grep -q '^source_paths mapped$' "$sdk/sdk.manifest"
