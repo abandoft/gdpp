@@ -86,14 +86,16 @@ jobs:
           set -euo pipefail
           root="$GITHUB_WORKSPACE/build/ci/godot/$GODOT_VERSION"
           mkdir -p "$root"
-          curl --fail --location --retry 3 --output "$root/editor.zip" \
-            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
+          bash "$GITHUB_WORKSPACE/tools/download_with_retry.sh" \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_macos.universal.zip" \
+            "$root/editor.zip"
           ditto -x -k "$root/editor.zip" "$root"
           editor="$root/Godot.app/Contents/MacOS/Godot"
           test -x "$editor"
           echo "executable=$editor" >> "$GITHUB_OUTPUT"
-          curl --fail --location --retry 3 --output "$root/templates.tpz" \
-            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          bash "$GITHUB_WORKSPACE/tools/download_with_retry.sh" \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" \
+            "$root/templates.tpz"
           destination="$HOME/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
           mkdir -p "$destination"
           unzip -p "$root/templates.tpz" templates/ios.zip > "$destination/ios.zip"
