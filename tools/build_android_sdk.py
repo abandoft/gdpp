@@ -181,6 +181,8 @@ def main() -> int:
         "platform android\n"
         f"arch {architecture}\n"
         "profiles debug,release\n"
+        "distribution_binding template_release\n"
+        "distribution_optimization Release\n"
         "platform_minimum Android_9\n"
         f"gdpp_version {args.gdpp_version}\n"
         "cxx_standard 17\n"

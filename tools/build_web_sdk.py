@@ -202,6 +202,8 @@ def main() -> int:
         "platform web\n"
         "arch wasm32\n"
         "profiles debug,release\n"
+        "distribution_binding template_release\n"
+        "distribution_optimization Release\n"
         "platform_minimum none\n"
         f"web_threads {variant}\n"
         f"gdpp_version {args.gdpp_version}\n"
