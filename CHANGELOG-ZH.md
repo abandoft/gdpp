@@ -2,6 +2,12 @@
 
 - 在全部商业插件压缩包中包含原生构建进度界面，确保全新安装可在导出前正常加载编辑器插件。
 - 当暂存插件或最终确定性 ZIP 缺少进度界面时让发布组装失败。
+- Debug 与 Release 游戏导出统一使用优化后的 `template_release` godot-cpp 绑定，同时保留 Godot 编辑器进程所必需的独立 `editor` 绑定。
+- 从主机、Android、iOS 和 Web SDK 包中移除全部 `template_debug` 归档；每个平台及线程 ABI 仅携带一套分发绑定，不再重复发布数百 MB 的调试对象。
+- 通过 GDPP 自有编译宏保留 GDScript Debug 导出的 `assert()` 求值语义，使其不再依赖 godot-cpp 绑定目标和原生优化配置。
+- Debug 导出的项目动态库现与 Release 导出使用相同的商业级优化、死代码裁剪和符号隐藏流程。
+- 发行 SDK 升级至 schema 9，显式声明分发绑定及优化配置，并在编译前拒绝陈旧、Debug 绑定或混合安装的 SDK。
+- 新增 Godot 4.4～4.7 真实 Debug 导出运行门禁，验证仅安装 Release 绑定时脚本断言仍保持启用。
 
 ## 1.7.3
 
