@@ -898,9 +898,9 @@ void GDPPCompiler::_bind_methods() {
     godot::ClassDB::bind_method(
         godot::D_METHOD("compile_project", "project_root", "output_directory", "sdk_root",
                         "compiler_executable", "target_version", "build_profile", "target_platform",
-                        "target_architecture", "target_variant"),
+                        "target_architecture", "target_variant", "progress_callback"),
         &GDPPCompiler::compile_project, DEFVAL("4.4"), DEFVAL("development"), DEFVAL(""),
-        DEFVAL(""), DEFVAL(""));
+        DEFVAL(""), DEFVAL(""), DEFVAL(godot::Callable{}));
     godot::ClassDB::bind_method(godot::D_METHOD("get_default_sdk_root"),
                                 &GDPPCompiler::get_default_sdk_root);
     godot::ClassDB::bind_method(godot::D_METHOD("get_default_compiler_executable"),
@@ -947,7 +947,6 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands,
 
     std::stable_sort(invocations.begin(), invocations.end(),
                      [](const auto& left, const auto& right) { return left.stage < right.stage; });
-    std::atomic<std::size_t> completed_commands{0};
     for (std::size_t begin = 0; begin < invocations.size();) {
         std::size_t end = begin + 1;
         while (end < invocations.size() && invocations[end].stage == invocations[begin].stage)
@@ -957,6 +956,7 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands,
         const auto worker_count =
             std::min(count, static_cast<std::size_t>(std::min(hardware_threads, 8U)));
         std::atomic<std::size_t> next{begin};
+        std::atomic<std::size_t> stage_completed{0};
         std::atomic<std::size_t> active_workers{worker_count};
         std::atomic<int64_t> first_error{0};
         std::condition_variable progress_condition;
@@ -964,9 +964,8 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands,
         std::vector<std::thread> workers;
         workers.reserve(worker_count);
         const auto* phase = invocations[begin].stage == 0 ? "compile" : "link";
-        report_build_progress(progress_callback, phase, completed_commands.load(),
-                              invocations.size());
-        auto reported_commands = completed_commands.load();
+        report_build_progress(progress_callback, phase, 0, count);
+        std::size_t reported_commands = 0;
         for (std::size_t worker = 0; worker < worker_count; ++worker) {
             workers.emplace_back([&]() {
                 while (first_error.load() == 0) {
@@ -976,7 +975,7 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands,
                     const auto& invocation = invocations[index];
                     const auto exit_code =
                         execute_native_process(invocation.executable, invocation.arguments);
-                    completed_commands.fetch_add(1);
+                    stage_completed.fetch_add(1);
                     progress_condition.notify_one();
                     if (exit_code != 0) {
                         int64_t expected = 0;
@@ -992,10 +991,9 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands,
                 std::unique_lock<std::mutex> lock{progress_mutex};
                 progress_condition.wait_for(lock, std::chrono::milliseconds{50});
                 lock.unlock();
-                const auto current_commands = completed_commands.load();
+                const auto current_commands = stage_completed.load();
                 if (current_commands != reported_commands) {
-                    report_build_progress(progress_callback, phase, current_commands,
-                                          invocations.size());
+                    report_build_progress(progress_callback, phase, current_commands, count);
                     reported_commands = current_commands;
                 } else {
                     refresh_editor_display();
@@ -1004,8 +1002,7 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands,
         }
         for (auto& worker : workers)
             worker.join();
-        report_build_progress(progress_callback, phase, completed_commands.load(),
-                              invocations.size());
+        report_build_progress(progress_callback, phase, stage_completed.load(), count);
         if (first_error.load() != 0)
             return first_error.load();
         begin = end;
@@ -1102,7 +1099,7 @@ godot::Dictionary GDPPCompiler::compile_project(
     const godot::String& sdk_root, const godot::String& compiler_executable,
     const godot::String& target_version, const godot::String& build_profile,
     const godot::String& target_platform, const godot::String& target_architecture,
-    const godot::String& target_variant) const {
+    const godot::String& target_variant, const godot::Callable& progress_callback) const {
     const auto version = parse_godot_version(native_string(target_version));
     if (!version)
         return invalid_version_result(target_version);
@@ -1174,6 +1171,30 @@ godot::Dictionary GDPPCompiler::compile_project(
                            *version, *platform, architecture, web_thread_mode);
     options.reflected_extension_bridges = reflect_extension_contracts();
     options.compiler.target_version = *version;
+    if (progress_callback.is_valid()) {
+        options.progress_callback = [&](const ProjectCompilePhase phase,
+                                        const std::size_t completed, const std::size_t total) {
+            const char* phase_name = "analyze";
+            switch (phase) {
+            case ProjectCompilePhase::scan:
+                phase_name = "scan";
+                break;
+            case ProjectCompilePhase::parse:
+                phase_name = "parse";
+                break;
+            case ProjectCompilePhase::analyze:
+                phase_name = "analyze";
+                break;
+            case ProjectCompilePhase::translate:
+                phase_name = "translate";
+                break;
+            case ProjectCompilePhase::generate:
+                phase_name = "generate";
+                break;
+            }
+            report_build_progress(progress_callback, phase_name, completed, total);
+        };
+    }
     options.generate_cmake = false;
     const auto development_descriptor = options.output_directory / "gdpp_project.gdextension";
     const auto preserved_development_descriptor = *profile == NativeBuildProfile::development

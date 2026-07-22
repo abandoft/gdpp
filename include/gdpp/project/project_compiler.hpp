@@ -6,11 +6,23 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace gdpp {
+
+enum class ProjectCompilePhase {
+    scan,
+    parse,
+    analyze,
+    translate,
+    generate,
+};
+
+using ProjectCompileProgressCallback =
+    std::function<void(ProjectCompilePhase phase, std::size_t completed, std::size_t total)>;
 
 struct ProjectCompileOptions {
     std::filesystem::path project_root;
@@ -23,6 +35,7 @@ struct ProjectCompileOptions {
     // intentionally leaves the list empty and can still consume checked-in bridge manifests.
     std::vector<ExtensionBridge> reflected_extension_bridges;
     CompileOptions compiler;
+    ProjectCompileProgressCallback progress_callback;
     bool generate_cmake{true};
 };
 

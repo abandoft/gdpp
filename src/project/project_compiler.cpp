@@ -1381,6 +1381,12 @@ bool has_project_errors(const std::vector<ProjectDiagnostic>& diagnostics) {
     });
 }
 
+void report_project_progress(const ProjectCompileOptions& options, const ProjectCompilePhase phase,
+                             const std::size_t completed, const std::size_t total) {
+    if (options.progress_callback)
+        options.progress_callback(phase, completed, total);
+}
+
 } // namespace
 
 ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& options) const {
@@ -1415,6 +1421,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     const auto manifest_path = output / "manifest.txt";
     const auto loaded_manifest = read_manifest(manifest_path);
     const auto& old_manifest = loaded_manifest.entries;
+    report_project_progress(options, ProjectCompilePhase::scan, 0, 1);
     std::vector<std::filesystem::path> source_paths;
     std::vector<std::filesystem::path> text_resource_paths;
     std::vector<std::filesystem::path> uid_sidecar_paths;
@@ -1654,6 +1661,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     std::sort(inputs.begin(), inputs.end(), [](const SourceInput& left, const SourceInput& right) {
         return left.relative < right.relative;
     });
+    report_project_progress(options, ProjectCompilePhase::scan, 1, 1);
 
     // Parse every script before code generation so project-wide class names and inheritance form
     // one deterministic graph. The regular compiler reparses each unit later and remains the
@@ -1661,6 +1669,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     std::unordered_map<std::string, std::size_t> script_classes;
     std::unordered_map<std::string, std::size_t> native_class_names;
     std::unordered_map<std::string, std::size_t> script_paths;
+    const auto script_progress_total = std::max<std::size_t>(inputs.size(), 1);
+    report_project_progress(options, ProjectCompilePhase::parse, 0, script_progress_total);
     for (std::size_t index = 0; index < inputs.size(); ++index) {
         auto& input = inputs[index];
         const SourceFile source{input.relative, input.source};
@@ -1884,7 +1894,12 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             }
         }
         script_paths.emplace(input.relative, index);
+        report_project_progress(options, ProjectCompilePhase::parse, index + 1,
+                                script_progress_total);
     }
+    if (inputs.empty())
+        report_project_progress(options, ProjectCompilePhase::parse, 1, 1);
+    report_project_progress(options, ProjectCompilePhase::analyze, 0, script_progress_total);
     for (const auto& [name, bridge_class] : bridge_classes) {
         if (!target_api.find_class(bridge_class.type->godot_base)) {
             result.diagnostics.push_back(
@@ -2738,6 +2753,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                                                  ".gd.hpp");
     }
 
+    std::size_t analyzed_inputs = 0;
     for (auto& input : inputs) {
         DiagnosticBag diagnostics{options.compiler.frontend_limits.max_diagnostics};
         SemanticAnalyzer analyzer{diagnostics, target_api, input.semantic_base_type,
@@ -2759,7 +2775,11 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
         std::sort(input.dependencies.begin(), input.dependencies.end());
         input.dependencies.erase(std::unique(input.dependencies.begin(), input.dependencies.end()),
                                  input.dependencies.end());
+        report_project_progress(options, ProjectCompilePhase::analyze, ++analyzed_inputs,
+                                script_progress_total);
     }
+    if (inputs.empty())
+        report_project_progress(options, ProjectCompilePhase::analyze, 1, 1);
     if (has_project_errors(result.diagnostics))
         return result;
 
@@ -2808,6 +2828,9 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     std::unordered_map<std::string, std::string> class_owners;
     std::set<std::string> output_names;
     const Compiler compiler;
+    const auto translation_total = std::max<std::size_t>(compile_order.size(), 1);
+    std::size_t translated_inputs = 0;
+    report_project_progress(options, ProjectCompilePhase::translate, 0, translation_total);
     for (const auto input_index : compile_order) {
         const auto& input = inputs[input_index];
         CompiledProjectScript script;
@@ -2879,6 +2902,8 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
             if (!compilation.success) {
                 for (auto& diagnostic : compilation.diagnostics)
                     result.diagnostics.push_back({input.path, std::move(diagnostic)});
+                report_project_progress(options, ProjectCompilePhase::translate,
+                                        ++translated_inputs, translation_total);
                 continue;
             }
             script.class_name = compilation.unit.class_name;
@@ -2909,10 +2934,15 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
                                            script.class_name, script.header_file_name,
                                            script.source_file_name, input.dependencies});
         result.scripts.push_back(std::move(script));
+        report_project_progress(options, ProjectCompilePhase::translate, ++translated_inputs,
+                                translation_total);
     }
+    if (compile_order.empty())
+        report_project_progress(options, ProjectCompilePhase::translate, 1, 1);
     if (has_project_errors(result.diagnostics))
         return result;
 
+    report_project_progress(options, ProjectCompilePhase::generate, 0, 1);
     std::filesystem::create_directories(generated, error);
     if (error) {
         result.diagnostics.push_back(
@@ -3018,6 +3048,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     }
     result.extension_descriptor = output / "gdpp_project.gdextension";
     result.native_library_directory = native_library_directory;
+    report_project_progress(options, ProjectCompilePhase::generate, 1, 1);
     return result;
 }
 
