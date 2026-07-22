@@ -2,6 +2,12 @@
 
 - Include the native-build progress overlay in every commercial plugin archive so fresh installations can load the editor plugin before export.
 - Fail release assembly when the progress overlay is absent from either the staged add-on or the final deterministic ZIP.
+- Use the optimized `template_release` godot-cpp binding for both Debug and Release game exports while retaining the separate `editor` binding required by the Godot editor process.
+- Remove every `template_debug` archive from host, Android, iOS, and Web SDK packages; each platform/thread ABI now carries one distribution binding instead of duplicating hundreds of megabytes of debug objects.
+- Preserve GDScript Debug-export `assert()` evaluation through a GDPP-owned compile definition, independently of godot-cpp's binding target and native optimization profile.
+- Optimize, dead-strip, and hide symbols in Debug-export project libraries with the same commercial native pipeline used for Release exports.
+- Advance the packaged SDK to schema 9, declaring the distribution binding and optimization profile explicitly and rejecting stale, debug-bound, or mixed SDK installations before compilation.
+- Add real Godot 4.4–4.7 Debug-export execution gates that prove script assertions remain active while only the Release binding is installed.
 
 ## 1.7.3
 
