@@ -1077,6 +1077,39 @@ TEST_CASE("project compiler accepts variance-safe script override contracts") {
     REQUIRE(header.find("_gdpp_native_override_transform") != std::string::npos);
 }
 
+TEST_CASE("project compiler compares internal script overrides by emitted native ABI") {
+    const auto root = fixture_root("project-inner-native-override-abi");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "message.gd",
+               "extends RefCounted\nclass_name NativeMessageContract\n"
+               "func New() -> NativeMessageContract:\n    return null\n"
+               "func MergeFrom(other: NativeMessageContract) -> void:\n    pass\n");
+    write_text(root / "generated.gd",
+               "extends RefCounted\n"
+               "class Packet extends NativeMessageContract:\n"
+               "    func New() -> NativeMessageContract:\n        return Packet.new()\n"
+               "    func MergeFrom(other: NativeMessageContract) -> void:\n        pass\n");
+    const auto options = project_options(root);
+
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    const auto generated =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path.filename() == "generated.gd";
+        });
+    REQUIRE(generated != result.scripts.end());
+    const auto header =
+        read_text(options.output_directory / "generated" / generated->header_file_name);
+    REQUIRE(header.find("New() override;") != std::string::npos);
+    REQUIRE(header.find("MergeFrom(godot::Ref<GDPPNative_NativeMessageContract") !=
+            std::string::npos);
+    REQUIRE(header.find(" other) override;") != std::string::npos);
+    REQUIRE(header.find("_gdpp_native_override_New") == std::string::npos);
+    REQUIRE(header.find("_gdpp_native_override_MergeFrom") == std::string::npos);
+}
+
 TEST_CASE("project compiler rejects incompatible script override contracts") {
     const auto root = fixture_root("project-invalid-overrides");
     std::error_code error;

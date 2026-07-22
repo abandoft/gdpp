@@ -164,10 +164,40 @@ class CodeGenerator final {
     [[nodiscard]] std::string inner_godot_base_type(std::string_view name) const;
     [[nodiscard]] bool is_ref_counted_object(const Type& type) const noexcept;
     [[nodiscard]] std::string native_super_owner(std::string_view owner) const;
+    struct InnerMethodDeclaration {
+        const ScriptMemberSymbol* method{nullptr};
+        const ScriptInnerClassSymbol* inner_owner{nullptr};
+        const ScriptClassSymbol* script_owner{nullptr};
+    };
+    [[nodiscard]] bool same_native_method_abi(const ScriptMemberSymbol& derived,
+                                              std::string_view derived_godot_base,
+                                              const ScriptMemberSymbol& base,
+                                              std::string_view base_godot_base) const;
+    [[nodiscard]] bool same_native_function_abi(const ir::Function& derived,
+                                                std::string_view derived_godot_base,
+                                                const ir::Function& base,
+                                                std::string_view base_godot_base) const;
+    [[nodiscard]] const ir::Function*
+    find_inherited_inner_function(std::string_view base, std::string_view method,
+                                  std::string* declaration_owner = nullptr) const noexcept;
     [[nodiscard]] std::string script_method_native_name(const ScriptClassSymbol& owner,
                                                         const ScriptMemberSymbol& method) const;
-    [[nodiscard]] bool inner_overrides_method(std::string_view base,
-                                              std::string_view method) const noexcept;
+    [[nodiscard]] std::string
+    script_method_implementation_name(const ScriptClassSymbol& owner,
+                                      const ScriptMemberSymbol& method) const;
+    [[nodiscard]] const ScriptInnerClassSymbol*
+    inner_base_of(const ScriptInnerClassSymbol& owner) const noexcept;
+    [[nodiscard]] InnerMethodDeclaration
+    find_inner_method_declaration(const ScriptInnerClassSymbol& owner, std::string_view method,
+                                  bool include_owner) const noexcept;
+    [[nodiscard]] std::string
+    inner_method_native_name(const ScriptInnerClassSymbol& owner,
+                             const ScriptMemberSymbol& method) const;
+    [[nodiscard]] std::string
+    inner_method_implementation_name(const ScriptInnerClassSymbol& owner,
+                                     const ScriptMemberSymbol& method) const;
+    [[nodiscard]] bool inner_overrides_method(const ScriptInnerClassSymbol& owner,
+                                              const ScriptMemberSymbol& method) const;
     [[nodiscard]] bool managed_constant_field(const ir::Field& field) const;
     [[nodiscard]] bool managed_constant_reference(const ir::Expression& expression) const;
     void emit_inner_class_declaration(const ir::Class& declaration, std::ostringstream& header,
@@ -198,7 +228,7 @@ class CodeGenerator final {
     mutable std::unordered_map<std::string, std::string> inner_native_names_;
     mutable std::unordered_map<std::string, std::string> inner_godot_base_types_;
     mutable std::unordered_map<std::string, std::string> inner_base_names_;
-    mutable std::unordered_map<std::string, std::unordered_set<std::string>> inner_method_names_;
+    mutable std::unordered_map<std::string, const ir::Class*> inner_declarations_;
     mutable std::unordered_set<std::string> inner_ref_types_;
     mutable std::unordered_set<std::string> container_enum_types_;
     mutable std::unordered_map<std::string, std::vector<Type>> local_function_parameters_;
