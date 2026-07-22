@@ -952,59 +952,25 @@ int64_t GDPPCompiler::execute_build_commands(const godot::Array& commands,
         while (end < invocations.size() && invocations[end].stage == invocations[begin].stage)
             ++end;
         const auto count = end - begin;
-        const auto hardware_threads = std::max(1U, std::thread::hardware_concurrency());
-        const auto worker_count =
-            std::min(count, static_cast<std::size_t>(std::min(hardware_threads, 8U)));
-        std::atomic<std::size_t> next{begin};
-        std::atomic<std::size_t> stage_completed{0};
-        std::atomic<std::size_t> active_workers{worker_count};
-        std::atomic<int64_t> first_error{0};
-        std::condition_variable progress_condition;
-        std::mutex progress_mutex;
-        std::vector<std::thread> workers;
-        workers.reserve(worker_count);
         const auto* phase = invocations[begin].stage == 0 ? "compile" : "link";
         report_build_progress(progress_callback, phase, 0, count);
-        std::size_t reported_commands = 0;
-        for (std::size_t worker = 0; worker < worker_count; ++worker) {
-            workers.emplace_back([&]() {
-                while (first_error.load() == 0) {
-                    const auto index = next.fetch_add(1);
-                    if (index >= end)
-                        break;
-                    const auto& invocation = invocations[index];
-                    const auto exit_code =
-                        execute_native_process(invocation.executable, invocation.arguments);
-                    stage_completed.fetch_add(1);
-                    progress_condition.notify_one();
-                    if (exit_code != 0) {
-                        int64_t expected = 0;
-                        (void)first_error.compare_exchange_strong(expected, exit_code);
-                    }
-                }
-                active_workers.fetch_sub(1);
-                progress_condition.notify_one();
-            });
-        }
-        if (progress_callback.is_valid()) {
-            while (active_workers.load() != 0) {
-                std::unique_lock<std::mutex> lock{progress_mutex};
-                progress_condition.wait_for(lock, std::chrono::milliseconds{50});
-                lock.unlock();
-                const auto current_commands = stage_completed.load();
-                if (current_commands != reported_commands) {
-                    report_build_progress(progress_callback, phase, current_commands, count);
-                    reported_commands = current_commands;
-                } else {
-                    refresh_editor_display();
-                }
+        for (std::size_t index = begin; index < end; ++index) {
+            std::atomic<bool> command_complete{false};
+            int64_t exit_code = -1;
+            std::thread worker{[&]() {
+                const auto& invocation = invocations[index];
+                exit_code = execute_native_process(invocation.executable, invocation.arguments);
+                command_complete.store(true);
+            }};
+            while (!command_complete.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds{50});
+                refresh_editor_display();
             }
-        }
-        for (auto& worker : workers)
             worker.join();
-        report_build_progress(progress_callback, phase, stage_completed.load(), count);
-        if (first_error.load() != 0)
-            return first_error.load();
+            report_build_progress(progress_callback, phase, index - begin + 1, count);
+            if (exit_code != 0)
+                return exit_code;
+        }
         begin = end;
     }
     return 0;

@@ -45,8 +45,9 @@ struct NativeBuildCommand {
     std::string executable;
     std::vector<std::string> arguments;
     std::filesystem::path working_directory;
-    // Commands in one stage are independent and may execute in parallel. A later stage starts
-    // only after every command in the preceding stage succeeds.
+    // Commands execute in stage order and remain strictly serial within a stage. Native compiler
+    // frontends can consume substantial memory for generated project translation units, and
+    // customers must never receive an unbounded burst of toolchain processes during export.
     std::size_t stage{0};
 };
 
