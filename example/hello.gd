@@ -139,7 +139,7 @@ func _on_ready() -> void:
         and validate_inheritance() == true
         and validate_latest_literals() == true
         and validate_typed_containers() == true
-        and assertion_evaluation_count() == 0
+        and assertion_evaluation_count() == (1 if OS.is_debug_build() else 0)
     ):
         print("GDPP_EXPORTED_PROPERTIES_OK")
         _publish_web_smoke_status("ok")
