@@ -18,7 +18,9 @@
 `example/export_presets.cfg` 与 CI 的导出测试不写入 Android `min_sdk`、iOS 最低版本或 macOS
 deployment target，而是继承所安装的官方 Godot 导出模板设置；回归测试会拒绝重新加入这些覆盖项。
 
-Android arm64-v8a、iOS 和 Web wasm32 已接入自动导出；Android x86_64 仍属于平台矩阵里程碑。
+Android arm64-v8a、iOS 和 Web wasm32 已接入自动导出；Windows arm64、Linux arm64 与
+Android x86_64 仍属于平台矩阵里程碑，导出预检和 NativeBuilder 会在生成项目前失败关闭，
+不会声明或尝试构建尚未交付的 ABI。
 Web 需要匹配 Godot 小版本和线程模式的 target pack，详见 [Web 支持](WEB.md)；iOS 需要包含
 真机与 Universal Simulator 依赖的 target pack，详见 [iOS 支持](IOS.md)。
 
@@ -48,10 +50,10 @@ Web 保持独立可选 target pack，不计入这 12 个 ZIP。
 
 每个 ZIP 内的 `PACKAGE_MANIFEST.txt` 记录 GDPP 版本、compiler API、目标 Godot API、宿主、
 最低系统和可导出目标。打包器会核对三套 SDK 的 runtime ABI/源码摘要，并失败关闭地拒绝错误
-版本、错误平台、缺少移动 target pack 或最低版本不一致的组合。schema 7 还把 C++17、异常关闭、
-Windows 静态 MSVC CRT 与 Android `c++_shared` 写成必填 ABI 字段；SDK profile 构建和独立
-provider fixture 共用 compiler、toolchain、sysroot、deployment target、RC/MT 工具参数，避免
-嵌套 CMake 配置与预编译 godot-cpp 静态库漂移。
+版本、错误平台、缺少移动 target pack 或最低版本不一致的组合。schema 8 还把 C++17、异常关闭、
+Windows MSVC 编译器族、19.x 工具集版本、静态 CRT 与 Android `c++_shared` 写成必填 ABI 字段；
+SDK profile 构建和独立 provider fixture 共用 compiler、toolchain、sysroot、deployment target、
+RC/MT 工具参数，避免嵌套 CMake 配置与预编译 godot-cpp 静态库漂移。
 
 SDK profile 不沿用构建 GDPP 编译器插件时的优化级别。`debug` 静态库始终以 Debug 构建，
 `release` 静态库始终以 Release 构建；因此开发者使用 Debug compiler 插件执行 Release 导出时，
