@@ -38,7 +38,7 @@ jobs:
           -DGDPP_ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/$GDPP_ANDROID_NDK_VERSION"
           -DGDPP_ANDROID_SDK_VERSIONS=${{ matrix.godot }}
           -DGDPP_ANDROID_ARCHITECTURES=arm64
-      - name: Build Android debug and Release target SDK
+      - name: Build Android Release target SDK
         run: cmake --build --preset dev --target gdpp_android_sdk --parallel
       - name: Validate target SDK contract
         shell: bash
@@ -49,8 +49,9 @@ jobs:
           grep -q '^arch arm64$' "$sdk/sdk.manifest"
           grep -q '^profiles debug,release$' "$sdk/sdk.manifest"
           grep -q '^android_api_level 28$' "$sdk/sdk.manifest"
-          test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_debug*.a' | wc -l)" -eq 1
+          test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_debug*.a' | wc -l)" -eq 0
           test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_release*.a' | wc -l)" -eq 1
+          test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*.a' | wc -l)" -eq 1
       - name: Upload target SDK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

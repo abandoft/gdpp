@@ -12,7 +12,7 @@ import subprocess
 
 
 ANDROID_ABIS = {"arm64": "arm64-v8a", "x86_64": "x86_64"}
-PROFILES = {"debug": "template_debug", "release": "template_release"}
+GODOT_TARGET = "template_release"
 
 
 def clean_environment() -> dict[str, str]:
@@ -103,56 +103,49 @@ def main() -> int:
     (stage / "godot-cpp/gen").mkdir(parents=True)
     (stage / "lib").mkdir(parents=True)
 
-    generated_include: Path | None = None
-    packaged_libraries: list[Path] = []
-    for profile, godot_target in PROFILES.items():
-        directory = build_root / args.godot_version / architecture / profile
-        run(
-            [
-                "cmake",
-                "-S",
-                str(godot_cpp),
-                "-B",
-                str(directory),
-                "-G",
-                "Ninja",
-                "-DCMAKE_BUILD_TYPE=Release",
-                f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
-                f"-DANDROID_ABI={abi}",
-                f"-DANDROID_PLATFORM={args.api_level}",
-                "-DANDROID_STL=c++_shared",
-                f"-DGODOTCPP_API_VERSION={args.godot_version}",
-                f"-DGODOTCPP_TARGET={godot_target}",
-                "-DGODOTCPP_ENABLE_TESTING=OFF",
-                "-DGODOTCPP_SYSTEM_HEADERS=ON",
-            ]
-        )
-        run(["cmake", "--build", str(directory), "--target", "godot-cpp", "--parallel"])
-        expected = directory / "bin" / (
-            f"libgodot-cpp.android.{godot_target}.{architecture}.a"
-        )
-        if not expected.is_file():
-            candidates = sorted((directory / "bin").glob(f"*{godot_target}*{architecture}*.a"))
-            if len(candidates) != 1:
-                raise SystemExit(
-                    f"expected one Android {profile} godot-cpp library, found {candidates}"
-                )
-            expected = candidates[0]
-        packaged_library = stage / "lib" / expected.name
-        shutil.copy2(expected, packaged_library)
-        packaged_libraries.append(packaged_library)
-        generated_include = directory / "gen/include"
+    directory = build_root / args.godot_version / architecture / "release"
+    run(
+        [
+            "cmake",
+            "-S",
+            str(godot_cpp),
+            "-B",
+            str(directory),
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
+            f"-DANDROID_ABI={abi}",
+            f"-DANDROID_PLATFORM={args.api_level}",
+            "-DANDROID_STL=c++_shared",
+            f"-DGODOTCPP_API_VERSION={args.godot_version}",
+            f"-DGODOTCPP_TARGET={GODOT_TARGET}",
+            "-DGODOTCPP_ENABLE_TESTING=OFF",
+            "-DGODOTCPP_SYSTEM_HEADERS=ON",
+        ]
+    )
+    run(["cmake", "--build", str(directory), "--target", "godot-cpp", "--parallel"])
+    expected = directory / "bin" / (
+        f"libgodot-cpp.android.{GODOT_TARGET}.{architecture}.a"
+    )
+    if not expected.is_file():
+        candidates = sorted((directory / "bin").glob(f"*{GODOT_TARGET}*{architecture}*.a"))
+        if len(candidates) != 1:
+            raise SystemExit(
+                f"expected one Android distribution godot-cpp library, found {candidates}"
+            )
+        expected = candidates[0]
+    packaged_library = stage / "lib" / expected.name
+    shutil.copy2(expected, packaged_library)
 
     strip_candidates = sorted((ndk_root / "toolchains/llvm/prebuilt").glob("*/bin/llvm-strip*"))
     strip_tools = [path for path in strip_candidates if path.name in {"llvm-strip", "llvm-strip.exe"}]
     if len(strip_tools) != 1:
         raise SystemExit(f"expected one Android NDK llvm-strip, found {strip_tools}")
-    for library in packaged_libraries:
-        # Static archives need exported/relocation symbols, not compiler-local symbol tables.
-        # Removing only unneeded symbols cuts target-pack size substantially without changing ABI.
-        run([str(strip_tools[0]), "--strip-unneeded", str(library)])
+    # Static archives need exported/relocation symbols, not compiler-local symbol tables.
+    # Removing only unneeded symbols cuts target-pack size substantially without changing ABI.
+    run([str(strip_tools[0]), "--strip-unneeded", str(packaged_library)])
 
-    assert generated_include is not None
     shutil.copytree(godot_cpp / "include", stage / "godot-cpp/include", dirs_exist_ok=True)
     run(
         [
@@ -163,7 +156,7 @@ def main() -> int:
             str(class_db_patch),
         ]
     )
-    shutil.copytree(generated_include, stage / "godot-cpp/gen/include", dirs_exist_ok=True)
+    shutil.copytree(directory / "gen/include", stage / "godot-cpp/gen/include", dirs_exist_ok=True)
     shutil.copy2(godot_cpp / "LICENSE.md", stage / "godot-cpp/LICENSE.md")
     shutil.copy2(runtime_header, stage / "include/gdpp/runtime/variant_ops.hpp")
     shutil.copy2(runtime_source, stage / "src/runtime/variant_ops.cpp")
