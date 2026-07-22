@@ -3379,7 +3379,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 : callee.resolution == ir::ResolutionKind::inner_constructor
                     ? detail_namespace_ + "::InternalClassResource<" +
                           inner_cpp_type(callee.resolved_owner) + ">{}.instantiate"
-                : callee.resolution == ir::ResolutionKind::script_super && !callee.setter.empty()
+                : callee.resolution == ir::ResolutionKind::script_super
                     ? native_super_owner(callee.resolved_owner) + "::" + script_native_name
                 : callee.resolution == ir::ResolutionKind::script_static_callable &&
                         !callee.resolved_owner.empty()
@@ -3453,8 +3453,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         } else if (callee.resolution == ir::ResolutionKind::inner_constructor) {
             invocation = detail_namespace_ + "::InternalClassResource<" +
                          inner_cpp_type(callee.resolved_owner) + ">{}.instantiate";
-        } else if (callee.resolution == ir::ResolutionKind::script_super &&
-                   !callee.setter.empty()) {
+        } else if (callee.resolution == ir::ResolutionKind::script_super) {
             invocation = native_super_owner(callee.resolved_owner) + "::" + script_native_name;
         } else if (callee.resolution == ir::ResolutionKind::script_static_callable &&
                    !callee.resolved_owner.empty()) {

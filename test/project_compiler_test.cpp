@@ -1272,6 +1272,39 @@ TEST_CASE("project compiler rejects third-party bases without runtime metadata")
     }));
 }
 
+TEST_CASE("project compiler maps super calls through inherited engine virtual implementations") {
+    const auto root = fixture_root("project-inherited-engine-virtual-super");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "base.gd",
+               "extends Node\n"
+               "class_name EngineVirtualBase\n"
+               "func _ready() -> void:\n"
+               "    pass\n");
+    write_text(root / "middle.gd",
+               "extends EngineVirtualBase\n"
+               "class_name EngineVirtualMiddle\n");
+    write_text(root / "leaf.gd",
+               "extends EngineVirtualMiddle\n"
+               "class_name EngineVirtualLeaf\n"
+               "func _ready() -> void:\n"
+               "    super._ready()\n");
+    const auto options = project_options(root);
+
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    const auto leaf =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path.filename() == "leaf.gd";
+        });
+    REQUIRE(leaf != result.scripts.end());
+    const auto source = read_text(options.output_directory / "generated" / leaf->source_file_name);
+    const auto middle_native = native_class_for(result, "middle.gd");
+    REQUIRE(source.find(middle_native + "::_gdpp_virtual_impl__ready()") != std::string::npos);
+    REQUIRE(source.find(middle_native + "::_ready()") == std::string::npos);
+}
+
 TEST_CASE("project compiler attaches scripts to third-party GDExtension instances") {
     const auto root = fixture_root("project-extension-bridge");
     std::error_code error;
