@@ -1330,6 +1330,10 @@ TEST_CASE("project compiler attaches scripts to third-party GDExtension instance
     REQUIRE(registration.find("GDREGISTER_CLASS(" + result.scripts.front().class_name + ")") !=
             std::string::npos);
     REQUIRE(descriptor.find("reloadable = false") != std::string::npos);
+    REQUIRE(descriptor.find("linux.editor.x86_64") != std::string::npos);
+    REQUIRE(descriptor.find("windows.editor.x86_64") != std::string::npos);
+    REQUIRE(descriptor.find("linux.editor.arm64") == std::string::npos);
+    REQUIRE(descriptor.find("windows.editor.arm64") == std::string::npos);
 }
 
 TEST_CASE("project compiler dynamically bridges a binary-only GDExtension class") {

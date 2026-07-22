@@ -1358,9 +1358,7 @@ std::string generated_descriptor(const std::filesystem::path& project_relative_l
            << "macos.editor.universal.x86_64 = \"" << path(NativePlatform::macos, "universal")
            << "\"\n"
            << "linux.editor.x86_64 = \"" << path(NativePlatform::linux, "x86_64") << "\"\n"
-           << "linux.editor.arm64 = \"" << path(NativePlatform::linux, "arm64") << "\"\n"
-           << "windows.editor.x86_64 = \"" << path(NativePlatform::windows, "x86_64") << "\"\n"
-           << "windows.editor.arm64 = \"" << path(NativePlatform::windows, "arm64") << "\"\n";
+           << "windows.editor.x86_64 = \"" << path(NativePlatform::windows, "x86_64") << "\"\n";
     if (std::any_of(scripts.begin(), scripts.end(),
                     [](const auto& script) { return script.icon_path.has_value(); })) {
         output << "\n[icons]\n\n";
