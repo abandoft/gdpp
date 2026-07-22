@@ -103,10 +103,13 @@ foreach(required_target_service IN ITEMS
 endforeach()
 foreach(required_windows_process_contract IN ITEMS
         "CreateProcessW("
+        "CreatePipe(&output_read, &output_write"
         "STARTF_USESHOWWINDOW"
+        "STARTF_USESTDHANDLES"
         "SW_HIDE"
         "CREATE_NO_WINDOW"
-        "return execute_hidden_windows_process(command_arguments);"
+        "command_line += command;"
+        "return execute_hidden_windows_command_line(std::move(command_line));"
         "return execute_hidden_windows_process(wide_arguments);")
     string(FIND "${compiler_service}" "${required_windows_process_contract}"
         windows_process_offset)
@@ -121,6 +124,29 @@ if(NOT visible_windows_spawn_offset EQUAL -1)
     message(FATAL_ERROR
         "Windows export tools must not be launched through a visible console spawn")
 endif()
+foreach(required_serial_build_contract IN ITEMS
+        "for (std::size_t index = begin; index < end; ++index)"
+        "process_result ="
+        "toolchain output for '")
+    string(FIND "${compiler_service}" "${required_serial_build_contract}"
+        serial_build_offset)
+    if(serial_build_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Serial native build diagnostics contract is missing: "
+            "${required_serial_build_contract}")
+    endif()
+endforeach()
+foreach(forbidden_parallel_build_contract IN ITEMS
+        "hardware_concurrency()"
+        "worker_count")
+    string(FIND "${compiler_service}" "${forbidden_parallel_build_contract}"
+        parallel_build_offset)
+    if(NOT parallel_build_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Native export commands must remain strictly serial: "
+            "${forbidden_parallel_build_contract}")
+    endif()
+endforeach()
 foreach(required_build_progress_contract IN ITEMS
         "extends CanvasLayer"
         "func begin() -> void:"
