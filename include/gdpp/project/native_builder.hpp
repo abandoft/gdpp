@@ -17,6 +17,8 @@ enum class NativeWebThreadMode { not_applicable, single_threaded, multi_threaded
 [[nodiscard]] const char* native_build_profile_name(NativeBuildProfile profile) noexcept;
 [[nodiscard]] std::optional<NativeBuildProfile>
 parse_native_build_profile(std::string_view value) noexcept;
+[[nodiscard]] bool native_architecture_supported(NativePlatform platform,
+                                                 std::string_view architecture) noexcept;
 [[nodiscard]] std::string
 native_library_name(NativeBuildProfile profile, NativePlatform platform,
                     std::string_view architecture, std::string_view build_id,

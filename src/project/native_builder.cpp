@@ -1020,6 +1020,23 @@ std::optional<NativeBuildProfile> parse_native_build_profile(std::string_view va
     return std::nullopt;
 }
 
+bool native_architecture_supported(const NativePlatform platform,
+                                   const std::string_view architecture) noexcept {
+    switch (platform) {
+    case NativePlatform::macos:
+        return architecture == "arm64" || architecture == "x86_64" || architecture == "universal";
+    case NativePlatform::linux:
+    case NativePlatform::windows:
+        return architecture == "x86_64";
+    case NativePlatform::android:
+    case NativePlatform::ios:
+        return architecture == "arm64";
+    case NativePlatform::web:
+        return architecture == "wasm32";
+    }
+    return false;
+}
+
 std::string native_library_name(NativeBuildProfile profile, NativePlatform platform,
                                 std::string_view architecture, std::string_view build_id,
                                 NativeWebThreadMode web_thread_mode) {
@@ -1155,16 +1172,7 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
             "project native library output directory is not configured");
         return result;
     }
-    const bool architecture_supported =
-        (options.platform == NativePlatform::macos &&
-         (options.architecture == "arm64" || options.architecture == "x86_64" ||
-          options.architecture == "universal")) ||
-        (options.platform == NativePlatform::ios && options.architecture == "arm64") ||
-        (options.platform == NativePlatform::web && options.architecture == "wasm32") ||
-        (options.platform != NativePlatform::macos && options.platform != NativePlatform::ios &&
-         options.platform != NativePlatform::web &&
-         (options.architecture == "arm64" || options.architecture == "x86_64"));
-    if (!architecture_supported) {
+    if (!native_architecture_supported(options.platform, options.architecture)) {
         result.diagnostics.push_back("unsupported native architecture '" + options.architecture +
                                      "' for " + platform_name(options.platform));
         return result;

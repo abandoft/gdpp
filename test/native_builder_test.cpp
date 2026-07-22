@@ -390,6 +390,41 @@ TEST_CASE("native builder rejects unsupported architecture names before planning
     REQUIRE(plan.commands.empty());
 }
 
+TEST_CASE("native architecture support matches the shipped target matrix") {
+    REQUIRE(gdpp::native_architecture_supported(gdpp::NativePlatform::macos, "arm64"));
+    REQUIRE(gdpp::native_architecture_supported(gdpp::NativePlatform::macos, "x86_64"));
+    REQUIRE(gdpp::native_architecture_supported(gdpp::NativePlatform::macos, "universal"));
+    REQUIRE(gdpp::native_architecture_supported(gdpp::NativePlatform::linux, "x86_64"));
+    REQUIRE(gdpp::native_architecture_supported(gdpp::NativePlatform::windows, "x86_64"));
+    REQUIRE(gdpp::native_architecture_supported(gdpp::NativePlatform::android, "arm64"));
+    REQUIRE(gdpp::native_architecture_supported(gdpp::NativePlatform::ios, "arm64"));
+    REQUIRE(gdpp::native_architecture_supported(gdpp::NativePlatform::web, "wasm32"));
+
+    REQUIRE(!gdpp::native_architecture_supported(gdpp::NativePlatform::windows, "arm64"));
+    REQUIRE(!gdpp::native_architecture_supported(gdpp::NativePlatform::linux, "arm64"));
+    REQUIRE(!gdpp::native_architecture_supported(gdpp::NativePlatform::android, "x86_64"));
+    REQUIRE(!gdpp::native_architecture_supported(gdpp::NativePlatform::ios, "x86_64"));
+    REQUIRE(!gdpp::native_architecture_supported(gdpp::NativePlatform::web, "x86_64"));
+}
+
+TEST_CASE("native builder rejects unshipped Windows arm64 before touching the SDK") {
+    const auto root =
+        make_sdk_fixture("native-builder-windows-arm64", "godot-cpp.editor.x86_64.lib");
+    gdpp::NativeBuildOptions options;
+    options.project_output_directory = root / "project";
+    options.binary_output_directory = root / "addons/gdpp/binary";
+    options.sdk_root = root / "sdk";
+    options.compiler_executable = "cl.exe";
+    options.platform = gdpp::NativePlatform::windows;
+    options.architecture = "arm64";
+
+    const auto plan = gdpp::NativeBuilder{}.plan(options);
+
+    REQUIRE(!plan.success);
+    REQUIRE(plan.commands.empty());
+    REQUIRE(diagnostic_contains(plan, "unsupported native architecture 'arm64' for windows"));
+}
+
 TEST_CASE("native builder requires an explicit project library output directory") {
     const auto root =
         make_sdk_fixture("native-builder-output-directory", "libgodot-cpp.editor.arm64.a");
