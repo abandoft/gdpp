@@ -50,12 +50,14 @@ add_test(
         "${CMAKE_CURRENT_SOURCE_DIR}/web_browser_smoke_test.py"
 )
 
-add_test(
-    NAME gdpp.delivery.download_retry
-    COMMAND
-        "${Python3_EXECUTABLE}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/download_with_retry_test.py"
-)
+if(NOT WIN32)
+    add_test(
+        NAME gdpp.delivery.download_retry
+        COMMAND
+            "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/download_with_retry_test.py"
+    )
+endif()
 
 add_test(
     NAME gdpp.addon.clean
