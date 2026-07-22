@@ -2,6 +2,8 @@
 
 - Run Windows export compiler, environment-bootstrap, and linker subprocesses without creating visible console windows.
 - Preserve bounded parallel compilation and stage-ordered linking while keeping the export hot path independent of CMake project generation.
+- Show a dedicated, continuous native-build progress overlay before Godot packaging, with real per-file progress for project scanning, GDScript parsing, semantic analysis, GDScript-to-C++ translation, C++ compilation, and native linking.
+- Keep frontend, compile, and link progress stage-ordered and monotonic across development and distribution builds, then remove the overlay before Godot's packaging progress begins.
 - Lock the background-process and no-CMake export contracts into the delivery regression suite.
 
 ## 1.7.2
