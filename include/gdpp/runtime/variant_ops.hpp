@@ -229,6 +229,8 @@ template <typename Callback> class LocalCallable final : public godot::Callable 
           direct_(other.direct_) {}
 
     LocalCallable& operator=(const LocalCallable& other) {
+        if (this == &other)
+            return *this;
         godot::Callable::operator=(other);
         // C++17 closure types are not generally assignable. The copied Godot Callable already
         // owns the correct continuation, so assigned adapters conservatively use that ABI path.
@@ -236,16 +238,22 @@ template <typename Callback> class LocalCallable final : public godot::Callable 
         return *this;
     }
     LocalCallable& operator=(LocalCallable&& other) noexcept {
+        if (this == &other)
+            return *this;
         godot::Callable::operator=(std::move(other));
         direct_ = false;
         return *this;
     }
     LocalCallable& operator=(const godot::Callable& other) {
+        if (static_cast<const godot::Callable*>(this) == &other)
+            return *this;
         godot::Callable::operator=(other);
         direct_ = false;
         return *this;
     }
     LocalCallable& operator=(godot::Callable&& other) noexcept {
+        if (static_cast<godot::Callable*>(this) == &other)
+            return *this;
         godot::Callable::operator=(std::move(other));
         direct_ = false;
         return *this;
