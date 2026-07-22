@@ -1,3 +1,9 @@
+## 1.7.3
+
+- Run Windows export compiler, environment-bootstrap, and linker subprocesses without creating visible console windows.
+- Preserve bounded parallel compilation and stage-ordered linking while keeping the export hot path independent of CMake project generation.
+- Lock the background-process and no-CMake export contracts into the delivery regression suite.
+
 ## 1.7.2
 
 - Completed lossless third-party GDExtension reflection for Variant, typed Array/Dictionary, Signal, object classes, engine-typed Dictionary contracts, and encoded container metadata, preserving provider APIs without source changes.

@@ -1,3 +1,9 @@
+## 1.7.3
+
+- Windows 导出时的编译器、环境初始化和链接器子进程不再创建可见控制台窗口。
+- 保留有界并行编译和分阶段顺序链接，同时确保导出热路径不依赖 CMake 工程生成。
+- 将后台进程与导出禁用 CMake 的契约纳入交付回归测试。
+
 ## 1.7.2
 
 - 完成第三方 GDExtension 的无损反射，覆盖 Variant、强类型 Array/Dictionary、Signal、对象类、引擎类型化 Dictionary 契约和编码容器元数据，无需修改源码即可保留 provider API。
