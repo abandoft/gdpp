@@ -400,12 +400,12 @@ jobs:
           path: build/complete-components
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: gdpp-target-android-*-godot-${{ matrix.godot }}
-          path: build/complete-components
+          name: gdpp-target-android-arm64-godot-${{ matrix.godot }}
+          path: build/complete-components/gdpp-target-android-arm64-godot-${{ matrix.godot }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: gdpp-target-ios-*-godot-${{ matrix.godot }}
-          path: build/complete-components
+          name: gdpp-target-ios-arm64-godot-${{ matrix.godot }}
+          path: build/complete-components/gdpp-target-ios-arm64-godot-${{ matrix.godot }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: gdpp-web-godot-${{ matrix.godot }}-*
