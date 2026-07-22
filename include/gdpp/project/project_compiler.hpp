@@ -36,7 +36,6 @@ struct ProjectCompileOptions {
     std::vector<ExtensionBridge> reflected_extension_bridges;
     CompileOptions compiler;
     ProjectCompileProgressCallback progress_callback;
-    bool generate_cmake{true};
 };
 
 struct ProjectDiagnostic {
@@ -82,6 +81,11 @@ struct ProjectCompileResult {
 class ProjectCompiler final {
   public:
     [[nodiscard]] ProjectCompileResult compile(const ProjectCompileOptions& options) const;
+    [[nodiscard]] ProjectCompileResult compile_direct(const ProjectCompileOptions& options) const;
+
+  private:
+    [[nodiscard]] ProjectCompileResult compile_impl(const ProjectCompileOptions& options,
+                                                    bool include_cmake_scaffold) const;
 };
 
 } // namespace gdpp

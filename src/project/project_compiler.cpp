@@ -1390,6 +1390,15 @@ void report_project_progress(const ProjectCompileOptions& options, const Project
 } // namespace
 
 ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& options) const {
+    return compile_impl(options, true);
+}
+
+ProjectCompileResult ProjectCompiler::compile_direct(const ProjectCompileOptions& options) const {
+    return compile_impl(options, false);
+}
+
+ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& options,
+                                                   const bool include_cmake_scaffold) const {
     ProjectCompileResult result;
     std::error_code error;
     const auto root = std::filesystem::absolute(options.project_root, error).lexically_normal();
@@ -3011,15 +3020,15 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     const auto relative_output = output.lexically_relative(root);
     const auto build_directory = containing_build_directory(root, relative_output);
     const bool cmake_written =
-        !options.generate_cmake ||
+        !include_cmake_scaffold ||
         write_file_if_changed(output / "CMakeLists.txt",
                               generated_cmake(options, result.scripts, result.build_id,
                                               native_library_directory, bridge_load.bridges));
     const bool artifact_pruner_written =
-        !options.generate_cmake || write_file_if_changed(output / "prune_stale_development.cmake",
+        !include_cmake_scaffold || write_file_if_changed(output / "prune_stale_development.cmake",
                                                          generated_artifact_pruner());
     const bool class_db_patch_written =
-        !options.generate_cmake || write_file_if_changed(output / "patch_godot_cpp_class_db.cmake",
+        !include_cmake_scaffold || write_file_if_changed(output / "patch_godot_cpp_class_db.cmake",
                                                          generated_godot_cpp_class_db_patch());
     if (!write_file_if_changed(output / "register_types.cpp",
                                generated_registration(result.scripts)) ||
@@ -3042,7 +3051,7 @@ ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& optio
     }
 
     result.success = true;
-    if (options.generate_cmake) {
+    if (include_cmake_scaffold) {
         result.cmake_source_directory = output;
         result.cmake_build_directory = output / "native";
     }

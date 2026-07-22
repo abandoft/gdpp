@@ -107,8 +107,7 @@ foreach(required_windows_process_contract IN ITEMS
         "SW_HIDE"
         "CREATE_NO_WINDOW"
         "return execute_hidden_windows_process(command_arguments);"
-        "return execute_hidden_windows_process(wide_arguments);"
-        "options.generate_cmake = false;")
+        "return execute_hidden_windows_process(wide_arguments);")
     string(FIND "${compiler_service}" "${required_windows_process_contract}"
         windows_process_offset)
     if(windows_process_offset EQUAL -1)

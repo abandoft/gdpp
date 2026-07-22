@@ -1195,13 +1195,12 @@ godot::Dictionary GDPPCompiler::compile_project(
             report_build_progress(progress_callback, phase_name, completed, total);
         };
     }
-    options.generate_cmake = false;
     const auto development_descriptor = options.output_directory / "gdpp_project.gdextension";
     const auto preserved_development_descriptor = *profile == NativeBuildProfile::development
                                                       ? std::optional<std::string>{}
                                                       : read_file(development_descriptor);
     const ProjectCompiler compiler;
-    const auto result = compiler.compile(options);
+    const auto result = compiler.compile_direct(options);
     std::string descriptor_additional_sections;
     if (result.success && *profile == NativeBuildProfile::development) {
         if (const auto descriptor = read_file(result.extension_descriptor)) {
