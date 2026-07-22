@@ -4250,7 +4250,7 @@ std::string CodeGenerator::emit_async_statements(
             condition_terminal += indent(1) + after_assert + "();\n";
             condition_terminal += "} else {\n" + message_path + "}\n";
 
-            result += indent(indentation + 1) + "#ifdef DEBUG_ENABLED\n";
+            result += indent(indentation + 1) + "#ifdef GDPP_SCRIPT_DEBUG_ENABLED\n";
             result +=
                 emit_async_statements(statement.assert_condition_prefix, indentation + 1, 0, {},
                                       condition_terminal, continuation_context, loop_control);
@@ -4555,7 +4555,7 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                                emit_expression(*statement.expression)) +
                ";\n";
     case ir::StatementKind::assert_statement: {
-        std::string result = prefix + "#ifdef DEBUG_ENABLED\n";
+        std::string result = prefix + "#ifdef GDPP_SCRIPT_DEBUG_ENABLED\n";
         for (const auto& child : statement.assert_condition_prefix)
             result += emit_statement(child, indentation);
         result += prefix + "if (!(" + emit_truthy(*statement.condition) + ")) {\n";

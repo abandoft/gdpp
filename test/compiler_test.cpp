@@ -219,7 +219,7 @@ TEST_CASE("compiler generates debug-only typed assert control flow") {
                                          "    assert(value)\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("#ifdef DEBUG_ENABLED") != std::string::npos);
+    REQUIRE(result.unit.source.find("#ifdef GDPP_SCRIPT_DEBUG_ENABLED") != std::string::npos);
     REQUIRE(result.unit.source.find("ERR_FAIL_V_EDMSG") != std::string::npos);
     REQUIRE(result.unit.source.find("ERR_FAIL_EDMSG") != std::string::npos);
     REQUIRE(result.unit.source.find("Assertion failed at res://assertions.gd:3") !=
@@ -1546,7 +1546,7 @@ TEST_CASE("compiler isolates awaited assert operands and emits one shared contin
     REQUIRE(assertion.success);
     REQUIRE_EQ(occurrences(assertion.unit.source, "gdpp::runtime::await_signal"), std::size_t{2});
     REQUIRE_EQ(occurrences(assertion.unit.source, "auto _gdpp_after_assert_"), std::size_t{1});
-    const auto debug_begin = assertion.unit.source.find("#ifdef DEBUG_ENABLED");
+    const auto debug_begin = assertion.unit.source.find("#ifdef GDPP_SCRIPT_DEBUG_ENABLED");
     const auto first_await = assertion.unit.source.find("const godot::Variant _gdpp_awaitable_");
     const auto release_branch = assertion.unit.source.find("#else", debug_begin);
     const auto debug_end = assertion.unit.source.find("#endif", release_branch);
