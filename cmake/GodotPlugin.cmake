@@ -475,10 +475,17 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
                 "${GDPP_SDK_EDITOR_BUILD_${GDPP_SDK_SUFFIX}}/gen/include"
                 "${GDPP_SDK_DIRECTORY}/godot-cpp/gen/include"
     )
+    # godot-cpp deliberately fixes PREFIX to "lib" on every host, including MSVC where CMake's
+    # default static-library prefix is empty. Read the upstream target property so external SDK
+    # builds and the in-tree binding always use the same archive basename.
+    get_target_property(GDPP_GODOT_CPP_LIBRARY_PREFIX godot-cpp PREFIX)
+    if(NOT GDPP_GODOT_CPP_LIBRARY_PREFIX)
+        message(FATAL_ERROR "godot-cpp must declare its static-library PREFIX")
+    endif()
     set(GDPP_EDITOR_LIBRARY_NAME
-        "${CMAKE_STATIC_LIBRARY_PREFIX}godot-cpp.${GDPP_PLATFORM}.editor.${GDPP_ARCH}${CMAKE_STATIC_LIBRARY_SUFFIX}")
+        "${GDPP_GODOT_CPP_LIBRARY_PREFIX}godot-cpp.${GDPP_PLATFORM}.editor.${GDPP_ARCH}${CMAKE_STATIC_LIBRARY_SUFFIX}")
     set(GDPP_RELEASE_LIBRARY_NAME
-        "${CMAKE_STATIC_LIBRARY_PREFIX}godot-cpp.${GDPP_PLATFORM}.template_release.${GDPP_ARCH}${CMAKE_STATIC_LIBRARY_SUFFIX}")
+        "${GDPP_GODOT_CPP_LIBRARY_PREFIX}godot-cpp.${GDPP_PLATFORM}.template_release.${GDPP_ARCH}${CMAKE_STATIC_LIBRARY_SUFFIX}")
     if(GDPP_SDK_VERSION STREQUAL GDPP_GODOT_API_VERSION)
         set(GDPP_EDITOR_LIBRARY_SOURCE "$<TARGET_FILE:godot-cpp>")
     else()
