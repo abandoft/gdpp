@@ -1,4 +1,4 @@
-; GDPP development and release-packaging project.
+; GDPP export-only AOT integration project.
 ; Build a plugin preset first, then open this project directly in Godot.
 
 config_version=5

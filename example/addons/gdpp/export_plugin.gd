@@ -5,7 +5,6 @@ const NATIVE_BUILD_JOB := preload("res://addons/gdpp/native_build_job.gd")
 const OUTPUT_DIRECTORY := "res://addons/gdpp/build/project"
 const BINARY_DIRECTORY := "res://addons/gdpp/binary"
 const COMPILER_DESCRIPTOR := "res://addons/gdpp/gdpp.gdextension"
-const LEGACY_RUNTIME_DESCRIPTOR := "res://addons/gdpp/gdpp_project.gdextension"
 const ADDON_PREFIX := "res://addons/gdpp/"
 const RUNTIME_RESOURCE_PREFIX := "res://addons/gdpp/runtime/"
 const COMPILER_SETTING := "gdpp/build/cpp_compiler"
@@ -23,7 +22,7 @@ const PROVIDER_DESCRIPTORS_BACKUP := (
 )
 const SCRIPT_CLASS_CACHE := "res://.godot/global_script_class_cache.cfg"
 const GODOT_EXPORT_CACHE_DIRECTORY := "res://.godot/exported"
-const EXPORT_TRANSFORM_REVISION := 19
+const EXPORT_TRANSFORM_REVISION := 21
 
 var _compiler: Object
 var _build_progress: CanvasLayer
@@ -31,6 +30,8 @@ var _active_build_label := ""
 var _ready := false
 var _script_classes: Dictionary = {}
 var _attached_script_bases: Dictionary = {}
+var _script_contract_hashes: Dictionary = {}
+var _editor_script_descriptors: Array = []
 var _compiled_scripts: Dictionary = {}
 var _abstract_scripts: Dictionary = {}
 var _editor_only_scripts: Dictionary = {}
@@ -290,41 +291,24 @@ func _customize_resource(resource: Resource, path: String) -> Resource:
     if not _script_classes.has(script_path):
         _fail_export("resource '%s' uses an uncompiled script '%s'" % [path, script_path])
         return null
-    if _attached_script_bases.has(script_path):
-        var replacements := {resource.get_instance_id(): resource}
-        var changes := {"count": 0}
-        var copied_properties := _attach_compiled_script(
-            resource,
-            script_path,
-            null,
-            replacements,
-            changes,
-            path
-        )
-        if copied_properties < 0:
-            _fail_export("resource '%s' cannot attach its compiled script" % path)
-            return null
-        _metrics_mutex.lock()
-        _customized_resource_count += 1
-        _copied_property_count += copied_properties
-        _metrics_mutex.unlock()
-        return resource
-    var replacement := ClassDB.instantiate(StringName(_script_classes[script_path]))
-    if not replacement is Resource:
-        if replacement != null:
-            replacement.free()
-        _fail_export("native class for '%s' is not a Resource" % script_path)
-        return null
-    var copied_properties := _copy_storage_properties(resource, replacement)
+    var replacements := {resource.get_instance_id(): resource}
+    var changes := {"count": 0}
+    var copied_properties := _attach_compiled_script(
+        resource,
+        script_path,
+        null,
+        replacements,
+        changes,
+        path
+    )
     if copied_properties < 0:
-        replacement.free()
-        _fail_export("resource '%s' cannot preserve all stored properties" % path)
+        _fail_export("resource '%s' cannot attach its compiled script" % path)
         return null
     _metrics_mutex.lock()
     _customized_resource_count += 1
     _copied_property_count += copied_properties
     _metrics_mutex.unlock()
-    return replacement
+    return resource
 
 
 func _export_file(path: String, _type: String, _features: PackedStringArray) -> void:
@@ -332,10 +316,6 @@ func _export_file(path: String, _type: String, _features: PackedStringArray) -> 
         # Fail closed even on Godot versions whose command-line exporter does
         # not convert EXPORT_MESSAGE_ERROR into a non-zero process exit. No
         # customer resource or script is allowed into the failed package.
-        skip()
-        return
-
-    if path == LEGACY_RUNTIME_DESCRIPTOR:
         skip()
         return
 
@@ -489,7 +469,6 @@ func _serialize_export_resource(
 func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
     if _build_progress != null:
         _build_progress.begin(PackedStringArray([
-            "development",
             "debug" if is_debug else "release",
         ]))
     var success := _prepare_export_impl(features, is_debug)
@@ -536,37 +515,6 @@ func _prepare_export_impl(features: PackedStringArray, is_debug: bool) -> bool:
     var sdk_root := str(ProjectSettings.get_setting(SDK_SETTING, ""))
     var cpp_compiler := str(ProjectSettings.get_setting(COMPILER_SETTING, ""))
 
-    if _build_progress != null:
-        _build_progress.set_active_stage("development")
-    _active_build_label = "development"
-    var development_progress := Callable()
-    if _build_progress != null and _build_progress.is_available():
-        development_progress = Callable(self, "_on_native_build_progress")
-    var development_outcome := _run_native_build({
-        "project_root": "res://",
-        "output_directory": OUTPUT_DIRECTORY,
-        "sdk_root": sdk_root,
-        "compiler_executable": cpp_compiler,
-        "target_version": target_version,
-        "build_profile": "development",
-        "target_platform": _compiler.get_host_platform(),
-        "target_architecture": _compiler.get_host_architecture(),
-        "target_variant": "",
-    }, development_progress)
-    if not _accept_build_outcome(development_outcome, "development"):
-        return false
-    var development_result: Dictionary = development_outcome.get("plan", {})
-    var development_library := str(development_result.get("output_library", ""))
-    if development_library.is_empty() or not _native_artifact_exists(development_library):
-        _fail_export("native development library was not produced: %s" % development_library)
-        return false
-    var development_classes: Dictionary = development_result.get("script_classes", {})
-    if _native_classes_are_loaded(development_classes):
-        print("GDPP: matching development native classes are already loaded")
-        _cleanup_stale_development_libraries(development_library)
-    elif not _load_development_project_extension(development_library):
-        return false
-
     var distribution_compiler := cpp_compiler
     if _target_platform == "android":
         distribution_compiler = _android_compiler()
@@ -604,6 +552,8 @@ func _prepare_export_impl(features: PackedStringArray, is_debug: bool) -> bool:
 
     _script_classes = distribution_result.get("script_classes", {})
     _attached_script_bases = distribution_result.get("attached_script_bases", {})
+    _script_contract_hashes = distribution_result.get("script_contract_hashes", {})
+    _editor_script_descriptors = distribution_result.get("editor_script_descriptors", [])
     _compiled_scripts.clear()
     for script_path: String in _script_classes:
         _compiled_scripts[script_path] = true
@@ -619,6 +569,8 @@ func _prepare_export_impl(features: PackedStringArray, is_debug: bool) -> bool:
     _output_library = str(distribution_result.get("output_library", ""))
     if not _native_artifact_exists(_output_library):
         _fail_export("native distribution library was not produced: %s" % _output_library)
+        return false
+    if not _install_editor_script_descriptors():
         return false
     if not _validate_native_classes():
         return false
@@ -673,9 +625,6 @@ func _accept_build_outcome(outcome: Dictionary, label: String) -> bool:
         return false
     for diagnostic in execution.get("diagnostics", []):
         push_warning("GDPP: %s build: %s" % [label, diagnostic])
-    var removed := int(execution.get("removed_count", 0))
-    if removed > 0:
-        print("GDPP: removed %d stale development project libraries" % removed)
     return true
 
 
@@ -684,113 +633,75 @@ func _on_native_build_progress(phase: String, completed: int, total: int) -> voi
         _build_progress.update(_active_build_label, phase, completed, total)
 
 
-func _load_development_project_extension(current_library: String) -> bool:
-    var descriptor := OUTPUT_DIRECTORY + "/gdpp_project.gdextension"
-    var expected_resource_path := "res://addons/gdpp/binary/%s" % current_library.get_file()
-    var descriptor_text := FileAccess.get_file_as_string(descriptor)
-    if descriptor_text.is_empty() or not descriptor_text.contains(
-        '= "%s"' % expected_resource_path
-    ):
-        _fail_export(
-            (
-                "development extension descriptor does not reference the freshly built library "
-                + "'%s'; refusing an unsafe GDExtension load"
-            )
-            % expected_resource_path
-        )
+func _install_editor_script_descriptors() -> bool:
+    if _editor_script_descriptors.size() != _script_classes.size():
+        _fail_export("compiler returned an incomplete editor AOT metadata model")
         return false
-    if GDExtensionManager.is_extension_loaded(descriptor):
-        var unload_status := GDExtensionManager.unload_extension(descriptor)
-        if unload_status != GDExtensionManager.LOAD_STATUS_OK:
-            _fail_export(
-                (
-                    "cannot unload the previous development project extension (status %d); "
-                    + "close native project instances or restart Godot"
-                )
-                % unload_status
-            )
+    for entry: Variant in _editor_script_descriptors:
+        if not (entry is Dictionary):
+            _fail_export("compiler returned malformed editor AOT metadata")
             return false
-    var status := GDExtensionManager.load_extension(descriptor)
-    if status not in [
-        GDExtensionManager.LOAD_STATUS_OK,
-        GDExtensionManager.LOAD_STATUS_ALREADY_LOADED,
-    ]:
-        _fail_export("cannot load generated development extension (status %d)" % status)
+        var script_path := str(entry.get("source_path", ""))
+        if (
+            script_path.is_empty()
+            or not _script_classes.has(script_path)
+            or str(entry.get("contract_hash", ""))
+            != str(_script_contract_hashes.get(script_path, ""))
+            or StringName(entry.get("native_base_type", &""))
+            != StringName(_attached_script_bases.get(script_path, &""))
+        ):
+            _fail_export("compiler returned inconsistent editor metadata for '%s'" % script_path)
+            return false
+
+    # The project compiler owns this reflection model. Loading customer `.gd` resources here
+    # would execute static initialization and can create GDScript resource cycles during export.
+    var outcome: Dictionary = _compiler.install_editor_script_descriptors(
+        _editor_script_descriptors
+    )
+    if not bool(outcome.get("success", false)):
+        for diagnostic in outcome.get("diagnostics", []):
+            push_error("GDPP: %s" % diagnostic)
+        _fail_export("cannot install the editor AOT script metadata bridge")
         return false
-    _cleanup_stale_development_libraries(current_library)
+    if int(outcome.get("registered_count", -1)) != _editor_script_descriptors.size():
+        _fail_export("editor AOT script metadata bridge registered an incomplete project")
+        return false
     return true
-
-
-func _cleanup_stale_development_libraries(current_library: String) -> void:
-    var cleanup: Dictionary = _compiler.prune_stale_development_libraries(current_library)
-    for diagnostic in cleanup.get("diagnostics", []):
-        push_warning("GDPP: %s" % diagnostic)
-    var removed := int(cleanup.get("removed_count", 0))
-    if removed > 0:
-        print("GDPP: removed %d stale development project libraries" % removed)
 
 
 func _validate_native_classes() -> bool:
     _has_resource_scripts = false
-    if not _attached_script_bases.is_empty():
-        if not ClassDB.class_exists(&"AttachedCompiledScript"):
-            _fail_export("attached script runtime class is unavailable")
-            return false
+    if not ClassDB.class_exists(&"AttachedCompiledScript"):
+        _fail_export("attached script runtime class is unavailable")
+        return false
+    if _attached_script_bases.size() != _script_classes.size():
+        _fail_export("compiled project does not provide an attached owner for every script")
+        return false
+    if _script_contract_hashes.size() != _script_classes.size():
+        _fail_export("compiled project does not provide an ABI digest for every script")
+        return false
     for script_path: String in _script_classes:
         if _editor_only_scripts.has(script_path):
             continue
-        var native_class_name := StringName(_script_classes[script_path])
-        if not ClassDB.class_exists(native_class_name):
+        var attached_base := StringName(_attached_script_bases[script_path])
+        if not ClassDB.class_exists(attached_base):
             _fail_export(
-                "native class '%s' for '%s' is unavailable" % [native_class_name, script_path]
-            )
-            return false
-        if _attached_script_bases.has(script_path):
-            var attached_base := StringName(_attached_script_bases[script_path])
-            if not ClassDB.class_exists(attached_base):
-                _fail_export(
-                    "third-party native base '%s' for '%s' is unavailable" % [
-                        attached_base,
-                        script_path,
-                    ]
-                )
-                return false
-            if (
-                not _abstract_scripts.has(script_path)
-                and not ClassDB.can_instantiate(attached_base)
-            ):
-                _fail_export(
-                    "third-party native base '%s' for '%s' cannot be instantiated" % [
-                        attached_base,
-                        script_path,
-                    ]
-                )
-                return false
-            if ClassDB.is_parent_class(attached_base, &"Resource"):
-                _has_resource_scripts = true
-            continue
-        if (
-            not _abstract_scripts.has(script_path)
-            and not ClassDB.can_instantiate(native_class_name)
-        ):
-            _fail_export(
-                "native class '%s' for '%s' cannot be instantiated" % [
-                    native_class_name,
+                "native owner '%s' for '%s' is unavailable" % [
+                    attached_base,
                     script_path,
                 ]
             )
             return false
-        if ClassDB.is_parent_class(native_class_name, &"Resource"):
-            _has_resource_scripts = true
-    return true
-
-
-func _native_classes_are_loaded(classes: Dictionary) -> bool:
-    if classes.is_empty():
-        return false
-    for script_path: String in classes:
-        if not ClassDB.class_exists(StringName(classes[script_path])):
+        if not _abstract_scripts.has(script_path) and not ClassDB.can_instantiate(attached_base):
+            _fail_export(
+                "native owner '%s' for '%s' cannot be instantiated" % [
+                    attached_base,
+                    script_path,
+                ]
+            )
             return false
+        if ClassDB.is_parent_class(attached_base, &"Resource"):
+            _has_resource_scripts = true
     return true
 
 
@@ -810,12 +721,10 @@ func _prepare_autoloads() -> bool:
         if _editor_only_scripts.has(script_path):
             _fail_export("autoload '%s' uses an editor-only script" % setting)
             return false
-        var native_class := StringName(_script_classes[script_path])
-        var attached_base := StringName(_attached_script_bases.get(script_path, ""))
+        var attached_base := StringName(_attached_script_bases[script_path])
         # Export preparation must not construct customer autoloads: their field
         # initializers may access services that are only valid after SceneTree startup.
-        var scene_type := attached_base if not attached_base.is_empty() else native_class
-        if not ClassDB.is_parent_class(scene_type, &"Node"):
+        if not ClassDB.is_parent_class(attached_base, &"Node"):
             _fail_export(
                 "script autoload '%s' must compile to a Node-derived native class"
                 % setting.trim_prefix("autoload/")
@@ -823,23 +732,18 @@ func _prepare_autoloads() -> bool:
             return false
         var autoload_name := setting.trim_prefix("autoload/")
         var generated_path := RUNTIME_RESOURCE_PREFIX + "autoload/%s.tscn" % setting.md5_text()
-        var scene := ""
-        if attached_base.is_empty():
-            scene = (
-                "[gd_scene format=3]\n\n[node name=\"%s\" type=\"%s\"]\n"
-                % [autoload_name.c_escape(), str(native_class).c_escape()]
-            )
-        else:
-            scene = (
-                "[gd_scene load_steps=2 format=3]\n\n"
-                + "[sub_resource type=\"AttachedCompiledScript\" id=\"AttachedScript\"]\n"
-                + "source_path = \"%s\"\n\n" % script_path.c_escape()
-                + "[node name=\"%s\" type=\"%s\"]\n" % [
-                    autoload_name.c_escape(),
-                    str(attached_base).c_escape(),
-                ]
-                + "script = SubResource(\"AttachedScript\")\n"
-            )
+        var scene := (
+            "[gd_scene load_steps=2 format=3]\n\n"
+            + "[sub_resource type=\"AttachedCompiledScript\" id=\"AttachedScript\"]\n"
+            + "source_path = \"%s\"\n\n" % script_path.c_escape()
+            + "contract_hash = \"%s\"\n\n"
+            % str(_script_contract_hashes[script_path]).c_escape()
+            + "[node name=\"%s\" type=\"%s\"]\n" % [
+                autoload_name.c_escape(),
+                str(attached_base).c_escape(),
+            ]
+            + "script = SubResource(\"AttachedScript\")\n"
+        )
         _autoload_files[generated_path] = scene
         _autoload_replacements[setting] = generated_path
         _autoload_originals[setting] = original
@@ -1088,46 +992,24 @@ func _collect_scene_replacement_plan(
                     "GDPP: scene '%s' uses uncompiled script '%s'" % [scene_path, script_path]
                 )
                 return false
-            if _attached_script_bases.has(script_path):
-                var attached_base := StringName(_attached_script_bases[script_path])
-                if not node.is_class(attached_base):
-                    push_error(
-                        (
-                            "GDPP: third-party object '%s' for '%s' is not an instance of '%s'"
-                        )
-                        % [node.get_class(), script_path, attached_base]
-                    )
-                    return false
-                replacement_plan.append({
-                    "node": node,
-                    "native_class": attached_base,
-                    "script_path": script_path,
-                    "attached": true,
-                    "stored_properties": _serialized_node_properties(
-                        scene_state,
-                        node_path
-                    ),
-                })
-                continue
-            var native_class := StringName(_script_classes[script_path])
-            if not ClassDB.is_parent_class(native_class, &"Node"):
-                return false
-            var concrete_class := node.get_class()
-            if not ClassDB.is_parent_class(native_class, concrete_class):
+            var attached_base := StringName(_attached_script_bases[script_path])
+            if not node.is_class(attached_base):
                 push_error(
                     (
-                        "GDPP: native class '%s' for '%s' cannot preserve scene node type '%s'; "
-                        + "declare the script's extends type as '%s' or a derived type"
+                        "GDPP: object '%s' for '%s' is not an instance of attached owner '%s'"
                     )
-                    % [native_class, script_path, concrete_class, concrete_class]
+                    % [node.get_class(), script_path, attached_base]
                 )
                 return false
             replacement_plan.append({
                 "node": node,
-                "native_class": native_class,
+                "native_class": attached_base,
                 "script_path": script_path,
-                "attached": false,
-                "stored_properties": _serialized_node_properties(scene_state, node_path),
+                "attached": true,
+                "stored_properties": _serialized_node_properties(
+                    scene_state,
+                    node_path
+                ),
             })
 
     # SceneState stores parents before their children. Replacing from leaves to
@@ -1348,7 +1230,12 @@ func _make_attached_script(script_path: String) -> Script:
         return null
     var script := instance as Script
     script.set("source_path", script_path)
-    if script.get_instance_base_type().is_empty() or str(script.get("source_path")) != script_path:
+    script.set("contract_hash", str(_script_contract_hashes.get(script_path, "")))
+    if (
+        script.get_instance_base_type().is_empty()
+        or str(script.get("source_path")) != script_path
+        or str(script.get("contract_hash")) != str(_script_contract_hashes.get(script_path, ""))
+    ):
         push_error("GDPP: compiled script descriptor for '%s' is unavailable" % script_path)
         return null
     return script
@@ -1444,6 +1331,19 @@ func _install_attached_script(
                 source_class,
                 str(script.get("source_path")),
             ]
+        )
+        return -1
+    var stored_properties := PackedStringArray()
+    for property_name: String in source_properties:
+        stored_properties.append(property_name)
+    if (
+        _compiler == null
+        or not _compiler.has_method(&"set_editor_script_storage_state")
+        or not _compiler.set_editor_script_storage_state(object, stored_properties)
+    ):
+        push_error(
+            "GDPP: cannot commit export storage state for compiled script '%s'"
+            % str(script.get("source_path"))
         )
         return -1
     return _restore_storage_properties(
@@ -1628,45 +1528,12 @@ func _transform_resource_graph(
                 % [context_path, script_path]
             )
             return null
-        if _attached_script_bases.has(script_path):
-            # Install the identity mapping before restoring fields so self-references and
-            # cyclic built-in Resource graphs retain their exact topology.
-            replacements[instance_id] = resource
-            var copied_attached := _attach_compiled_script(
-                resource,
-                script_path,
-                null,
-                replacements,
-                changes,
-                context_path
-            )
-            if copied_attached < 0:
-                replacements.erase(instance_id)
-                _fail_export(
-                    "resource graph '%s' cannot attach compiled script '%s'" % [
-                        context_path,
-                        script_path,
-                    ]
-                )
-                return null
-            changes.count = int(changes.get("count", 0)) + 1
-            _metrics_mutex.lock()
-            _customized_resource_count += 1
-            _copied_property_count += copied_attached
-            _metrics_mutex.unlock()
-            return resource
-        var replacement := ClassDB.instantiate(StringName(_script_classes[script_path]))
-        if not replacement is Resource:
-            if replacement != null:
-                replacement.free()
-            _fail_export("native class for '%s' is not a Resource" % script_path)
-            return null
         # Install the identity mapping before copying so self-references and
-        # cyclic built-in Resource graphs terminate and retain their topology.
-        replacements[instance_id] = replacement
-        var copied := _copy_storage_properties(
+        # cyclic built-in Resource graphs retain their exact topology.
+        replacements[instance_id] = resource
+        var copied := _attach_compiled_script(
             resource,
-            replacement,
+            script_path,
             null,
             replacements,
             changes,
@@ -1674,9 +1541,11 @@ func _transform_resource_graph(
         )
         if copied < 0:
             replacements.erase(instance_id)
-            replacement.free()
             _fail_export(
-                "resource graph '%s' cannot preserve all stored properties" % context_path
+                "resource graph '%s' cannot attach compiled script '%s'" % [
+                    context_path,
+                    script_path,
+                ]
             )
             return null
         changes.count = int(changes.get("count", 0)) + 1
@@ -1684,7 +1553,7 @@ func _transform_resource_graph(
         _customized_resource_count += 1
         _copied_property_count += copied
         _metrics_mutex.unlock()
-        return replacement
+        return resource
 
     replacements[instance_id] = resource
     # Traverse storage properties only. Godot's 4.4/4.5 global resource pass
@@ -1839,11 +1708,6 @@ func _prepare_extension_registry(include_project_extension := true) -> bool:
             if value.is_empty():
                 continue
             if value == COMPILER_DESCRIPTOR:
-                continue
-            # Prefer providers before the generated project extension for engines that preserve
-            # this file's order. Godot may regenerate the registry from a HashSet, so the attached
-            # runtime is also required to initialize correctly in the opposite order.
-            if value == LEGACY_RUNTIME_DESCRIPTOR:
                 continue
             if value.begins_with(OUTPUT_DIRECTORY + "/"):
                 continue
@@ -2213,9 +2077,13 @@ func _print_export_summary() -> void:
 
 
 func _reset_export_state() -> void:
+    if _compiler != null and _compiler.has_method(&"clear_editor_script_descriptors"):
+        _compiler.clear_editor_script_descriptors()
     _ready = false
     _script_classes.clear()
     _attached_script_bases.clear()
+    _script_contract_hashes.clear()
+    _editor_script_descriptors.clear()
     _compiled_scripts.clear()
     _abstract_scripts.clear()
     _editor_only_scripts.clear()
