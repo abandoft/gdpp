@@ -1951,6 +1951,61 @@ TEST_CASE("project script member graph reports invalid static and typed calls") 
     REQUIRE(has_code("GDS4002"));
 }
 
+TEST_CASE("project compiler preserves cross-script call contracts through cache invalidation") {
+    const auto root = fixture_root("project-cross-script-call-contract");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "parser.gd",
+               "extends RefCounted\n"
+               "class_name ProjectPacketParser\n"
+               "func parse(value: PackedByteArray) -> PackedByteArray:\n"
+               "    return value\n");
+    write_text(root / "consumer.gd",
+               "extends RefCounted\n"
+               "class_name ProjectPacketConsumer\n"
+               "var parser := ProjectPacketParser.new()\n"
+               "func parse(value: Variant) -> PackedByteArray:\n"
+               "    return parser.parse(value)\n");
+    const auto options = project_options(root);
+    const gdpp::ProjectCompiler compiler;
+
+    const auto initial = compiler.compile(options);
+
+    REQUIRE(initial.success);
+    REQUIRE_EQ(initial.compiled_count, std::size_t{2});
+    const auto consumer =
+        std::find_if(initial.scripts.begin(), initial.scripts.end(), [](const auto& script) {
+            return script.relative_path == std::filesystem::path{"consumer.gd"};
+        });
+    REQUIRE(consumer != initial.scripts.end());
+    const auto initial_source =
+        read_text(options.output_directory / "generated" / consumer->source_file_name);
+    REQUIRE(initial_source.find(
+                "gdpp::runtime::packed_array_storage<godot::PackedByteArray>("
+                "godot::Variant(_gdpp_call_argument_") != std::string::npos);
+
+    write_text(root / "parser.gd",
+               "extends RefCounted\n"
+               "class_name ProjectPacketParser\n"
+               "func parse(value: PackedInt32Array) -> PackedByteArray:\n"
+               "    return PackedByteArray()\n");
+    const auto changed = compiler.compile(options);
+
+    REQUIRE(changed.success);
+    REQUIRE_EQ(changed.compiled_count, std::size_t{2});
+    REQUIRE_EQ(changed.cache_hit_count, std::size_t{0});
+    const auto changed_consumer =
+        std::find_if(changed.scripts.begin(), changed.scripts.end(), [](const auto& script) {
+            return script.relative_path == std::filesystem::path{"consumer.gd"};
+        });
+    REQUIRE(changed_consumer != changed.scripts.end());
+    const auto changed_source =
+        read_text(options.output_directory / "generated" / changed_consumer->source_file_name);
+    REQUIRE(changed_source.find(
+                "gdpp::runtime::packed_array_storage<godot::PackedInt32Array>("
+                "godot::Variant(_gdpp_call_argument_") != std::string::npos);
+}
+
 TEST_CASE("project symbol signature changes invalidate dependent script caches") {
     const auto root = fixture_root("project-symbol-cache");
     std::error_code error;
