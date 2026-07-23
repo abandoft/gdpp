@@ -51,6 +51,8 @@ func _run() -> void:
     var runtime_mode_class := _native_class_for("runtime_mode_case.gd")
     var type_semantics_class := _native_class_for("type_semantics_case.gd")
     var dictionary_lifetime_class := _native_class_for("dictionary_lifetime_case.gd")
+    var reference_semantics_class := _native_class_for("reference_semantics_case.gd")
+    var binary_serialization_class := _native_class_for("binary_serialization_case.gd")
     if (
         player_class.is_empty()
         or hello_class.is_empty()
@@ -78,6 +80,8 @@ func _run() -> void:
         or runtime_mode_class.is_empty()
         or type_semantics_class.is_empty()
         or dictionary_lifetime_class.is_empty()
+        or reference_semantics_class.is_empty()
+        or binary_serialization_class.is_empty()
     ):
         push_error("Generated native class manifest is incomplete")
         quit(1)
@@ -160,6 +164,59 @@ func _run() -> void:
             quit(1)
             return
     dictionary_lifetime = null
+
+    var native_references: Object = ClassDB.instantiate(reference_semantics_class)
+    var script_references: Object = load("res://reference_semantics_case.gd").new()
+    if native_references == null or script_references == null:
+        push_error("PackedArray reference-semantics differential fixtures are unavailable")
+        quit(1)
+        return
+    var native_reference_report: Dictionary = native_references.call("run")
+    var script_reference_report: Dictionary = script_references.call("run")
+    if native_reference_report != script_reference_report:
+        push_error(
+            "PackedArray reference semantics differ from GDScript: native=%s script=%s"
+            % [native_reference_report, script_reference_report]
+        )
+        quit(1)
+        return
+    var external_bytes := PackedByteArray([40])
+    native_references.call("mutate_bytes", external_bytes)
+    if external_bytes != PackedByteArray([40, 2]):
+        push_error("PackedArray identity was lost at the public GDExtension method boundary")
+        quit(1)
+        return
+    var returned_bytes: PackedByteArray = native_references.call("identity_bytes", external_bytes)
+    returned_bytes.append(41)
+    if external_bytes != PackedByteArray([40, 2, 41]):
+        push_error("PackedArray identity was lost at the public return boundary")
+        quit(1)
+        return
+    native_references = null
+    script_references = null
+
+    var native_serializer: Object = ClassDB.instantiate(binary_serialization_class)
+    var script_serializer: Object = load("res://binary_serialization_case.gd").new()
+    if native_serializer == null or script_serializer == null:
+        push_error("Binary-serialization differential fixtures are unavailable")
+        quit(1)
+        return
+    var native_packet: PackedByteArray = native_serializer.call("packet")
+    var script_packet: PackedByteArray = script_serializer.call("packet")
+    var expected_packet := PackedByteArray([
+        16,
+        10, 6, 49, 50, 51, 49, 50, 51,
+        18, 6, 49, 50, 51, 49, 50, 51,
+    ])
+    if native_packet != script_packet or native_packet != expected_packet:
+        push_error(
+            "Binary serialization differs from GDScript: native=%s script=%s"
+            % [native_packet.hex_encode(), script_packet.hex_encode()]
+        )
+        quit(1)
+        return
+    native_serializer = null
+    script_serializer = null
 
     var native_type_semantics: Object = ClassDB.instantiate(type_semantics_class)
     var type_semantics_script: Script = load("res://type_semantics_case.gd")
