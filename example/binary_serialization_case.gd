@@ -1,6 +1,24 @@
 extends RefCounted
 
 
+class PacketParserBase:
+    func parse_from_bytes(value: PackedByteArray) -> PackedByteArray:
+        value.append(0xa1)
+        return value
+
+
+class PacketParser extends PacketParserBase:
+    var suffix: PackedByteArray
+
+    func _init(value: PackedByteArray) -> void:
+        suffix = value
+
+    func parse_variant(value: Variant) -> PackedByteArray:
+        var typed: PackedByteArray = value
+        typed.append_array(suffix)
+        return super.parse_from_bytes(typed)
+
+
 func encode_varint(output: PackedByteArray, value: int) -> void:
     var remaining := value
     while remaining >= 0x80:
@@ -33,3 +51,11 @@ func packet() -> PackedByteArray:
     encode_varint(output, body.size())
     output.append_array(body)
     return output
+
+
+func variant_boundary_packet() -> PackedByteArray:
+    var dynamic_body: Variant = encode_login("123123", "123123")
+    var dynamic_suffix: Variant = PackedByteArray([0xa0])
+    var parser := PacketParser.new(dynamic_suffix)
+    parser.parse_from_bytes(dynamic_body)
+    return parser.parse_variant(dynamic_body)

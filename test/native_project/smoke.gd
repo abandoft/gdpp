@@ -226,6 +226,27 @@ func _run() -> void:
         )
         quit(1)
         return
+    var native_boundary_packet: PackedByteArray = native_serializer.call(
+        "variant_boundary_packet"
+    )
+    var script_boundary_packet: PackedByteArray = script_serializer.call(
+        "variant_boundary_packet"
+    )
+    var expected_boundary_packet := PackedByteArray([
+        10, 6, 49, 50, 51, 49, 50, 51,
+        18, 6, 49, 50, 51, 49, 50, 51,
+        0xa1, 0xa0, 0xa1,
+    ])
+    if (
+        native_boundary_packet != script_boundary_packet
+        or native_boundary_packet != expected_boundary_packet
+    ):
+        push_error(
+            "Typed binary boundary differs from GDScript: native=%s script=%s"
+            % [native_boundary_packet.hex_encode(), script_boundary_packet.hex_encode()]
+        )
+        quit(1)
+        return
     native_serializer = null
     script_serializer = null
 
