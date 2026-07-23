@@ -79,6 +79,16 @@ TruthinessKind Type::truthiness() const noexcept {
     return TruthinessKind::invalid;
 }
 
+OwnershipKind Type::ownership() const noexcept {
+    if (kind == TypeKind::variant || kind == TypeKind::unknown)
+        return OwnershipKind::dynamic;
+    if (kind == TypeKind::array || kind == TypeKind::dictionary || is_packed_array())
+        return OwnershipKind::shared_container;
+    if (kind == TypeKind::object || kind == TypeKind::script_resource)
+        return OwnershipKind::object_reference;
+    return OwnershipKind::value;
+}
+
 bool Type::accepts_null() const noexcept {
     return nullability() == Nullability::nullable || nullability() == Nullability::null_only;
 }

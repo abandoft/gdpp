@@ -46,6 +46,17 @@ enum class TruthinessKind {
     object_validity,
 };
 
+// GDScript copies ordinary built-in values across assignment and call boundaries, while Object,
+// Array, Dictionary, and every packed-array family retain shared identity. Keep that distinction
+// in the compiler core so lowering and code generation never infer language ownership from a C++
+// wrapper's copy constructor.
+enum class OwnershipKind {
+    value,
+    shared_container,
+    object_reference,
+    dynamic,
+};
+
 // A dependency-free mirror of Godot 4's stable Variant::Type domain. Keeping it in the compiler
 // core lets semantic conversion decisions and generated runtime conversions share one vocabulary
 // without linking the compiler executable to godot-cpp.
@@ -100,6 +111,7 @@ struct Type {
     [[nodiscard]] bool is_packed_array() const noexcept;
     [[nodiscard]] Nullability nullability() const noexcept;
     [[nodiscard]] TruthinessKind truthiness() const noexcept;
+    [[nodiscard]] OwnershipKind ownership() const noexcept;
     [[nodiscard]] bool accepts_null() const noexcept;
     [[nodiscard]] bool is_value() const noexcept;
     [[nodiscard]] std::string display_name() const;

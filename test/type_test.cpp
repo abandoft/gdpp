@@ -155,6 +155,29 @@ TEST_CASE("Variant type mapping covers the complete Godot 4 value domain") {
     REQUIRE(!gdpp::variant_type_of({gdpp::TypeKind::void_type, "void"}).has_value());
 }
 
+TEST_CASE("GDScript ownership distinguishes copied values shared containers and objects") {
+    using gdpp::OwnershipKind;
+    using gdpp::Type;
+    using gdpp::TypeKind;
+
+    REQUIRE_EQ((Type{TypeKind::integer, "int"}.ownership()), OwnershipKind::value);
+    REQUIRE_EQ((Type{TypeKind::string, "String"}.ownership()), OwnershipKind::value);
+    REQUIRE_EQ((Type{TypeKind::builtin, "Vector3"}.ownership()), OwnershipKind::value);
+    REQUIRE_EQ((Type{TypeKind::array, "Array[int]"}.ownership()),
+               OwnershipKind::shared_container);
+    REQUIRE_EQ((Type{TypeKind::dictionary, "Dictionary[String, int]"}.ownership()),
+               OwnershipKind::shared_container);
+    REQUIRE_EQ((Type{TypeKind::builtin, "PackedByteArray"}.ownership()),
+               OwnershipKind::shared_container);
+    REQUIRE_EQ((Type{TypeKind::builtin, "PackedVector4Array"}.ownership()),
+               OwnershipKind::shared_container);
+    REQUIRE_EQ((Type{TypeKind::object, "Node"}.ownership()), OwnershipKind::object_reference);
+    REQUIRE_EQ((Type{TypeKind::script_resource, "res://actor.gd"}.ownership()),
+               OwnershipKind::object_reference);
+    REQUIRE_EQ((Type{TypeKind::variant, "Variant"}.ownership()), OwnershipKind::dynamic);
+    REQUIRE_EQ((Type{TypeKind::unknown, ""}.ownership()), OwnershipKind::dynamic);
+}
+
 TEST_CASE("implicit conversion matrix exactly mirrors Godot strict Variant conversions") {
     const auto expected = strict_pairs();
     for (const auto target : all_variant_types) {
