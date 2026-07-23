@@ -5,6 +5,7 @@
 #include "gdpp/core/source.hpp"
 #include "gdpp/project/native_builder.hpp"
 #include "gdpp/project/project_compiler.hpp"
+#include "gdpp/runtime/attached_script.hpp"
 #include "gdpp/semantic/godot_api.hpp"
 #include "gdpp/support/path_utf8.hpp"
 #include "gdpp/support/sha256.hpp"
@@ -103,34 +104,6 @@ bool write_file(const std::filesystem::path& path, const std::string& content) {
     std::ofstream stream{path, std::ios::binary};
     stream.write(content.data(), static_cast<std::streamsize>(content.size()));
     return stream.good();
-}
-
-std::optional<std::string> read_file(const std::filesystem::path& path) {
-    std::ifstream stream{path, std::ios::binary};
-    if (!stream)
-        return std::nullopt;
-    return std::string{std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
-}
-
-bool write_file_atomic(const std::filesystem::path& path, const std::string& content) {
-    auto temporary = path;
-    temporary += ".tmp";
-    if (!write_file(temporary, content)) {
-        std::error_code cleanup_error;
-        std::filesystem::remove(temporary, cleanup_error);
-        return false;
-    }
-    std::error_code error;
-    std::filesystem::rename(temporary, path, error);
-    if (!error)
-        return true;
-    std::filesystem::remove(path, error);
-    error.clear();
-    std::filesystem::rename(temporary, path, error);
-    if (!error)
-        return true;
-    std::filesystem::remove(temporary, error);
-    return false;
 }
 
 bool has_path_component(const std::filesystem::path& path, std::string_view component) {
@@ -312,6 +285,100 @@ std::string reflected_type_name(const godot::Dictionary& info, const bool allow_
         return hint_string;
     }
     return native_string(godot::Variant::get_type_name(type));
+}
+
+godot::PropertyInfo script_property_info(const Type& type, const godot::StringName& name,
+                                         const std::uint32_t usage) {
+    godot::PropertyInfo info;
+    info.name = name;
+    info.usage = usage;
+    if (type.kind == TypeKind::void_type) {
+        info.type = godot::Variant::NIL;
+        info.usage = godot::PROPERTY_USAGE_NONE;
+        return info;
+    }
+    const auto variant_type = variant_type_of(type);
+    info.type = variant_type ? static_cast<godot::Variant::Type>(*variant_type)
+                             : godot::Variant::NIL;
+    if (type.kind == TypeKind::variant || type.kind == TypeKind::unknown) {
+        info.type = godot::Variant::NIL;
+        info.usage |= godot::PROPERTY_USAGE_NIL_IS_VARIANT;
+    } else if (type.kind == TypeKind::object || type.kind == TypeKind::script_resource) {
+        info.class_name = godot::StringName{type.name.c_str()};
+    }
+    return info;
+}
+
+godot::Dictionary editor_script_descriptor(const CompiledProjectScript& script,
+                                            const godot::String& source_path) {
+    godot::Dictionary descriptor;
+    descriptor["source_path"] = source_path;
+    descriptor["global_name"] = godot::StringName{script.global_name.c_str()};
+    descriptor["native_base_type"] = godot::StringName{script.attached_native_base.c_str()};
+    descriptor["base_script_path"] = godot::String{script.base_script_path.c_str()};
+    descriptor["contract_hash"] = godot::String{script.public_abi_hash.c_str()};
+    descriptor["behavior_class"] = godot::StringName{script.class_name.c_str()};
+    descriptor["constants"] = godot::Dictionary{};
+    descriptor["rpc_config"] = godot::Variant{};
+    descriptor["tool"] = script.is_tool;
+    descriptor["abstract"] = script.is_abstract;
+
+    godot::Array properties;
+    godot::Array methods;
+    godot::Array signals;
+    for (const auto& member : script.reflection_members) {
+        if (member.kind == ScriptMemberKind::field && !member.is_static) {
+            std::uint32_t usage = godot::PROPERTY_USAGE_SCRIPT_VARIABLE;
+            if (member.property_storage)
+                usage |= godot::PROPERTY_USAGE_STORAGE;
+            if (member.property_editor)
+                usage |= godot::PROPERTY_USAGE_EDITOR;
+            godot::Dictionary property;
+            property["info"] = static_cast<godot::Dictionary>(
+                script_property_info(member.type, godot::StringName{member.name.c_str()}, usage));
+            // The target behavior constructor owns source-level defaults. This temporary editor
+            // instance only needs the serialization surface while stored values are copied.
+            property["has_default"] = false;
+            properties.push_back(property);
+            continue;
+        }
+        if (member.kind != ScriptMemberKind::function &&
+            member.kind != ScriptMemberKind::signal) {
+            continue;
+        }
+        if (member.kind == ScriptMemberKind::function && member.name == "_static_init")
+            continue;
+        godot::MethodInfo method{
+            script_property_info(member.kind == ScriptMemberKind::signal
+                                     ? Type{TypeKind::void_type, "void"}
+                                     : member.type,
+                                 godot::StringName{}, godot::PROPERTY_USAGE_DEFAULT),
+            godot::StringName{member.name.c_str()}};
+        for (std::size_t index = 0; index < member.parameters.size(); ++index) {
+            const auto argument_name =
+                index < member.parameter_names.size()
+                    ? member.parameter_names[index]
+                    : "argument_" + std::to_string(index);
+            method.arguments.push_back(
+                script_property_info(member.parameters[index],
+                                     godot::StringName{argument_name.c_str()},
+                                     godot::PROPERTY_USAGE_DEFAULT));
+            if (index < member.default_parameters.size() && member.default_parameters[index])
+                method.default_arguments.push_back(godot::Variant{});
+        }
+        if (member.is_static)
+            method.flags |= GDEXTENSION_METHOD_FLAG_STATIC;
+        if (member.is_vararg)
+            method.flags |= GDEXTENSION_METHOD_FLAG_VARARG;
+        if (member.kind == ScriptMemberKind::signal)
+            signals.push_back(static_cast<godot::Dictionary>(method));
+        else
+            methods.push_back(static_cast<godot::Dictionary>(method));
+    }
+    descriptor["properties"] = properties;
+    descriptor["methods"] = methods;
+    descriptor["signals"] = signals;
+    return descriptor;
 }
 
 bool reflected_nil_is_variant(const godot::Dictionary& info) {
@@ -1269,7 +1336,7 @@ void GDPPCompiler::_bind_methods() {
         godot::D_METHOD("compile_project", "project_root", "output_directory", "sdk_root",
                         "compiler_executable", "target_version", "build_profile", "target_platform",
                         "target_architecture", "target_variant", "progress_callback"),
-        &GDPPCompiler::compile_project, DEFVAL("4.4"), DEFVAL("development"), DEFVAL(""),
+        &GDPPCompiler::compile_project, DEFVAL("4.4"), DEFVAL("release"), DEFVAL(""),
         DEFVAL(""), DEFVAL(""), DEFVAL(godot::Callable{}));
     godot::ClassDB::bind_method(godot::D_METHOD("get_default_sdk_root"),
                                 &GDPPCompiler::get_default_sdk_root);
@@ -1289,8 +1356,13 @@ void GDPPCompiler::_bind_methods() {
     godot::ClassDB::bind_method(godot::D_METHOD("prepare_project_build"),
                                 &GDPPCompiler::prepare_project_build);
     godot::ClassDB::bind_method(
-        godot::D_METHOD("prune_stale_development_libraries", "current_library"),
-        &GDPPCompiler::prune_stale_development_libraries);
+        godot::D_METHOD("install_editor_script_descriptors", "descriptors"),
+        &GDPPCompiler::install_editor_script_descriptors);
+    godot::ClassDB::bind_method(
+        godot::D_METHOD("set_editor_script_storage_state", "object", "stored_properties"),
+        &GDPPCompiler::set_editor_script_storage_state);
+    godot::ClassDB::bind_method(godot::D_METHOD("clear_editor_script_descriptors"),
+                                &GDPPCompiler::clear_editor_script_descriptors);
 }
 
 GDPPCompiler::BuildExecutionResult
@@ -1371,8 +1443,6 @@ GDPPCompiler::execute_project_build(const godot::Dictionary& build_plan,
     godot::Dictionary output;
     output["success"] = false;
     output["exit_code"] = int64_t{-1};
-    output["cleanup_success"] = true;
-    output["removed_count"] = int64_t{0};
     godot::PackedStringArray diagnostics =
         build_plan.get("diagnostics", godot::PackedStringArray{});
 
@@ -1421,16 +1491,6 @@ GDPPCompiler::execute_project_build(const godot::Dictionary& build_plan,
         return output;
     }
 
-    const auto profile =
-        native_string(static_cast<godot::String>(build_plan.get("build_profile", godot::String{})));
-    if (profile == "development") {
-        const auto cleanup = gdpp::prune_stale_development_libraries(output_filesystem_path);
-        output["cleanup_success"] = cleanup.success;
-        output["removed_count"] = static_cast<int64_t>(cleanup.removed_count);
-        for (const auto& diagnostic : cleanup.diagnostics)
-            diagnostics.push_back(godot::String{diagnostic.c_str()});
-    }
-
     output["success"] = true;
     output["diagnostics"] = diagnostics;
     report_build_progress(progress_callback, "complete", static_cast<std::size_t>(commands.size()),
@@ -1445,18 +1505,117 @@ void GDPPCompiler::prepare_project_build() {
 }
 
 godot::Dictionary
-GDPPCompiler::prune_stale_development_libraries(const godot::String& current_library) const {
-    auto* settings = godot::ProjectSettings::get_singleton();
-    const auto path = native_string(settings->globalize_path(current_library));
-    const auto cleanup = gdpp::prune_stale_development_libraries(path);
+GDPPCompiler::install_editor_script_descriptors(const godot::Array& descriptors) const {
     godot::Dictionary output;
-    output["success"] = cleanup.success;
-    output["removed_count"] = static_cast<int64_t>(cleanup.removed_count);
+    output["success"] = false;
     godot::PackedStringArray diagnostics;
-    for (const auto& diagnostic : cleanup.diagnostics)
-        diagnostics.push_back(godot::String{diagnostic.c_str()});
+    gdpp::runtime::unregister_all_attached_scripts();
+
+    std::vector<godot::String> registered_paths;
+    registered_paths.reserve(static_cast<std::size_t>(descriptors.size()));
+    for (std::int64_t index = 0; index < descriptors.size(); ++index) {
+        if (descriptors[index].get_type() != godot::Variant::DICTIONARY) {
+            diagnostics.push_back("editor script descriptor at index " +
+                                  godot::String::num_int64(index) + " is not a Dictionary");
+            gdpp::runtime::unregister_all_attached_scripts();
+            output["diagnostics"] = diagnostics;
+            return output;
+        }
+
+        const godot::Dictionary input = descriptors[index];
+        gdpp::runtime::AttachedScriptDescriptor descriptor;
+        descriptor.source_path = input.get("source_path", godot::String{});
+        descriptor.global_name = input.get("global_name", godot::StringName{});
+        descriptor.native_base_type = input.get("native_base_type", godot::StringName{});
+        descriptor.base_script_path = input.get("base_script_path", godot::String{});
+        descriptor.contract_hash = input.get("contract_hash", godot::String{});
+        descriptor.behavior_class = input.get("behavior_class", godot::StringName{});
+        descriptor.tool = input.get("tool", false);
+        descriptor.abstract = input.get("abstract", false);
+        descriptor.editor_metadata_only = true;
+        descriptor.constants = input.get("constants", godot::Dictionary{});
+        descriptor.rpc_config = input.get("rpc_config", godot::Variant{});
+
+        const godot::Array properties = input.get("properties", godot::Array{});
+        descriptor.properties.reserve(static_cast<std::size_t>(properties.size()));
+        for (std::int64_t property_index = 0; property_index < properties.size();
+             ++property_index) {
+            if (properties[property_index].get_type() != godot::Variant::DICTIONARY) {
+                diagnostics.push_back(
+                    "property metadata at index " + godot::String::num_int64(property_index) +
+                    " for '" + descriptor.source_path + "' is not a Dictionary");
+                gdpp::runtime::unregister_all_attached_scripts();
+                output["diagnostics"] = diagnostics;
+                return output;
+            }
+            const godot::Dictionary property_input = properties[property_index];
+            const godot::Dictionary property_info =
+                property_input.get("info", godot::Dictionary{});
+            gdpp::runtime::AttachedScriptProperty property;
+            property.info = godot::PropertyInfo::from_dict(property_info);
+            property.has_default = property_input.get("has_default", false);
+            if (property.has_default)
+                property.default_value = property_input.get("default_value", godot::Variant{});
+            descriptor.properties.push_back(std::move(property));
+        }
+
+        const auto append_methods = [&](const char* key,
+                                        std::vector<godot::MethodInfo>& destination) -> bool {
+            const godot::Array methods = input.get(key, godot::Array{});
+            destination.reserve(static_cast<std::size_t>(methods.size()));
+            for (std::int64_t method_index = 0; method_index < methods.size(); ++method_index) {
+                if (methods[method_index].get_type() != godot::Variant::DICTIONARY) {
+                    diagnostics.push_back(
+                        godot::String{key} + " metadata at index " +
+                        godot::String::num_int64(method_index) + " for '" +
+                        descriptor.source_path + "' is not a Dictionary");
+                    return false;
+                }
+                destination.push_back(
+                    godot::MethodInfo::from_dict(godot::Dictionary{methods[method_index]}));
+            }
+            return true;
+        };
+        if (!append_methods("methods", descriptor.methods) ||
+            !append_methods("signals", descriptor.signals)) {
+            gdpp::runtime::unregister_all_attached_scripts();
+            output["diagnostics"] = diagnostics;
+            return output;
+        }
+
+        godot::String error;
+        const auto source_path = descriptor.source_path;
+        if (!gdpp::runtime::register_attached_script(std::move(descriptor), &error)) {
+            diagnostics.push_back(error);
+            gdpp::runtime::unregister_all_attached_scripts();
+            output["diagnostics"] = diagnostics;
+            return output;
+        }
+        registered_paths.push_back(source_path);
+    }
+
+    for (const auto& path : registered_paths) {
+        godot::String error;
+        if (!gdpp::runtime::resolve_attached_script(path, &error)) {
+            diagnostics.push_back(error);
+            gdpp::runtime::unregister_all_attached_scripts();
+            output["diagnostics"] = diagnostics;
+            return output;
+        }
+    }
+    output["success"] = true;
+    output["registered_count"] = static_cast<std::int64_t>(registered_paths.size());
     output["diagnostics"] = diagnostics;
     return output;
+}
+
+void GDPPCompiler::clear_editor_script_descriptors() const {
+    gdpp::runtime::unregister_all_attached_scripts();
+}
+
+bool GDPPCompiler::set_editor_script_storage_state(
+    godot::Object* object, const godot::PackedStringArray& stored_properties) const {
+    return gdpp::runtime::set_attached_editor_storage_state(object, stored_properties);
 }
 
 godot::Dictionary GDPPCompiler::compile_project(
@@ -1475,7 +1634,7 @@ godot::Dictionary GDPPCompiler::compile_project(
         output["success"] = false;
         godot::PackedStringArray diagnostics;
         diagnostics.push_back("unsupported build profile '" + build_profile +
-                              "'; expected development, debug, or release");
+                              "'; expected debug or release");
         output["diagnostics"] = diagnostics;
         return output;
     }
@@ -1569,28 +1728,11 @@ godot::Dictionary GDPPCompiler::compile_project(
             report_build_progress(progress_callback, phase_name, completed, total);
         };
     }
-    const auto development_descriptor = options.output_directory / "gdpp_project.gdextension";
-    const auto preserved_development_descriptor = *profile == NativeBuildProfile::development
-                                                      ? std::optional<std::string>{}
-                                                      : read_file(development_descriptor);
     const ProjectCompiler compiler;
     const auto result = compiler.compile_direct(options);
-    std::string descriptor_additional_sections;
-    if (result.success && *profile == NativeBuildProfile::development) {
-        if (const auto descriptor = read_file(result.extension_descriptor)) {
-            const auto additional = descriptor->find("\n[icons]\n");
-            if (additional != std::string::npos)
-                descriptor_additional_sections = descriptor->substr(additional + 1);
-        }
-    }
-    bool descriptor_restore_failed = false;
-    if (result.success && preserved_development_descriptor &&
-        !write_file_atomic(development_descriptor, *preserved_development_descriptor)) {
-        descriptor_restore_failed = true;
-    }
 
     godot::Dictionary output;
-    output["success"] = result.success && !descriptor_restore_failed;
+    output["success"] = result.success;
     output["compiled_count"] = static_cast<int64_t>(result.compiled_count);
     output["cache_hit_count"] = static_cast<int64_t>(result.cache_hit_count);
     output["removed_count"] = static_cast<int64_t>(result.removed_count);
@@ -1599,15 +1741,21 @@ godot::Dictionary GDPPCompiler::compile_project(
     godot::PackedStringArray editor_only_scripts;
     godot::Dictionary script_classes;
     godot::Dictionary attached_script_bases;
+    godot::Dictionary script_contract_hashes;
+    godot::Array editor_script_descriptors;
     for (const auto& script : result.scripts) {
         const auto relative_path = generic_path_to_utf8(script.relative_path);
         scripts.push_back(godot::String::utf8(relative_path.c_str()));
         const auto resource_path = "res://" + relative_path;
         script_classes[godot::String{resource_path.c_str()}] =
             godot::String{script.class_name.c_str()};
+        script_contract_hashes[godot::String{resource_path.c_str()}] =
+            godot::String{script.public_abi_hash.c_str()};
+        editor_script_descriptors.push_back(
+            editor_script_descriptor(script, godot::String{resource_path.c_str()}));
         if (script.is_attached) {
             attached_script_bases[godot::String{resource_path.c_str()}] =
-                godot::String{script.external_base_name.c_str()};
+                godot::String{script.attached_native_base.c_str()};
         }
         if (script.is_abstract)
             abstract_scripts.push_back(godot::String{resource_path.c_str()});
@@ -1619,6 +1767,8 @@ godot::Dictionary GDPPCompiler::compile_project(
     output["editor_only_scripts"] = editor_only_scripts;
     output["script_classes"] = script_classes;
     output["attached_script_bases"] = attached_script_bases;
+    output["script_contract_hashes"] = script_contract_hashes;
+    output["editor_script_descriptors"] = editor_script_descriptors;
     godot::PackedStringArray diagnostics;
     for (const auto& item : result.diagnostics) {
         const auto message = generic_path_to_utf8(item.path) + ":" +
@@ -1627,14 +1777,8 @@ godot::Dictionary GDPPCompiler::compile_project(
                              item.diagnostic.code + ": " + item.diagnostic.message;
         diagnostics.push_back(godot::String{message.c_str()});
     }
-    if (descriptor_restore_failed) {
-        diagnostics.push_back(
-            "cannot restore the development GDExtension descriptor after a distribution build");
-    }
     output["diagnostics"] = diagnostics;
-    if (result.success && !descriptor_restore_failed) {
-        output["extension_descriptor"] =
-            godot::String::utf8(generic_path_to_utf8(result.extension_descriptor).c_str());
+    if (result.success) {
         output["build_id"] = godot::String{result.build_id.c_str()};
         NativeBuildOptions build_options;
         build_options.project_output_directory = options.output_directory;
@@ -1654,24 +1798,6 @@ godot::Dictionary GDPPCompiler::compile_project(
                 diagnostics.push_back(godot::String{message.c_str()});
             output["diagnostics"] = diagnostics;
             return output;
-        }
-        if (*profile == NativeBuildProfile::development) {
-            const auto output_path =
-                godot::String::utf8(generic_path_to_utf8(plan.output_library).c_str());
-            const auto resource_path = native_string(settings->localize_path(output_path));
-            const auto descriptor = native_development_extension_descriptor(
-                *version, *platform, architecture, resource_path, web_thread_mode,
-                descriptor_additional_sections, attached_script_bases.is_empty());
-            if (!write_file_atomic(result.extension_descriptor, descriptor)) {
-                output["success"] = false;
-                diagnostics.push_back(
-                    "cannot atomically update the architecture-specific development extension "
-                    "descriptor: " +
-                    godot::String::utf8(generic_path_to_utf8(result.extension_descriptor).c_str()));
-                output["diagnostics"] = diagnostics;
-                return output;
-            }
-            output["development_library_resource_path"] = godot::String{resource_path.c_str()};
         }
         godot::Array commands;
         for (const auto& command : plan.commands) {

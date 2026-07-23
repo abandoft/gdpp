@@ -3,6 +3,7 @@
 #include "gdpp/project/extension_bridge.hpp"
 
 #include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
@@ -36,8 +37,14 @@ class GDPPCompiler final : public godot::RefCounted {
     execute_project_build(const godot::Dictionary& build_plan,
                           const godot::Callable& progress_callback = {}) const;
     void prepare_project_build();
+    // Installs reflection-only attached script descriptors into the editor bridge. The
+    // distribution library owns the executable descriptors and is never loaded into the editor.
     [[nodiscard]] godot::Dictionary
-    prune_stale_development_libraries(const godot::String& current_library) const;
+    install_editor_script_descriptors(const godot::Array& descriptors) const;
+    [[nodiscard]] bool
+    set_editor_script_storage_state(godot::Object* object,
+                                    const godot::PackedStringArray& stored_properties) const;
+    void clear_editor_script_descriptors() const;
     [[nodiscard]] godot::String get_default_sdk_root() const;
     [[nodiscard]] godot::String get_default_compiler_executable() const;
     [[nodiscard]] godot::String get_host_platform() const;
