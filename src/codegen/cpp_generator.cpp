@@ -1708,8 +1708,11 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
                                            std::string value) const {
     if (target.kind == TypeKind::void_type)
         return "(static_cast<void>(" + value + "))";
-    if (target.is_dynamic())
+    if (target.is_dynamic()) {
+        if (source.is_packed_array())
+            return "gdpp::runtime::to_variant(" + value + ")";
         return value;
+    }
     const bool target_external = target.kind == TypeKind::object && script_symbols_ &&
                                  script_symbols_->find_external(target.name);
     const bool source_external = source.kind == TypeKind::object && script_symbols_ &&
@@ -1947,7 +1950,7 @@ std::string CodeGenerator::emit_method_callback_definition(
                << "] = *reinterpret_cast<const godot::Variant*>(p_args[index]);\n";
     }
     if (native_return_type != "void")
-        result << "    godot::Variant result_value(";
+        result << "    godot::Variant result_value = gdpp::runtime::to_variant(";
     result << "    ";
     if (function.is_static)
         result << native_class << "::";

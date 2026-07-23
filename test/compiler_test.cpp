@@ -352,6 +352,12 @@ TEST_CASE("compiler converts Variant storage at typed PackedArray call boundarie
         "    sink.vec4(dynamic_vec4)\n");
 
     REQUIRE(result.success);
+    REQUIRE(result.unit.source.find(
+                "godot::Variant dynamic_bytes = gdpp::runtime::to_variant(bytes)") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "godot::Variant result_value = gdpp::runtime::to_variant(") !=
+            std::string::npos);
     for (const std::string_view type :
          {"PackedByteArray", "PackedInt32Array", "PackedInt64Array", "PackedFloat32Array",
           "PackedFloat64Array", "PackedStringArray", "PackedVector2Array", "PackedVector3Array",

@@ -6,6 +6,7 @@
 #include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/variant_internal.hpp>
 
+#include <type_traits>
 #include <utility>
 
 namespace gdpp::runtime {
@@ -61,6 +62,9 @@ template <typename PackedArray> class SharedPackedArray final {
 
     operator PackedArray&() noexcept { return native(); }
     operator const PackedArray&() const noexcept { return native(); }
+    // godot-cpp's MethodBind return path assigns native results into Variant and therefore
+    // requires this implicit view. Generated explicit Variant construction never relies on
+    // overload resolution: it routes through to_variant() below.
     operator godot::Variant() const { return value_; }
 
     [[nodiscard]] bool operator!() const { return native().is_empty(); }
@@ -76,6 +80,23 @@ template <typename PackedArray> class SharedPackedArray final {
   private:
     godot::Variant value_;
 };
+
+template <typename> struct IsSharedPackedArray : std::false_type {};
+
+template <typename PackedArray>
+struct IsSharedPackedArray<SharedPackedArray<PackedArray>> : std::true_type {};
+
+// Every generated native-to-Variant boundary routes through one overload-independent adapter.
+// This avoids compiler-specific constructor selection while retaining the exact Variant storage
+// that gives PackedArrays their GDScript shared-reference identity.
+template <typename Value>
+[[nodiscard]] godot::Variant to_variant(Value&& value) {
+    using Stored = std::remove_cv_t<std::remove_reference_t<Value>>;
+    if constexpr (IsSharedPackedArray<Stored>::value)
+        return value.variant();
+    else
+        return godot::Variant(std::forward<Value>(value));
+}
 
 template <typename PackedArray>
 [[nodiscard]] SharedPackedArray<PackedArray>
