@@ -66,3 +66,28 @@ jobs:
         env:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: ctest --test-dir build/ci-ubsan --output-on-failure
+
+  asan:
+    name: Core / Ubuntu / address safety
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          submodules: recursive
+      - name: Configure address-safety instrumentation
+        shell: bash
+        run: |
+          cmake -S . -B build/ci-asan -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DGDPP_BUILD_EXTENSION=OFF \
+            -DGDPP_BUILD_TESTS=ON \
+            -DGDPP_WARNINGS_AS_ERRORS=ON \
+            '-DCMAKE_CXX_FLAGS=-fsanitize=address -fno-omit-frame-pointer' \
+            '-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address'
+      - name: Build instrumented compiler and tests
+        run: cmake --build build/ci-asan --parallel
+      - name: Run instrumented compiler tests
+        env:
+          ASAN_OPTIONS: halt_on_error=1:detect_leaks=1
+        run: ctest --test-dir build/ci-asan --output-on-failure
