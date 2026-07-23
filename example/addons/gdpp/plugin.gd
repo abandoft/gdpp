@@ -14,7 +14,7 @@ const COMPILER_DESCRIPTOR_BACKUP := "res://.godot/gdpp_compiler_descriptor.expor
 
 var _compiler: Object
 var _export_plugin: EditorExportPlugin
-var _build_progress: CanvasLayer
+var _build_progress: Window
 var _building := false
 
 
@@ -163,8 +163,8 @@ func _compile_project() -> void:
     var target_version := str(ProjectSettings.get_setting(TARGET_VERSION_SETTING, "4.4"))
     var progress_callback := Callable()
     if _build_progress != null and _build_progress.is_available():
-        _build_progress.begin()
-        _build_progress.set_translation_profile("development")
+        _build_progress.begin(PackedStringArray(["development"]))
+        _build_progress.set_active_stage("development")
         progress_callback = Callable(self, "_on_manual_build_progress")
     print("GDPP: analyzing project scripts for Godot %s..." % target_version)
     var result: Dictionary = _compiler.compile_project(

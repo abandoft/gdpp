@@ -25,7 +25,7 @@ const GODOT_EXPORT_CACHE_DIRECTORY := "res://.godot/exported"
 const EXPORT_TRANSFORM_REVISION := 19
 
 var _compiler: Object
-var _build_progress: CanvasLayer
+var _build_progress: Window
 var _active_build_label := ""
 var _ready := false
 var _script_classes: Dictionary = {}
@@ -62,7 +62,7 @@ var _copied_property_count := 0
 var _strict_failure_injected := false
 
 
-func configure(compiler: Object, build_progress: CanvasLayer) -> void:
+func configure(compiler: Object, build_progress: Window) -> void:
     _compiler = compiler
     _build_progress = build_progress
 
@@ -487,7 +487,10 @@ func _serialize_export_resource(
 
 func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
     if _build_progress != null:
-        _build_progress.begin()
+        _build_progress.begin(PackedStringArray([
+            "development",
+            "debug" if is_debug else "release",
+        ]))
     var success := _prepare_export_impl(features, is_debug)
     if _build_progress != null:
         _build_progress.finish()
@@ -533,7 +536,7 @@ func _prepare_export_impl(features: PackedStringArray, is_debug: bool) -> bool:
     var cpp_compiler := str(ProjectSettings.get_setting(COMPILER_SETTING, ""))
 
     if _build_progress != null:
-        _build_progress.set_translation_profile("development")
+        _build_progress.set_active_stage("development")
     _active_build_label = "development"
     var development_progress := Callable()
     if _build_progress != null and _build_progress.is_available():
@@ -578,7 +581,7 @@ func _prepare_export_impl(features: PackedStringArray, is_debug: bool) -> bool:
             return false
 
     if _build_progress != null:
-        _build_progress.set_translation_profile(_build_profile)
+        _build_progress.set_active_stage(_build_profile)
     _active_build_label = _build_profile
     var distribution_progress := Callable()
     if _build_progress != null and _build_progress.is_available():
