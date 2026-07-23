@@ -56,6 +56,9 @@ compiler/project             → integration/godot、cli
 后续功能迭代破坏这些边界。生成代码的所有 native→`Variant` 边界必须经过
 `gdpp::runtime::to_variant`；后端不得直接拼接带实参的 `godot::Variant(...)`，从而避免
 godot-cpp 构造重载在 MSVC、Clang 和 GCC 间产生不同选择，并保证共享 PackedArray 存储不会退化。
+`SharedPackedArray` 到 Godot 原生 PackedArray 的视图只能显式获取；固定参数调用统一经过
+`packed_native_argument`，而 UtilityFunctions、Object/Callable/Signal 变参与外部扩展 ABI
+统一先物化为 Variant。该类型约束保证新增调用面即使遗漏后端适配，也不会重新形成两条隐式转换链。
 
 | 模块 | 职责 | 主要内容 |
 |---|---|---|
