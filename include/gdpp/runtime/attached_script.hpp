@@ -69,6 +69,7 @@ struct AttachedScriptDescriptor {
     godot::StringName global_name;
     godot::StringName native_base_type;
     godot::String base_script_path;
+    godot::String contract_hash;
     godot::StringName behavior_class;
     AttachedBehaviorFactory factory{nullptr};
     std::vector<AttachedScriptProperty> properties;
@@ -78,6 +79,10 @@ struct AttachedScriptDescriptor {
     godot::Variant rpc_config;
     bool tool{false};
     bool abstract{false};
+    // The compiler extension installs reflection-only descriptors while export resources are
+    // rewritten. They deliberately have no behavior factory: the editor needs property storage
+    // and Script reflection, while executable behavior exists only in the target library.
+    bool editor_metadata_only{false};
 };
 
 // Registration is deterministic and fails closed: duplicate paths are accepted only when their
@@ -93,6 +98,18 @@ find_attached_script(const godot::String& source_path);
 [[nodiscard]] std::optional<AttachedScriptDescriptor>
 resolve_attached_script(const godot::String& source_path, godot::String* error = nullptr);
 [[nodiscard]] std::vector<godot::String> attached_script_paths();
+
+// Script types are identities attached to a Godot owner, not ClassDB subclasses of that owner.
+// These helpers provide the runtime equivalent of GDScript's `is` and `as` operations without
+// ever casting an owner pointer to a generated behavior implementation.
+[[nodiscard]] bool is_attached_script_instance(godot::Object* object,
+                                               const godot::String& source_path);
+// Restricts export-time ScriptInstance property-state serialization to fields that were actually
+// stored by the source scene/resource. Target runtime instances reject this metadata-only API.
+[[nodiscard]] bool set_attached_editor_storage_state(
+    godot::Object* object, const godot::PackedStringArray& stored_properties);
+[[nodiscard]] godot::Object* cast_attached_script(const godot::Variant& value,
+                                                  const godot::String& source_path);
 
 // Constructs the provider-owned native object, attaches the compiled script and invokes _init
 // with the supplied arguments. The Variant preserves RefCounted ownership when applicable.
@@ -223,6 +240,8 @@ class AttachedCompiledScript : public godot::ScriptExtension {
   public:
     void set_source_path(const godot::String& source_path);
     [[nodiscard]] godot::String get_source_path() const;
+    void set_contract_hash(const godot::String& contract_hash);
+    [[nodiscard]] godot::String get_contract_hash() const;
 
     bool _editor_can_reload_from_file() override;
     void _placeholder_erased(void* placeholder) override;
@@ -270,6 +289,7 @@ class AttachedCompiledScript : public godot::ScriptExtension {
     [[nodiscard]] std::optional<AttachedScriptDescriptor> descriptor() const;
 
     godot::String source_path_;
+    godot::String contract_hash_;
 };
 
 } // namespace gdpp::runtime

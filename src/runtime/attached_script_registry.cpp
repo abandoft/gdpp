@@ -4,6 +4,7 @@
 #include <godot_cpp/core/error_macros.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <mutex>
 #include <string>
@@ -20,6 +21,7 @@ AttachedScriptDescriptor::operator=(const AttachedScriptDescriptor& other) {
     global_name = other.global_name;
     native_base_type = other.native_base_type;
     base_script_path = other.base_script_path;
+    contract_hash = other.contract_hash;
     behavior_class = other.behavior_class;
     factory = other.factory;
     properties = other.properties;
@@ -29,6 +31,7 @@ AttachedScriptDescriptor::operator=(const AttachedScriptDescriptor& other) {
     rpc_config = other.rpc_config;
     tool = other.tool;
     abstract = other.abstract;
+    editor_metadata_only = other.editor_metadata_only;
     return *this;
 }
 
@@ -39,6 +42,7 @@ AttachedScriptDescriptor& AttachedScriptDescriptor::operator=(AttachedScriptDesc
     global_name = std::move(other.global_name);
     native_base_type = std::move(other.native_base_type);
     base_script_path = std::move(other.base_script_path);
+    contract_hash = std::move(other.contract_hash);
     behavior_class = std::move(other.behavior_class);
     factory = other.factory;
     properties = std::move(other.properties);
@@ -48,6 +52,7 @@ AttachedScriptDescriptor& AttachedScriptDescriptor::operator=(AttachedScriptDesc
     rpc_config = std::move(other.rpc_config);
     tool = other.tool;
     abstract = other.abstract;
+    editor_metadata_only = other.editor_metadata_only;
     return *this;
 }
 
@@ -66,6 +71,14 @@ std::map<std::string, AttachedScriptDescriptor>& registry() {
 std::string registry_key(const godot::String& path) {
     const godot::CharString utf8 = path.utf8();
     return {utf8.get_data(), static_cast<std::size_t>(utf8.length())};
+}
+
+bool valid_contract_hash(const godot::String& value) {
+    const auto hash = registry_key(value);
+    return hash.size() == 64U &&
+           std::all_of(hash.begin(), hash.end(), [](const unsigned char character) {
+               return std::isxdigit(character) != 0;
+           });
 }
 
 void set_error(godot::String* destination, const godot::String& message) {
@@ -132,8 +145,10 @@ bool same_identity(const AttachedScriptDescriptor& left, const AttachedScriptDes
     return left.source_path == right.source_path && left.global_name == right.global_name &&
            left.native_base_type == right.native_base_type &&
            left.base_script_path == right.base_script_path &&
+           left.contract_hash == right.contract_hash &&
            left.behavior_class == right.behavior_class && left.factory == right.factory &&
            left.tool == right.tool && left.abstract == right.abstract &&
+           left.editor_metadata_only == right.editor_metadata_only &&
            same_ordered_items(left.properties, right.properties, same_property) &&
            same_ordered_items(left.methods, right.methods, same_method_info) &&
            same_ordered_items(left.signals, right.signals, same_method_info) &&
@@ -184,11 +199,15 @@ bool register_attached_script(AttachedScriptDescriptor descriptor, godot::String
         set_error(error, "attached script native_base_type must not be empty");
         return false;
     }
-    if (descriptor.behavior_class.is_empty()) {
+    if (!valid_contract_hash(descriptor.contract_hash)) {
+        set_error(error, "attached script contract_hash must be a 64-character hexadecimal digest");
+        return false;
+    }
+    if (descriptor.behavior_class.is_empty() && !descriptor.editor_metadata_only) {
         set_error(error, "attached script behavior_class must not be empty");
         return false;
     }
-    if (!descriptor.abstract && descriptor.factory == nullptr) {
+    if (!descriptor.abstract && descriptor.factory == nullptr && !descriptor.editor_metadata_only) {
         set_error(error, "concrete attached script must provide a behavior factory");
         return false;
     }

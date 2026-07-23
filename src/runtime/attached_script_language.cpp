@@ -254,8 +254,18 @@ void AttachedCompiledScript::set_source_path(const godot::String& source_path) {
 
 godot::String AttachedCompiledScript::get_source_path() const { return source_path_; }
 
+void AttachedCompiledScript::set_contract_hash(const godot::String& contract_hash) {
+    contract_hash_ = contract_hash;
+    emit_changed();
+}
+
+godot::String AttachedCompiledScript::get_contract_hash() const { return contract_hash_; }
+
 std::optional<AttachedScriptDescriptor> AttachedCompiledScript::descriptor() const {
-    return resolve_attached_script(source_path_);
+    auto value = resolve_attached_script(source_path_);
+    if (!value || contract_hash_.is_empty() || value->contract_hash != contract_hash_)
+        return std::nullopt;
+    return value;
 }
 
 bool AttachedCompiledScript::_editor_can_reload_from_file() { return false; }
@@ -264,8 +274,13 @@ void AttachedCompiledScript::_placeholder_erased(void*) {}
 
 bool AttachedCompiledScript::_can_instantiate() const {
     const auto value = descriptor();
-    if (!value || value->abstract || !value->factory)
+    if (!value || value->abstract)
         return false;
+    if (!value->factory) {
+        const auto* engine = godot::Engine::get_singleton();
+        if (!value->editor_metadata_only || !engine || !engine->is_editor_hint())
+            return false;
+    }
 
     // Godot rebuilds extension_list.cfg from a HashSet and therefore does not guarantee that a
     // provider GDExtension is initialized before the generated GDPP project extension. Behavior
@@ -283,6 +298,10 @@ godot::Ref<godot::Script> AttachedCompiledScript::_get_base_script() const {
     godot::Ref<AttachedCompiledScript> base;
     base.instantiate();
     base->set_source_path(value->base_script_path);
+    const auto base_descriptor = resolve_attached_script(value->base_script_path);
+    if (!base_descriptor)
+        return {};
+    base->set_contract_hash(base_descriptor->contract_hash);
     return base;
 }
 
@@ -435,10 +454,18 @@ void AttachedCompiledScript::_bind_methods() {
                                 &AttachedCompiledScript::set_source_path);
     godot::ClassDB::bind_method(godot::D_METHOD("get_source_path"),
                                 &AttachedCompiledScript::get_source_path);
+    godot::ClassDB::bind_method(godot::D_METHOD("set_contract_hash", "contract_hash"),
+                                &AttachedCompiledScript::set_contract_hash);
+    godot::ClassDB::bind_method(godot::D_METHOD("get_contract_hash"),
+                                &AttachedCompiledScript::get_contract_hash);
     ADD_PROPERTY(godot::PropertyInfo(godot::Variant::STRING, "source_path",
                                      godot::PROPERTY_HINT_FILE, "*.gd",
                                      godot::PROPERTY_USAGE_STORAGE),
                  "set_source_path", "get_source_path");
+    ADD_PROPERTY(godot::PropertyInfo(godot::Variant::STRING, "contract_hash",
+                                     godot::PROPERTY_HINT_NONE, {},
+                                     godot::PROPERTY_USAGE_STORAGE),
+                 "set_contract_hash", "get_contract_hash");
 }
 
 } // namespace gdpp::runtime

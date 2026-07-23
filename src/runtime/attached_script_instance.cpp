@@ -1,6 +1,7 @@
 #include "gdpp/runtime/attached_script.hpp"
 
 #include <godot_cpp/classes/class_db_singleton.hpp>
+#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/core/error_macros.hpp>
 #include <godot_cpp/templates/vector.hpp>
 #include <godot_cpp/variant/callable.hpp>
@@ -27,10 +28,18 @@ class AttachedScriptInstance final {
                            AttachedScriptDescriptor attached_descriptor,
                            godot::Ref<AttachedScriptBehavior> attached_behavior)
         : owner{attached_owner}, script{std::move(attached_script)},
-          descriptor{std::move(attached_descriptor)}, behavior{std::move(attached_behavior)} {}
+          descriptor{std::move(attached_descriptor)}, behavior{std::move(attached_behavior)} {
+        if (behavior.is_null()) {
+            for (const auto& property : descriptor.properties) {
+                if (property.has_default)
+                    metadata_values[property.info.name] = property.default_value;
+            }
+        }
+    }
 
     ~AttachedScriptInstance() {
-        behavior->detach_owner();
+        if (behavior.is_valid())
+            behavior->detach_owner();
         std::lock_guard<std::mutex> lock{instances_mutex()};
         instances().erase(owner);
     }
@@ -49,6 +58,9 @@ class AttachedScriptInstance final {
     godot::Ref<AttachedCompiledScript> script;
     AttachedScriptDescriptor descriptor;
     godot::Ref<AttachedScriptBehavior> behavior;
+    godot::Dictionary metadata_values;
+    godot::Dictionary editor_stored_properties;
+    bool has_editor_storage_state{false};
 };
 
 struct PendingConstruction {
@@ -110,6 +122,10 @@ bool has_signal(const AttachedScriptInstance* instance, const godot::StringName&
 godot::Variant call_behavior(AttachedScriptInstance* instance, const godot::StringName& method,
                              const godot::Variant** arguments, std::int64_t argument_count,
                              GDExtensionCallError& error) {
+    if (instance->behavior.is_null()) {
+        error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+        return {};
+    }
     godot::Variant target{instance->behavior.ptr()};
     godot::Variant result;
     target.callp(method, arguments, static_cast<int>(argument_count), result, error);
@@ -188,6 +204,12 @@ void destroy_method_infos(const GDExtensionMethodInfo* values, std::uint32_t cou
 
 GDExtensionBool instance_set(AttachedScriptInstance* instance, const godot::StringName* name,
                              const godot::Variant* value) {
+    if (instance->behavior.is_null()) {
+        if (!find_property(instance, *name))
+            return false;
+        instance->metadata_values[*name] = *value;
+        return true;
+    }
     if (find_method(instance, "_set")) {
         const godot::Variant property_name{*name};
         const godot::Variant* arguments[]{&property_name, value};
@@ -203,6 +225,23 @@ GDExtensionBool instance_set(AttachedScriptInstance* instance, const godot::Stri
 
 GDExtensionBool instance_get(AttachedScriptInstance* instance, const godot::StringName* name,
                              godot::Variant* result) {
+    if (instance->behavior.is_null()) {
+        const auto* property = find_property(instance, *name);
+        if (property) {
+            *result = instance->metadata_values.get(
+                *name, property->has_default ? property->default_value : godot::Variant{});
+            return true;
+        }
+        if (find_method(instance, *name)) {
+            *result = godot::Callable(instance->owner, *name);
+            return true;
+        }
+        if (has_signal(instance, *name)) {
+            *result = godot::Signal(instance->owner, *name);
+            return true;
+        }
+        return false;
+    }
     if (find_method(instance, "_get")) {
         const godot::Variant property_name{*name};
         const godot::Variant* arguments[]{&property_name};
@@ -234,8 +273,17 @@ const GDExtensionPropertyInfo* instance_property_list(AttachedScriptInstance* in
     if (*count == 0)
         return nullptr;
     auto* result = memnew_arr(GDExtensionPropertyInfo, *count);
-    for (std::uint32_t index = 0; index < *count; ++index)
-        result[index] = copy_property_info(instance->descriptor.properties[index].info);
+    for (std::uint32_t index = 0; index < *count; ++index) {
+        auto info = instance->descriptor.properties[index].info;
+        if (instance->behavior.is_null() && instance->has_editor_storage_state &&
+            !instance->editor_stored_properties.has(info.name)) {
+            // PackedScene queries the property list as well as get_property_state(). Keep the
+            // field dynamically visible for copy/validation, but remove STORAGE for fields that
+            // were not present in the source SceneState.
+            info.usage &= ~static_cast<std::uint32_t>(godot::PROPERTY_USAGE_STORAGE);
+        }
+        result[index] = copy_property_info(info);
+    }
     return result;
 }
 
@@ -269,8 +317,19 @@ void instance_property_state(AttachedScriptInstance* instance,
     for (const auto& property : instance->descriptor.properties) {
         if ((property.info.usage & godot::PROPERTY_USAGE_STORAGE) == 0)
             continue;
+        if (instance->behavior.is_null() && instance->has_editor_storage_state &&
+            !instance->editor_stored_properties.has(property.info.name)) {
+            // Export-time metadata descriptors intentionally do not evaluate customer field
+            // initializers. Only source properties recorded in the serialized scene/resource
+            // are emitted; all others are initialized by the target behavior constructor.
+            continue;
+        }
         godot::Variant value =
-            godot::ClassDB::class_get_property(instance->behavior.ptr(), property.info.name);
+            instance->behavior.is_valid()
+                ? godot::ClassDB::class_get_property(instance->behavior.ptr(), property.info.name)
+                : instance->metadata_values.get(
+                      property.info.name,
+                      property.has_default ? property.default_value : godot::Variant{});
         add(&property.info.name, &value, userdata);
     }
 }
@@ -320,17 +379,22 @@ void instance_call(AttachedScriptInstance* instance, const godot::StringName* me
         error->error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
         return;
     }
+    if (instance->behavior.is_null()) {
+        error->error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+        return;
+    }
     *result = call_behavior(instance, *method, arguments, argument_count, *error);
 }
 
 void instance_notification(AttachedScriptInstance* instance, std::int32_t what,
                            GDExtensionBool reversed) {
-    instance->behavior->dispatch_notification(what, reversed);
+    if (instance->behavior.is_valid())
+        instance->behavior->dispatch_notification(what, reversed);
 }
 
 void instance_to_string(AttachedScriptInstance* instance, GDExtensionBool* valid,
                         godot::String* result) {
-    if (!find_method(instance, "_to_string")) {
+    if (instance->behavior.is_null() || !find_method(instance, "_to_string")) {
         *valid = false;
         return;
     }
@@ -397,15 +461,22 @@ const GDExtensionScriptInstanceInfo3& script_instance_info() {
 
 void* AttachedCompiledScript::_instance_create(godot::Object* object) const {
     const auto metadata = descriptor();
-    if (!metadata || metadata->abstract || !metadata->factory || !object ||
+    if (!metadata || metadata->abstract || !object ||
         !object->is_class(metadata->native_base_type)) {
         return nullptr;
     }
 
-    godot::Ref<AttachedScriptBehavior> behavior = metadata->factory();
-    if (behavior.is_null())
-        return nullptr;
-    behavior->attach_owner(object);
+    godot::Ref<AttachedScriptBehavior> behavior;
+    if (metadata->factory) {
+        behavior = metadata->factory();
+        if (behavior.is_null())
+            return nullptr;
+        behavior->attach_owner(object);
+    } else {
+        const auto* engine = godot::Engine::get_singleton();
+        if (!metadata->editor_metadata_only || !engine || !engine->is_editor_hint())
+            return nullptr;
+    }
 
     godot::Ref<AttachedCompiledScript> script{const_cast<AttachedCompiledScript*>(this)};
     auto* instance = memnew(AttachedScriptInstance(object, std::move(script), *metadata, behavior));
@@ -416,6 +487,10 @@ void* AttachedCompiledScript::_instance_create(godot::Object* object) const {
             return nullptr;
         }
     }
+    if (behavior.is_null())
+        return godot::gdextension_interface::script_instance_create3(&script_instance_info(),
+                                                                      instance);
+
     behavior->initialize_instance();
 
     if (find_method(instance, "_init")) {
@@ -446,6 +521,58 @@ bool AttachedCompiledScript::_instance_has(godot::Object* object) const {
     const auto found = AttachedScriptInstance::instances().find(object);
     return found != AttachedScriptInstance::instances().end() &&
            found->second->script.ptr() == this;
+}
+
+bool is_attached_script_instance(godot::Object* object, const godot::String& source_path) {
+    if (!object || source_path.is_empty())
+        return false;
+    godot::String current_path;
+    {
+        std::lock_guard<std::mutex> lock{AttachedScriptInstance::instances_mutex()};
+        const auto found = AttachedScriptInstance::instances().find(object);
+        if (found == AttachedScriptInstance::instances().end())
+            return false;
+        current_path = found->second->descriptor.source_path.simplify_path();
+    }
+
+    const auto expected = source_path.simplify_path();
+    std::vector<godot::String> visited;
+    while (!current_path.is_empty()) {
+        if (current_path == expected)
+            return true;
+        if (std::find(visited.begin(), visited.end(), current_path) != visited.end())
+            return false;
+        visited.push_back(current_path);
+        const auto descriptor = find_attached_script(current_path);
+        if (!descriptor)
+            return false;
+        current_path = descriptor->base_script_path.simplify_path();
+    }
+    return false;
+}
+
+bool set_attached_editor_storage_state(
+    godot::Object* object, const godot::PackedStringArray& stored_properties) {
+    if (!object)
+        return false;
+    std::lock_guard<std::mutex> lock{AttachedScriptInstance::instances_mutex()};
+    const auto found = AttachedScriptInstance::instances().find(object);
+    if (found == AttachedScriptInstance::instances().end() || found->second->behavior.is_valid() ||
+        !found->second->descriptor.editor_metadata_only) {
+        return false;
+    }
+    auto* instance = found->second;
+    instance->editor_stored_properties.clear();
+    for (std::int64_t index = 0; index < stored_properties.size(); ++index)
+        instance->editor_stored_properties[godot::StringName{stored_properties[index]}] = true;
+    instance->has_editor_storage_state = true;
+    return true;
+}
+
+godot::Object* cast_attached_script(const godot::Variant& value,
+                                    const godot::String& source_path) {
+    auto* object = value.get_validated_object();
+    return is_attached_script_instance(object, source_path) ? object : nullptr;
 }
 
 godot::Variant instantiate_attached_script(const godot::String& source_path,
