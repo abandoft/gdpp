@@ -192,6 +192,17 @@ func _run() -> void:
         push_error("PackedArray identity was lost at the public return boundary")
         quit(1)
         return
+    var field_bytes := PackedByteArray([50])
+    native_references.set("default_bytes", field_bytes)
+    var field_alias: PackedByteArray = native_references.get("default_bytes")
+    field_alias.append(51)
+    if (
+        field_bytes != PackedByteArray([50, 51])
+        or native_references.get("default_bytes") != field_bytes
+    ):
+        push_error("PackedArray identity was lost at the reflected property boundary")
+        quit(1)
+        return
     native_references = null
     script_references = null
 

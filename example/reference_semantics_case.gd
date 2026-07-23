@@ -1,6 +1,9 @@
 extends RefCounted
 
 
+signal packed_emitted(values: PackedByteArray)
+
+
 var default_bytes := PackedByteArray([4])
 
 
@@ -62,6 +65,14 @@ func callable_bytes(values: PackedByteArray) -> PackedByteArray:
     var mutate := func(target: PackedByteArray) -> void:
         target.append(7)
     mutate.call(values)
+    packed_emitted.connect(
+        func(target: PackedByteArray) -> void:
+            target.append(8),
+        CONNECT_ONE_SHOT,
+    )
+    packed_emitted.emit(values)
+    var dynamic_self: Variant = self
+    dynamic_self.call("mutate_bytes", values)
     return values
 
 
