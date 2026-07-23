@@ -66,7 +66,7 @@ function(gdpp_add_sdk_binding target_name api_version godot_target output_variab
     endif()
     if(MSVC)
         list(APPEND configure_arguments
-            "-DCMAKE_CXX_FLAGS=/D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00")
+            "-DCMAKE_CXX_FLAGS=/FS /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00")
     elseif(WIN32)
         list(APPEND configure_arguments
             "-DCMAKE_CXX_FLAGS=-D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00")

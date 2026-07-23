@@ -44,6 +44,10 @@ endif()
 # target is created: changing it only when godot-cpp is added leaves gdpp_core on /MD and the
 # extension/generated project on /MT, which produces LNK2038 (or worse, crosses CRT heaps).
 if(MSVC)
+    # A single godot-cpp target contains thousands of translation units. Visual Studio may launch
+    # several compiler processes for that target even though SDK variants themselves are ordered;
+    # /FS routes compile-PDB writes through MSPDBSRV instead of allowing C2471 contention.
+    add_compile_options($<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/FS>)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded" CACHE STRING
         "MSVC runtime shared by GDPP, godot-cpp and generated project libraries" FORCE)
 endif()
