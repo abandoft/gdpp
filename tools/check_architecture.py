@@ -144,11 +144,27 @@ def validate_generated_variant_boundaries(errors: list[str]) -> None:
             )
 
 
+def validate_packed_conversion_contract(errors: list[str]) -> None:
+    header = PUBLIC_ROOT / "runtime" / "reference_semantics.hpp"
+    source = header.read_text(encoding="utf-8")
+    required = (
+        "explicit operator PackedArray&()",
+        "explicit operator const PackedArray&()",
+        "packed_native_argument(Value&& value)",
+    )
+    for contract in required:
+        if contract not in source:
+            errors.append(
+                f"{header.relative_to(ROOT)}: missing PackedArray ABI contract {contract!r}"
+            )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_layout(errors)
     validate_dependencies(errors)
     validate_generated_variant_boundaries(errors)
+    validate_packed_conversion_contract(errors)
     if errors:
         print("GDPP architecture validation failed:", file=sys.stderr)
         for error in errors:
