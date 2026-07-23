@@ -704,10 +704,14 @@ godot::Callable make_callable(godot::Object* owner, std::size_t required_argumen
                                                  is_vararg, std::move(continuation)))};
 }
 
-void bind_vararg_method(const godot::StringName& class_name, const godot::MethodInfo& method,
-                        const GDExtensionClassMethodCall call, const bool has_return_value) {
+namespace {
+
+void bind_variant_method_impl(const godot::StringName& class_name,
+                              const godot::MethodInfo& method,
+                              const GDExtensionClassMethodCall call,
+                              const bool has_return_value, const bool is_vararg) {
     if (class_name.is_empty() || method.name.is_empty() || !call) {
-        godot::UtilityFunctions::push_error("GDPP: invalid variadic method registration");
+        godot::UtilityFunctions::push_error("GDPP: invalid Variant method registration");
         return;
     }
 
@@ -744,7 +748,9 @@ void bind_vararg_method(const godot::StringName& class_name, const godot::Method
     for (const auto& value : method.default_arguments)
         defaults.push_back(const_cast<GDExtensionVariantPtr>(value._native_ptr()));
 
-    auto flags = method.flags | GDEXTENSION_METHOD_FLAG_VARARG;
+    auto flags = method.flags;
+    if (is_vararg)
+        flags |= GDEXTENSION_METHOD_FLAG_VARARG;
     const GDExtensionClassMethodInfo extension_method{
         method.name._native_ptr(),
         nullptr,
@@ -762,6 +768,18 @@ void bind_vararg_method(const godot::StringName& class_name, const godot::Method
     };
     godot::gdextension_interface::classdb_register_extension_class_method(
         godot::gdextension_interface::library, class_name._native_ptr(), &extension_method);
+}
+
+} // namespace
+
+void bind_vararg_method(const godot::StringName& class_name, const godot::MethodInfo& method,
+                        const GDExtensionClassMethodCall call, const bool has_return_value) {
+    bind_variant_method_impl(class_name, method, call, has_return_value, true);
+}
+
+void bind_variant_method(const godot::StringName& class_name, const godot::MethodInfo& method,
+                         const GDExtensionClassMethodCall call, const bool has_return_value) {
+    bind_variant_method_impl(class_name, method, call, has_return_value, false);
 }
 
 godot::Variant call_dynamic_impl(godot::Variant& target, const godot::StringName& method,

@@ -187,6 +187,8 @@ using CallableContinuation = std::function<godot::Variant(const godot::Array&)>;
 // GDExtension call thunk while retaining full MethodInfo reflection and default arguments.
 void bind_vararg_method(const godot::StringName& class_name, const godot::MethodInfo& method,
                         GDExtensionClassMethodCall call, bool has_return_value);
+void bind_variant_method(const godot::StringName& class_name, const godot::MethodInfo& method,
+                         GDExtensionClassMethodCall call, bool has_return_value);
 
 // Local lambdas remain ordinary Godot Callables when they escape, but a call made while the
 // generated C++ retains the concrete adapter type can invoke the closure directly. This removes
