@@ -275,7 +275,7 @@ static func format_task_text(phase: String, completed: int, total: int) -> Strin
     var known_phase := phase if PHASE_TEXT.has(phase) else "compile"
     var text: String = PHASE_TEXT[known_phase]
     if known_phase == "compile" and total > 0:
-        text += " %d/%d" % [clampi(completed, 0, total), total]
+        text += " (%d/%d)" % [clampi(completed, 0, total), total]
     return text
 
 

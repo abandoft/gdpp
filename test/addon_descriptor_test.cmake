@@ -171,7 +171,7 @@ foreach(required_build_progress_contract IN ITEMS
         "RenderingServer.canvas_item_clear(get_canvas_item())"
         "_font.draw_string("
         "static func format_task_text(phase: String, completed: int, total: int) -> String:"
-        "text += \" %d/%d\""
+        "text += \" (%d/%d)\""
         "_task_label.set_text_immediate(format_task_text("
         "get_last_exclusive_window()"
         "DisplayServer.window_get_active_popup()"

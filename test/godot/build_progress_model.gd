@@ -92,7 +92,7 @@ func _run() -> void:
         return
 
     var compile_text := BUILD_PROGRESS.format_task_text("compile", 3, 32)
-    if compile_text != "Compiling project sources 3/32":
+    if compile_text != "Compiling project sources (3/32)":
         push_error("GDPP compile task counter mismatch: %s" % compile_text)
         quit(1)
         return
