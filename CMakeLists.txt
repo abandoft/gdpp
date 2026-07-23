@@ -122,8 +122,8 @@ set(GDPP_GODOT_EXECUTABLE "" CACHE FILEPATH "Optional Godot executable used for 
 # The generated C++ and the compiler-only SDK form one native runtime contract.  Keep exact
 # content hashes in the compiler as well as every packaged SDK so an old or partially copied SDK
 # is rejected during preflight instead of failing later with thousands of C++ diagnostics.
-set(GDPP_NATIVE_SDK_SCHEMA 10)
-set(GDPP_NATIVE_RUNTIME_ABI 9)
+set(GDPP_NATIVE_SDK_SCHEMA 11)
+set(GDPP_NATIVE_RUNTIME_ABI 10)
 set(GDPP_NATIVE_RUNTIME_HEADER
     "${CMAKE_SOURCE_DIR}/include/gdpp/runtime/variant_ops.hpp")
 set(GDPP_REFERENCE_SEMANTICS_HEADER
@@ -280,7 +280,6 @@ if(GDPP_ANDROID_SDK_VERSIONS)
                     --gdpp-version "${PROJECT_VERSION}"
                 DEPENDS
                     "${CMAKE_SOURCE_DIR}/tools/build_android_sdk.py"
-                    "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
                     "${GDPP_NATIVE_RUNTIME_HEADER}"
                     "${GDPP_REFERENCE_SEMANTICS_HEADER}"
                     "${GDPP_NATIVE_RUNTIME_SOURCE}"
@@ -327,7 +326,6 @@ if(GDPP_WEB_SDK_VERSIONS)
                     --gdpp-version "${PROJECT_VERSION}"
                 DEPENDS
                     "${CMAKE_SOURCE_DIR}/tools/build_web_sdk.py"
-                    "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
                     "${GDPP_NATIVE_RUNTIME_HEADER}"
                     "${GDPP_REFERENCE_SEMANTICS_HEADER}"
                     "${GDPP_NATIVE_RUNTIME_SOURCE}"
@@ -371,7 +369,6 @@ if(GDPP_IOS_SDK_VERSIONS)
                 --gdpp-version "${PROJECT_VERSION}"
             DEPENDS
                 "${CMAKE_SOURCE_DIR}/tools/build_ios_sdk.py"
-                "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
                 "${GDPP_NATIVE_RUNTIME_HEADER}"
                 "${GDPP_REFERENCE_SEMANTICS_HEADER}"
                 "${GDPP_NATIVE_RUNTIME_SOURCE}"

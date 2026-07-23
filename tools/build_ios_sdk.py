@@ -103,7 +103,6 @@ def main() -> int:
     deployment_target = args.deployment_target
 
     godot_cpp = source_root / "third/godot-cpp"
-    class_db_patch = source_root / "cmake/PatchGodotCppClassDB.cmake"
     toolchain = godot_cpp / "cmake/ios.toolchain.cmake"
     runtime_header = source_root / "include/gdpp/runtime/variant_ops.hpp"
     reference_semantics_header = source_root / "include/gdpp/runtime/reference_semantics.hpp"
@@ -117,7 +116,6 @@ def main() -> int:
     integer_semantics_header = source_root / "include/gdpp/numeric/integer_semantics.hpp"
     for required in (
         godot_cpp / "CMakeLists.txt",
-        class_db_patch,
         toolchain,
         runtime_header,
         reference_semantics_header,
@@ -197,15 +195,6 @@ def main() -> int:
 
     assert generated_include is not None
     shutil.copytree(godot_cpp / "include", stage / "godot-cpp/include", dirs_exist_ok=True)
-    run(
-        [
-            "cmake",
-            f"-DGDPP_CLASS_DB_INPUT={godot_cpp / 'include/godot_cpp/core/class_db.hpp'}",
-            f"-DGDPP_CLASS_DB_OUTPUT={stage / 'godot-cpp/include/godot_cpp/core/class_db.hpp'}",
-            "-P",
-            str(class_db_patch),
-        ]
-    )
     shutil.copytree(generated_include, stage / "godot-cpp/gen/include", dirs_exist_ok=True)
     shutil.copy2(godot_cpp / "LICENSE.md", stage / "godot-cpp/LICENSE.md")
     shutil.copy2(runtime_header, stage / "include/gdpp/runtime/variant_ops.hpp")
