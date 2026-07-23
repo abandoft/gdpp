@@ -68,7 +68,9 @@ endif()
 foreach(GDPP_TEST_MULTI_CONFIG_CONTRACT IN ITEMS
         "set(binding_build_config Release)"
         "--config \"\${binding_build_config}\""
-        "editor_optimization \${GDPP_EDITOR_OPTIMIZATION}")
+        "editor_optimization \${GDPP_EDITOR_OPTIMIZATION}"
+        "set(GDPP_EXTENSION_OUTPUT_FLAT \"\${GDPP_EXTENSION_OUTPUT}/$<0:>\")"
+        "RUNTIME_OUTPUT_DIRECTORY \"\${GDPP_EXTENSION_OUTPUT_FLAT}\"")
     string(FIND "${GDPP_TEST_PLUGIN_CMAKE}"
         "${GDPP_TEST_MULTI_CONFIG_CONTRACT}"
         GDPP_TEST_MULTI_CONFIG_CONTRACT_OFFSET)
