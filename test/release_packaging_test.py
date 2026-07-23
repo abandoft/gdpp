@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fast fixture tests for the 12-package release assembler."""
+"""Fixture tests for the three cross-version desktop release packages."""
 
 from __future__ import annotations
 
@@ -20,25 +20,52 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(SOURCE_ROOT / "tools"))
 
 import extract_changelog  # noqa: E402
+import package_platform_release  # noqa: E402
 import package_release  # noqa: E402
 
 
-RUNTIME_FIELDS = {
-    "runtime_abi": "2",
-    "runtime_header_sha256": "a" * 64,
-    "reference_semantics_header_sha256": "b" * 64,
-    "runtime_source_sha256": "c" * 64,
-    "attached_runtime_header_sha256": "d" * 64,
-    "attached_runtime_registry_source_sha256": "e" * 64,
-    "attached_runtime_instance_source_sha256": "f" * 64,
-    "attached_runtime_language_source_sha256": "1" * 64,
-    "integer_semantics_header_sha256": "0" * 64,
+RUNTIME_CONTENT = {
+    "runtime_header_sha256": ("include/gdpp/runtime/variant_ops.hpp", "runtime-header"),
+    "reference_semantics_header_sha256": (
+        "include/gdpp/runtime/reference_semantics.hpp",
+        "reference-semantics-header",
+    ),
+    "runtime_source_sha256": ("src/runtime/variant_ops.cpp", "runtime-source"),
+    "attached_runtime_header_sha256": (
+        "include/gdpp/runtime/attached_script.hpp",
+        "attached-header",
+    ),
+    "attached_runtime_registry_source_sha256": (
+        "src/runtime/attached_script_registry.cpp",
+        "attached-registry",
+    ),
+    "attached_runtime_instance_source_sha256": (
+        "src/runtime/attached_script_instance.cpp",
+        "attached-instance",
+    ),
+    "attached_runtime_language_source_sha256": (
+        "src/runtime/attached_script_language.cpp",
+        "attached-language",
+    ),
+    "integer_semantics_header_sha256": (
+        "include/gdpp/numeric/integer_semantics.hpp",
+        "integer-semantics",
+    ),
 }
-COMMON_ABI_FIELDS = {
-    "cxx_standard": "17",
-    "exceptions": "disabled",
+RUNTIME_FIELDS = {
+    "runtime_abi": "10",
+    **{
+        field: hashlib.sha256(content.encode("utf-8")).hexdigest()
+        for field, (_, content) in RUNTIME_CONTENT.items()
+    },
+}
+COMMON_FIELDS = {
     "distribution_binding": "template_release",
     "distribution_optimization": "Release",
+    "gdpp_version": "1.7.7",
+    "cxx_standard": "17",
+    "exceptions": "disabled",
+    **RUNTIME_FIELDS,
 }
 
 
@@ -47,59 +74,70 @@ def write(path: Path, content: str = "fixture") -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def manifest(path: Path, fields: dict[str, str]) -> None:
-    body = f"GDPP_SDK {package_release.SDK_SCHEMA}\n" + "".join(
-        f"{key} {value}\n" for key, value in fields.items()
+def write_manifest(path: Path, fields: dict[str, str]) -> None:
+    write(
+        path,
+        f"GDPP_SDK {package_release.SDK_SCHEMA}\n"
+        + "".join(f"{key} {value}\n" for key, value in fields.items()),
     )
-    write(path, body)
 
 
-def create_addon(root: Path, host_name: str, godot_version: str = "4.6") -> Path:
-    host = package_release.HOSTS[host_name]
-    addon = root / "addons/gdpp"
+def write_runtime(sdk: Path) -> None:
+    for relative, content in RUNTIME_CONTENT.values():
+        write(sdk / relative, content)
+    write(sdk / "godot-cpp/include/godot_cpp/classes/object.hpp")
+    write(sdk / "godot-cpp/gen/include/godot_cpp/classes/node.hpp")
+    write(sdk / "godot-cpp/LICENSE.md")
+
+
+def create_host_component(root: Path, component_host: str) -> Path:
+    host = package_release.HOSTS[component_host]
+    addon = root / f"gdpp-host-{component_host}" / "addons/gdpp"
     for relative in package_release.STATIC_ADDON_FILES:
         write(addon / relative)
-    write(addon / "plugin.cfg", '[plugin]\nversion="1.0.0"\n')
-    write(
-        addon / "gdpp.gdextension",
-        '[configuration]\ncompatibility_minimum = "4.4"\n',
-    )
-    write(addon / "binary" / host.compiler_library)
-    write(addon / "binary" / host.fallback_library)
-    write(addon / "binary/libgdpp_project.release.unwanted.so")
+    write(addon / "plugin.cfg", '[plugin]\nversion="1.7.7"\n')
+    write(addon / "gdpp.gdextension", '[configuration]\ncompatibility_minimum = "4.4"\n')
+    write(addon / "binary" / host.compiler_library, f"compiler-{component_host}")
+    write(addon / "binary" / host.fallback_library, f"fallback-{component_host}")
 
-    sdk = addon / "sdk" / godot_version
-    for directory in ("include", "src", "godot-cpp"):
-        write(sdk / directory / "fixture")
-    write(
-        sdk
-        / "lib"
-        / f"libgodot-cpp.{host.platform}.template_release.{host.architecture}.a"
-    )
-    manifest(
+    for godot_version in package_release.SUPPORTED_GODOT_VERSIONS:
+        sdk = addon / "sdk" / godot_version
+        write_runtime(sdk)
+        extension = ".lib" if host.platform == "windows" else ".a"
+        write(
+            sdk
+            / "lib"
+            / (
+                f"libgodot-cpp.{host.platform}.template_release."
+                f"{host.architecture}{extension}"
+            )
+        )
+        write_manifest(
+            sdk / "sdk.manifest",
+            {
+                "api": godot_version,
+                "platform": host.platform,
+                "arch": host.architecture,
+                "profiles": "debug,release",
+                "platform_minimum": host.platform_minimum,
+                "msvc_runtime": "static" if host.platform == "windows" else "not_applicable",
+                **(
+                    {"compiler": "MSVC", "compiler_version": "19.44.35207.1"}
+                    if host.platform == "windows"
+                    else {"compiler": "Clang", "compiler_version": "18.1.0"}
+                ),
+                **COMMON_FIELDS,
+            },
+        )
+    return addon
+
+
+def create_android_sdk(root: Path, godot_version: str) -> Path:
+    sdk = root / f"gdpp-android-arm64-godot-{godot_version}"
+    write_runtime(sdk)
+    write(sdk / "lib/libgodot-cpp.android.template_release.arm64.a")
+    write_manifest(
         sdk / "sdk.manifest",
-        {
-            "api": godot_version,
-            "platform": host.platform,
-            "arch": host.architecture,
-            "profiles": "debug,release",
-            "platform_minimum": host.platform_minimum,
-            "gdpp_version": "1.0.0",
-            **COMMON_ABI_FIELDS,
-            "msvc_runtime": "static" if host.platform == "windows" else "not_applicable",
-            **(
-                {"compiler": "MSVC", "compiler_version": "19.44.35207.1"}
-                if host.platform == "windows"
-                else {}
-            ),
-            **RUNTIME_FIELDS,
-        },
-    )
-
-    android = sdk / "android/arm64"
-    write(android / "lib/libgodot-cpp.android.template_release.arm64.a")
-    manifest(
-        android / "sdk.manifest",
         {
             "api": godot_version,
             "platform": "android",
@@ -108,146 +146,210 @@ def create_addon(root: Path, host_name: str, godot_version: str = "4.6") -> Path
             "platform_minimum": "Android_9",
             "android_api_level": "28",
             "android_stl": "c++_shared",
-            "gdpp_version": "1.0.0",
-            **COMMON_ABI_FIELDS,
             "msvc_runtime": "not_applicable",
-            **RUNTIME_FIELDS,
+            **COMMON_FIELDS,
         },
     )
+    return sdk
 
-    if host.platform == "macos":
-        ios = sdk / "ios/arm64"
-        for target in ("device", "simulator"):
-            write(ios / f"lib/{target}/libgodot-cpp.ios.template_release.arm64.a")
-        manifest(
-            ios / "sdk.manifest",
-            {
-                "api": godot_version,
-                "platform": "ios",
-                "arch": "arm64",
-                "profiles": "debug,release",
-                "platform_minimum": "iOS_16.0",
-                "ios_deployment_target": "16.0",
-                "ios_slices": "device-arm64,simulator-arm64,simulator-x86_64",
-                "gdpp_version": "1.0.0",
-                **COMMON_ABI_FIELDS,
-                "msvc_runtime": "not_applicable",
-                **RUNTIME_FIELDS,
-            },
-        )
-    write(sdk / "web/wasm32/unwanted")
-    return addon
+
+def create_ios_sdk(root: Path, godot_version: str) -> Path:
+    sdk = root / f"gdpp-ios-godot-{godot_version}"
+    write_runtime(sdk)
+    write(sdk / "lib/device/libgodot-cpp.ios.template_release.arm64.a")
+    write(sdk / "lib/simulator/libgodot-cpp.ios.template_release.universal.a")
+    write_manifest(
+        sdk / "sdk.manifest",
+        {
+            "api": godot_version,
+            "platform": "ios",
+            "arch": "arm64",
+            "profiles": "debug,release",
+            "platform_minimum": "iOS_16.0",
+            "ios_deployment_target": "16.0",
+            "ios_slices": "device-arm64,simulator-arm64,simulator-x86_64",
+            "source_paths": "mapped",
+            "msvc_runtime": "not_applicable",
+            **COMMON_FIELDS,
+        },
+    )
+    return sdk
+
+
+def create_web_sdk(root: Path, godot_version: str, variant: str) -> Path:
+    sdk = root / f"gdpp-web-godot-{godot_version}-{variant}"
+    write_runtime(sdk)
+    suffix = ".nothreads" if variant == "nothreads" else ""
+    write(sdk / "lib" / f"libgodot-cpp.web.template_release.wasm32{suffix}.a")
+    write_manifest(
+        sdk / "sdk.manifest",
+        {
+            "api": godot_version,
+            "platform": "web",
+            "arch": "wasm32",
+            "profiles": "debug,release",
+            "platform_minimum": "none",
+            "web_threads": variant,
+            "source_paths": "mapped",
+            "compiler": "Emscripten",
+            "compiler_version": "4.0.0",
+            "msvc_runtime": "not_applicable",
+            **COMMON_FIELDS,
+        },
+    )
+    return sdk
+
+
+def create_components(root: Path) -> None:
+    for component_host in package_release.HOSTS:
+        create_host_component(root, component_host)
+    for godot_version in package_release.SUPPORTED_GODOT_VERSIONS:
+        create_android_sdk(root, godot_version)
+        create_ios_sdk(root, godot_version)
+        for variant in package_platform_release.WEB_VARIANTS:
+            create_web_sdk(root, godot_version, variant)
 
 
 class ReleasePackagingTest(unittest.TestCase):
     def setUp(self) -> None:
         BINARY_ROOT.mkdir(parents=True, exist_ok=True)
-        self.temporary = Path(tempfile.mkdtemp(prefix="release-package-", dir=BINARY_ROOT))
+        self.temporary = Path(tempfile.mkdtemp(prefix="gdpp-platform-release-"))
+        self.components = self.temporary / "components"
+        create_components(self.components)
 
     def tearDown(self) -> None:
         shutil.rmtree(self.temporary)
 
-    def package(self, host_name: str, godot_version: str = "4.6") -> tuple[Path, list[str]]:
-        addon = create_addon(
-            self.temporary / f"{host_name}-{godot_version}", host_name, godot_version
+    def stage(self, host: str) -> tuple[Path, str]:
+        stage, archive_name, version = package_platform_release.stage_platform_package(
+            self.components,
+            self.temporary / f"release-{host}",
+            host,
         )
-        host = package_release.HOSTS[host_name]
-        version = package_release.validate_source(addon, host, godot_version)
-        output = self.temporary / "output"
-        stage, name = package_release.stage_package(
-            addon, output, host_name, host, godot_version, version
-        )
-        archive = output / f"{name}.zip"
-        package_release.create_zip(stage, archive)
-        with zipfile.ZipFile(archive) as packaged:
+        self.assertEqual(version, "1.7.7")
+        return stage, archive_name
+
+    def test_three_packages_contain_all_versions_and_only_supported_targets(self) -> None:
+        expected_names = {
+            "mac": "gdpp-mac",
+            "linux": "gdpp-linux",
+            "win": "gdpp-win",
+        }
+        for package_name, expected_archive in expected_names.items():
+            with self.subTest(package=package_name):
+                stage, archive_name = self.stage(package_name)
+                self.assertEqual(archive_name, expected_archive)
+                addon = stage / "addons/gdpp"
+                package = package_platform_release.PLATFORM_PACKAGES[package_name]
+                host = package_release.HOSTS[package.component_host]
+                self.assertEqual(
+                    {path.name for path in (addon / "binary").iterdir()},
+                    {host.compiler_library, host.fallback_library},
+                )
+                self.assertEqual(
+                    sorted(path.name for path in (addon / "sdk").iterdir() if path.is_dir()),
+                    list(package_release.SUPPORTED_GODOT_VERSIONS),
+                )
+                for godot_version in package_release.SUPPORTED_GODOT_VERSIONS:
+                    sdk = addon / "sdk" / godot_version
+                    self.assertTrue((sdk / "sdk.manifest").is_file())
+                    self.assertTrue((sdk / "android/arm64/sdk.manifest").is_file())
+                    self.assertTrue((sdk / "web/wasm32/nothreads/sdk.manifest").is_file())
+                    self.assertTrue((sdk / "web/wasm32/threads/sdk.manifest").is_file())
+                    self.assertEqual(
+                        (sdk / "ios/arm64/sdk.manifest").is_file(),
+                        package_name == "mac",
+                    )
+                    self.assertFalse((sdk / "macos").exists())
+                    self.assertFalse((sdk / "linux").exists())
+                    self.assertFalse((sdk / "windows").exists())
+                manifest = (addon / "PACKAGE_MANIFEST.txt").read_text(encoding="utf-8")
+                self.assertIn("target_godot_apis 4.4,4.5,4.6,4.7", manifest)
+                self.assertIn(f"host {package_name}", manifest)
+
+    def test_zip_is_reproducible_and_contains_no_nested_or_debug_products(self) -> None:
+        stage, archive_name = self.stage("mac")
+        first_archive = self.temporary / "first.zip"
+        package_release.create_zip(stage, first_archive)
+        first_hash = package_release.sha256(first_archive)
+        with zipfile.ZipFile(first_archive) as packaged:
             names = packaged.namelist()
-        return archive, names
+        self.assertFalse(any(path.endswith(".zip") for path in names))
+        self.assertFalse(any("template_debug" in path for path in names))
+        self.assertFalse(any(".editor." in path for path in names))
+        self.assertFalse(any("gdpp_project" in path for path in names))
+        self.assertIn("addons/gdpp/build_progress.gd", names)
+        self.assertIn("addons/gdpp/native_build_job.gd", names)
 
-    def test_twelve_package_matrix_selects_only_required_targets(self) -> None:
-        archives: set[str] = set()
-        for godot_version in package_release.SUPPORTED_GODOT_VERSIONS:
-            for host_name in package_release.HOSTS:
-                with self.subTest(host=host_name, godot=godot_version):
-                    archive, names = self.package(host_name, godot_version)
-                    archives.add(archive.name)
-                    self.assertEqual(
-                        archive.name,
-                        f"gdpp-{godot_version}-{host_name}.zip",
-                    )
-                    self.assertTrue(
-                        any(
-                            f"/sdk/{godot_version}/android/arm64/" in name
-                            for name in names
-                        )
-                    )
-                    self.assertEqual(
-                        any(
-                            f"/sdk/{godot_version}/ios/arm64/" in name for name in names
-                        ),
-                        host_name == "mac-arm64",
-                    )
-                    self.assertFalse(any("/web/" in name for name in names))
-                    self.assertFalse(any("gdpp_project" in name for name in names))
-                    self.assertFalse(any("template_debug" in name for name in names))
-                    self.assertTrue(any("template_release" in name for name in names))
-                    self.assertTrue(any(name.endswith("sdk/.gdignore") for name in names))
-                    self.assertNotIn("addons/gdpp/LICENSE", names)
-                    self.assertNotIn("addons/gdpp/THIRD_PARTY_NOTICES.md", names)
-                    self.assertIn("addons/gdpp/build_progress.gd", names)
-                    self.assertIn("addons/gdpp/native_build_job.gd", names)
-        self.assertEqual(len(archives), 12)
+        second_stage, second_name, _ = package_platform_release.stage_platform_package(
+            self.components,
+            self.temporary / "second-release",
+            "mac",
+        )
+        self.assertEqual(second_name, archive_name)
+        second_archive = self.temporary / "second.zip"
+        package_release.create_zip(second_stage, second_archive)
+        self.assertEqual(first_hash, package_release.sha256(second_archive))
 
-    def test_zip_is_reproducible(self) -> None:
-        archive, _ = self.package("linux-x64")
-        first = hashlib.sha256(archive.read_bytes()).hexdigest()
-        archive.unlink()
-        second_archive, _ = self.package("linux-x64")
-        second = hashlib.sha256(second_archive.read_bytes()).hexdigest()
-        self.assertEqual(first, second)
-
-    def test_minimum_platform_mismatch_fails_closed(self) -> None:
-        addon = create_addon(self.temporary / "bad", "windows-x64")
-        path = addon / "sdk/4.6/android/arm64/sdk.manifest"
-        path.write_text(path.read_text(encoding="utf-8").replace("Android_9", "Android_8"))
-        with self.assertRaisesRegex(ValueError, "platform_minimum"):
-            package_release.validate_source(
-                addon, package_release.HOSTS["windows-x64"], "4.6"
+    def test_missing_godot_version_fails_closed(self) -> None:
+        shutil.rmtree(
+            self.components / "gdpp-host-linux-x64/addons/gdpp/sdk/4.7"
+        )
+        with self.assertRaisesRegex(ValueError, "must contain Godot SDKs"):
+            package_platform_release.stage_platform_package(
+                self.components,
+                self.temporary / "release",
+                "linux",
             )
 
-    def test_native_abi_manifest_mismatch_fails_closed(self) -> None:
-        addon = create_addon(self.temporary / "bad-abi", "windows-x64")
-        host_manifest = addon / "sdk/4.6/sdk.manifest"
-        host_manifest.write_text(
-            host_manifest.read_text(encoding="utf-8").replace(
-                "msvc_runtime static", "msvc_runtime dynamic"
+    def test_missing_required_target_fails_closed(self) -> None:
+        shutil.rmtree(self.components / "gdpp-web-godot-4.6-threads")
+        with self.assertRaisesRegex(ValueError, "component is missing"):
+            package_platform_release.stage_platform_package(
+                self.components,
+                self.temporary / "release",
+                "win",
+            )
+
+    def test_runtime_contract_conflict_fails_closed_across_versions(self) -> None:
+        manifest = self.components / "gdpp-android-arm64-godot-4.7/sdk.manifest"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(
+                "runtime_abi 10", "runtime_abi 11"
             ),
             encoding="utf-8",
         )
-        with self.assertRaisesRegex(ValueError, "msvc_runtime"):
-            package_release.validate_source(
-                addon, package_release.HOSTS["windows-x64"], "4.6"
+        with self.assertRaisesRegex(ValueError, "runtime contract conflicts"):
+            package_platform_release.stage_platform_package(
+                self.components,
+                self.temporary / "release",
+                "mac",
             )
 
-        addon = create_addon(self.temporary / "bad-stl", "linux-x64")
-        android_manifest = addon / "sdk/4.6/android/arm64/sdk.manifest"
-        android_manifest.write_text(
-            android_manifest.read_text(encoding="utf-8").replace(
-                "android_stl c++_shared", "android_stl c++_static"
-            ),
-            encoding="utf-8",
-        )
-        with self.assertRaisesRegex(ValueError, "android_stl"):
-            package_release.validate_source(
-                addon, package_release.HOSTS["linux-x64"], "4.6"
+    def test_editor_or_debug_binding_fails_closed(self) -> None:
+        sdk = self.components / "gdpp-host-windows-x64/addons/gdpp/sdk/4.6/lib"
+        write(sdk / "libgodot-cpp.windows.editor.x86_64.lib")
+        with self.assertRaisesRegex(ValueError, "unexpected bindings"):
+            package_platform_release.stage_platform_package(
+                self.components,
+                self.temporary / "release",
+                "win",
+            )
+        (sdk / "libgodot-cpp.windows.editor.x86_64.lib").unlink()
+        write(sdk / "libgodot-cpp.windows.template_debug.x86_64.lib")
+        with self.assertRaisesRegex(ValueError, "unexpected bindings"):
+            package_platform_release.stage_platform_package(
+                self.components,
+                self.temporary / "release-debug",
+                "win",
             )
 
-    def test_template_debug_archive_fails_closed(self) -> None:
-        addon = create_addon(self.temporary / "debug-binding", "linux-x64")
-        write(addon / "sdk/4.6/lib/libgodot-cpp.linux.template_debug.x86_64.a")
-        with self.assertRaisesRegex(ValueError, "forbidden template_debug"):
-            package_release.validate_source(
-                addon, package_release.HOSTS["linux-x64"], "4.6"
-            )
+    def test_release_workflow_declares_only_the_three_platform_archives(self) -> None:
+        workflow = (SOURCE_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        for archive in ("gdpp-mac.zip", "gdpp-linux.zip", "gdpp-win.zip"):
+            self.assertIn(archive, workflow)
+        self.assertNotIn("complete-packages:", workflow)
+        self.assertNotIn("16-archive matrix", workflow)
 
     def test_changelog_uses_unprefixed_exact_version_section(self) -> None:
         content = "## 1.1.0\n\n- New\n\n## 1.0.0\n\n- Initial release\n"
