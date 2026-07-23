@@ -350,10 +350,19 @@ string(SHA256 GDPP_TEST_BUILD_ID "${CMAKE_BINARY_DIR}")
 string(SUBSTRING "${GDPP_TEST_BUILD_ID}" 0 12 GDPP_TEST_BUILD_ID)
 set(GDPP_TEST_COMPILER_DESCRIPTOR_NAME
     "compiler_test.${GDPP_PLATFORM}.${GDPP_ARCH}.${GDPP_TEST_BUILD_ID}.gdextension")
+# Older build trees placed their test-only descriptors below res://addons. Godot discovers every
+# .gdextension there before the explicit registry is applied, which can load the compiler twice
+# and corrupt ClassDB registration. Remove only that retired generated filename family during
+# configure, then keep the active descriptor inside Godot's non-scanned metadata directory.
+file(GLOB GDPP_LEGACY_TEST_COMPILER_DESCRIPTORS
+    "${GDPP_PROJECT_BUILD_ROOT}/compiler_test.*.gdextension")
+if(GDPP_LEGACY_TEST_COMPILER_DESCRIPTORS)
+    file(REMOVE ${GDPP_LEGACY_TEST_COMPILER_DESCRIPTORS})
+endif()
 set(GDPP_TEST_COMPILER_DESCRIPTOR
-    "${GDPP_PROJECT_BUILD_ROOT}/${GDPP_TEST_COMPILER_DESCRIPTOR_NAME}")
+    "${GDPP_EXAMPLE_DIRECTORY}/.godot/${GDPP_TEST_COMPILER_DESCRIPTOR_NAME}")
 set(GDPP_TEST_COMPILER_DESCRIPTOR_RESOURCE
-    "res://addons/gdpp/build/${GDPP_TEST_COMPILER_DESCRIPTOR_NAME}")
+    "res://.godot/${GDPP_TEST_COMPILER_DESCRIPTOR_NAME}")
 if(APPLE AND GDPP_ARCH STREQUAL "universal")
     string(CONCAT GDPP_TEST_COMPILER_LIBRARIES
         "macos.editor.arm64 = \"res://addons/gdpp/binary/$<TARGET_FILE_NAME:gdpp_godot_plugin>\"\n"
