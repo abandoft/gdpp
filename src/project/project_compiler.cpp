@@ -655,20 +655,18 @@ ScriptInnerClassSymbol inner_class_symbol(const ast::ClassDeclaration& declarati
         declaration.annotations.begin(), declaration.annotations.end(),
         [](const ast::Annotation& annotation) { return annotation.name == "abstract"; });
     for (const auto& variable : declaration.variables) {
-        symbol.members.push_back(
-            {variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field,
-             variable.name,
-             signature_type(variable.type,
-                            variable.infer_type || variable.is_constant ? variable.initializer.get()
-                                                                        : nullptr,
-                            api),
-             {},
-             0,
-             variable.is_constant || variable.is_static,
-             variable.getter.has_value() || variable.setter.has_value(),
-             false,
-             {},
-             {}});
+        ScriptMemberSymbol member;
+        member.kind =
+            variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field;
+        member.name = variable.name;
+        member.type =
+            signature_type(variable.type,
+                           variable.infer_type || variable.is_constant ? variable.initializer.get()
+                                                                       : nullptr,
+                           api);
+        member.is_static = variable.is_constant || variable.is_static;
+        member.has_accessor = variable.getter.has_value() || variable.setter.has_value();
+        symbol.members.push_back(std::move(member));
     }
     for (const auto& function : declaration.functions) {
         ScriptMemberSymbol member;
@@ -716,16 +714,12 @@ ScriptInnerClassSymbol inner_class_symbol(const ast::ClassDeclaration& declarati
             previous.emplace(entry.name, resolved);
             enumeration.entries.push_back({entry.name, resolved});
             if (!declaration_enum.name) {
-                symbol.members.push_back({ScriptMemberKind::enum_value,
-                                          entry.name,
-                                          {TypeKind::integer, "int"},
-                                          {},
-                                          0,
-                                          true,
-                                          false,
-                                          false,
-                                          {},
-                                          {}});
+                ScriptMemberSymbol member;
+                member.kind = ScriptMemberKind::enum_value;
+                member.name = entry.name;
+                member.type = {TypeKind::integer, "int"};
+                member.is_static = true;
+                symbol.members.push_back(std::move(member));
             }
             if (resolved != std::numeric_limits<std::int64_t>::max())
                 next_value = resolved + 1;
@@ -809,19 +803,6 @@ IconPathResolution resolve_script_icon_path(const std::string_view source_path,
     return {"res://" + generic_path_to_utf8(relative_icon), {}};
 }
 
-std::string gdextension_string(std::string_view value) {
-    std::string escaped;
-    escaped.reserve(value.size() + 2);
-    escaped.push_back('"');
-    for (const char character : value) {
-        if (character == '"')
-            escaped.push_back('\\');
-        escaped.push_back(character);
-    }
-    escaped.push_back('"');
-    return escaped;
-}
-
 LoadedManifest read_manifest(const std::filesystem::path& path) {
     LoadedManifest loaded;
     std::ifstream input{path};
@@ -873,18 +854,6 @@ std::string write_manifest(const Manifest& manifest) {
     return output.str();
 }
 
-std::string cmake_path(const std::filesystem::path& path) {
-    const auto value = generic_path_to_utf8(path);
-    std::string escaped;
-    escaped.reserve(value.size());
-    for (const char character : value) {
-        if (character == '"' || character == '\\')
-            escaped.push_back('\\');
-        escaped.push_back(character);
-    }
-    return escaped;
-}
-
 std::optional<std::filesystem::path>
 containing_build_directory(const std::filesystem::path& root,
                            const std::filesystem::path& relative_output) {
@@ -897,329 +866,6 @@ containing_build_directory(const std::filesystem::path& root,
     return std::nullopt;
 }
 
-std::string generated_cmake(const ProjectCompileOptions& options,
-                            const std::vector<CompiledProjectScript>& scripts,
-                            const std::string& build_id,
-                            const std::filesystem::path& native_library_directory,
-                            const std::vector<ExtensionBridge>& bridges) {
-    std::ostringstream output;
-    const bool has_attached_scripts = std::any_of(
-        scripts.begin(), scripts.end(), [](const auto& script) { return script.is_attached; });
-    std::ostringstream attached_runtime_integrity;
-    if (has_attached_scripts) {
-        attached_runtime_integrity
-            << "file(SHA256 \"${GDPP_SDK_DIR}/include/gdpp/runtime/attached_script.hpp\" "
-               "GDPP_ATTACHED_RUNTIME_HEADER_SHA256)\n"
-            << "file(SHA256 \"${GDPP_SDK_DIR}/src/runtime/attached_script_registry.cpp\" "
-               "GDPP_ATTACHED_RUNTIME_REGISTRY_SHA256)\n"
-            << "file(SHA256 \"${GDPP_SDK_DIR}/src/runtime/attached_script_instance.cpp\" "
-               "GDPP_ATTACHED_RUNTIME_INSTANCE_SHA256)\n"
-            << "file(SHA256 \"${GDPP_SDK_DIR}/src/runtime/attached_script_language.cpp\" "
-               "GDPP_ATTACHED_RUNTIME_LANGUAGE_SHA256)\n"
-            << "if(NOT GDPP_ATTACHED_RUNTIME_HEADER_SHA256 STREQUAL \""
-            << GDPP_ATTACHED_RUNTIME_HEADER_SHA256
-            << "\" OR NOT GDPP_ATTACHED_RUNTIME_REGISTRY_SHA256 STREQUAL \""
-            << GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE_SHA256
-            << "\" OR NOT GDPP_ATTACHED_RUNTIME_INSTANCE_SHA256 STREQUAL \""
-            << GDPP_ATTACHED_RUNTIME_INSTANCE_SOURCE_SHA256
-            << "\" OR NOT GDPP_ATTACHED_RUNTIME_LANGUAGE_SHA256 STREQUAL \""
-            << GDPP_ATTACHED_RUNTIME_LANGUAGE_SOURCE_SHA256 << "\")\n"
-            << "  message(FATAL_ERROR \"GDPP attached runtime contract does not match generated "
-               "code; reinstall the matching SDK\")\n"
-            << "endif()\n";
-    }
-    output
-        << "cmake_minimum_required(VERSION 3.22)\n"
-        << "project(gdpp_project LANGUAGES CXX)\n\n"
-        << "set(CMAKE_CXX_STANDARD 17)\n"
-        << "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n"
-        << "set(CMAKE_CXX_EXTENSIONS OFF)\n"
-        << "if(MSVC)\n"
-        << "  set(CMAKE_MSVC_RUNTIME_LIBRARY \"MultiThreaded\")\n"
-        << "  set(GDPP_MSVC_COMPILE_JOBS 4 CACHE STRING \"Maximum concurrent GDPP MSVC "
-           "compiles\")\n"
-        << "  if(CMAKE_GENERATOR MATCHES \"Ninja\")\n"
-        << "    set_property(GLOBAL PROPERTY JOB_POOLS "
-           "gdpp_compile_pool=${GDPP_MSVC_COMPILE_JOBS};gdpp_link_pool=1)\n"
-        << "  endif()\n"
-        << "endif()\n"
-        << "set(GDPP_SDK_DIR \"" << cmake_path(options.sdk_root)
-        << "\" CACHE PATH \"GDPP SDK root\" FORCE)\n"
-        << "set(GDPP_GODOT_CPP_DIR \"" << cmake_path(options.godot_cpp_directory)
-        << "\" CACHE PATH \"Optional godot-cpp source fallback\" FORCE)\n"
-        << "set(GDPP_TARGET_GODOT_VERSION \"" << godot_version_name(options.compiler.target_version)
-        << "\")\n\n"
-        << "string(TOLOWER \"${CMAKE_SYSTEM_NAME}\" GDPP_PLATFORM)\n"
-        << "if(GDPP_PLATFORM STREQUAL \"darwin\")\n"
-        << "  set(GDPP_PLATFORM \"macos\")\n"
-        << "elseif(GDPP_PLATFORM STREQUAL \"emscripten\")\n"
-        << "  set(GDPP_PLATFORM \"web\")\n"
-        << "endif()\n"
-        << "string(TOLOWER \"${CMAKE_SYSTEM_PROCESSOR}\" GDPP_ARCH)\n"
-        << "if(GDPP_ARCH MATCHES \"^(aarch64|arm64)$\")\n"
-        << "  set(GDPP_ARCH \"arm64\")\n"
-        << "elseif(GDPP_ARCH MATCHES \"^(amd64|x86_64)$\")\n"
-        << "  set(GDPP_ARCH \"x86_64\")\n"
-        << "endif()\n\n"
-        << "if(NOT EXISTS \"${GDPP_SDK_DIR}/include/gdpp/runtime/variant_ops.hpp\")\n"
-        << "  message(FATAL_ERROR \"Invalid GDPP_SDK_DIR: ${GDPP_SDK_DIR}\")\n"
-        << "endif()\n"
-        << "file(SHA256 \"${GDPP_SDK_DIR}/include/gdpp/runtime/variant_ops.hpp\" "
-           "GDPP_RUNTIME_HEADER_SHA256)\n"
-        << "file(SHA256 \"${GDPP_SDK_DIR}/include/gdpp/runtime/reference_semantics.hpp\" "
-           "GDPP_REFERENCE_SEMANTICS_HEADER_SHA256)\n"
-        << "file(SHA256 \"${GDPP_SDK_DIR}/src/runtime/variant_ops.cpp\" "
-           "GDPP_RUNTIME_SOURCE_SHA256)\n"
-        << "if(NOT GDPP_RUNTIME_HEADER_SHA256 STREQUAL \"" << GDPP_NATIVE_RUNTIME_HEADER_SHA256
-        << "\" OR NOT GDPP_REFERENCE_SEMANTICS_HEADER_SHA256 STREQUAL \""
-        << GDPP_REFERENCE_SEMANTICS_HEADER_SHA256
-        << "\" OR NOT GDPP_RUNTIME_SOURCE_SHA256 STREQUAL \"" << GDPP_NATIVE_RUNTIME_SOURCE_SHA256
-        << "\")\n"
-        << "  message(FATAL_ERROR \"GDPP SDK runtime contract does not match generated code; "
-           "reinstall the matching SDK\")\n"
-        << "endif()\n"
-        << attached_runtime_integrity.str() << "set(GDPP_BINDING_EXTENSION \".a\")\n"
-        << "if(GDPP_PLATFORM STREQUAL \"windows\")\n"
-        << "  set(GDPP_BINDING_EXTENSION \".lib\")\n"
-        << "endif()\n"
-        << "file(GLOB GDPP_BINDING_LIBRARIES LIST_DIRECTORIES FALSE\n"
-        << "  \"${GDPP_SDK_DIR}/lib/*editor*${GDPP_ARCH}*${GDPP_BINDING_EXTENSION}\")\n"
-        << "if(GDPP_PLATFORM STREQUAL \"macos\" AND NOT GDPP_BINDING_LIBRARIES)\n"
-        << "  file(GLOB GDPP_BINDING_LIBRARIES LIST_DIRECTORIES FALSE\n"
-        << "    \"${GDPP_SDK_DIR}/lib/*editor*universal*${GDPP_BINDING_EXTENSION}\")\n"
-        << "endif()\n"
-        << "list(LENGTH GDPP_BINDING_LIBRARIES GDPP_BINDING_LIBRARY_COUNT)\n"
-        << "if(GDPP_BINDING_LIBRARY_COUNT EQUAL 1)\n"
-        << "  add_library(gdpp_godot_cpp STATIC IMPORTED GLOBAL)\n"
-        << "  set_target_properties(gdpp_godot_cpp PROPERTIES\n"
-        << "    IMPORTED_LOCATION \"${GDPP_BINDING_LIBRARIES}\"\n"
-        << "    INTERFACE_INCLUDE_DIRECTORIES "
-           "\"${GDPP_SDK_DIR}/godot-cpp/include;${GDPP_SDK_DIR}/godot-cpp/gen/include\"\n"
-        << "    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "
-           "\"${GDPP_SDK_DIR}/godot-cpp/include;${GDPP_SDK_DIR}/godot-cpp/gen/include\"\n"
-        << "  )\n"
-        << "  target_compile_definitions(gdpp_godot_cpp INTERFACE GDEXTENSION THREADS_ENABLED)\n"
-        << "  set(GDPP_GODOT_CPP_INCLUDE_DIR \"${GDPP_SDK_DIR}/godot-cpp/include\")\n"
-        << "  if(GDPP_PLATFORM STREQUAL \"windows\")\n"
-        << "    target_compile_definitions(gdpp_godot_cpp INTERFACE WINDOWS_ENABLED "
-           "TYPED_METHOD_BIND _HAS_EXCEPTIONS=0 NOMINMAX)\n"
-        << "  elseif(GDPP_PLATFORM STREQUAL \"macos\")\n"
-        << "    target_compile_definitions(gdpp_godot_cpp INTERFACE MACOS_ENABLED UNIX_ENABLED)\n"
-        << "  elseif(GDPP_PLATFORM STREQUAL \"linux\")\n"
-        << "    target_compile_definitions(gdpp_godot_cpp INTERFACE LINUX_ENABLED UNIX_ENABLED)\n"
-        << "  elseif(GDPP_PLATFORM STREQUAL \"android\")\n"
-        << "    target_compile_definitions(gdpp_godot_cpp INTERFACE ANDROID_ENABLED UNIX_ENABLED)\n"
-        << "  endif()\n"
-        << "  set(GDPP_GODOT_CPP_TARGET gdpp_godot_cpp)\n"
-        << "elseif(GDPP_BINDING_LIBRARY_COUNT EQUAL 0 AND "
-           "EXISTS \"${GDPP_GODOT_CPP_DIR}/CMakeLists.txt\")\n"
-        << "  message(STATUS \"GDPP SDK has no precompiled host binding; using source fallback\")\n"
-        << "  set(ENV{PYTHONDONTWRITEBYTECODE} \"1\")\n"
-        << "  set(GODOTCPP_API_VERSION \"${GDPP_TARGET_GODOT_VERSION}\" CACHE STRING \"\" FORCE)\n"
-        << "  set(GODOTCPP_TARGET \"editor\" CACHE STRING \"\" FORCE)\n"
-        << "  set(GODOTCPP_ENABLE_TESTING OFF CACHE BOOL \"\" FORCE)\n"
-        << "  set(GODOTCPP_SYSTEM_HEADERS ON CACHE BOOL \"\" FORCE)\n"
-        << "  add_subdirectory(\"${GDPP_GODOT_CPP_DIR}\" "
-           "\"${CMAKE_CURRENT_BINARY_DIR}/godot-cpp\" EXCLUDE_FROM_ALL)\n"
-        << "  set(GDPP_GODOT_CPP_TARGET godot::cpp)\n"
-        << "  set(GDPP_GODOT_CPP_INCLUDE_DIR \"${GDPP_GODOT_CPP_DIR}/include\")\n"
-        << "else()\n"
-        << "  message(FATAL_ERROR \"Expected zero or one ${GDPP_PLATFORM}/${GDPP_ARCH} editor "
-           "binding in ${GDPP_SDK_DIR}/lib; found: ${GDPP_BINDING_LIBRARIES}\")\n"
-        << "endif()\n"
-        << "set(GDPP_GODOT_CPP_OVERRIDE_DIR "
-           "\"${CMAKE_CURRENT_BINARY_DIR}/gdpp-godot-cpp-override\")\n"
-        << "execute_process(\n"
-        << "  COMMAND \"${CMAKE_COMMAND}\"\n"
-        << "    "
-           "\"-DGDPP_CLASS_DB_INPUT=${GDPP_GODOT_CPP_INCLUDE_DIR}/godot_cpp/core/class_db.hpp\"\n"
-        << "    "
-           "\"-DGDPP_CLASS_DB_OUTPUT=${GDPP_GODOT_CPP_OVERRIDE_DIR}/godot_cpp/core/class_db.hpp\"\n"
-        << "    -P \"${CMAKE_CURRENT_SOURCE_DIR}/patch_godot_cpp_class_db.cmake\"\n"
-        << "  RESULT_VARIABLE GDPP_CLASS_DB_PATCH_STATUS)\n"
-        << "if(NOT GDPP_CLASS_DB_PATCH_STATUS EQUAL 0)\n"
-        << "  message(FATAL_ERROR \"Cannot prepare the GDPP godot-cpp registration contract\")\n"
-        << "endif()\n\n"
-        << "add_library(gdpp_project SHARED\n"
-        << "  register_types.cpp\n"
-        << "  \"${GDPP_SDK_DIR}/src/runtime/variant_ops.cpp\"\n";
-    if (has_attached_scripts) {
-        output << "  \"${GDPP_SDK_DIR}/src/runtime/attached_script_registry.cpp\"\n"
-               << "  \"${GDPP_SDK_DIR}/src/runtime/attached_script_instance.cpp\"\n"
-               << "  \"${GDPP_SDK_DIR}/src/runtime/attached_script_language.cpp\"\n";
-    }
-    for (const auto& script : scripts)
-        output << "  \"${CMAKE_CURRENT_SOURCE_DIR}/generated/" << script.source_file_name << "\"\n";
-    output
-        << ")\n"
-        << "target_include_directories(gdpp_project PRIVATE\n"
-        << "  \"${GDPP_GODOT_CPP_OVERRIDE_DIR}\"\n"
-        << "  \"${CMAKE_CURRENT_SOURCE_DIR}/generated\"\n"
-        << "  \"${GDPP_SDK_DIR}/include\"\n"
-        << ")\n"
-        << "target_link_libraries(gdpp_project PRIVATE ${GDPP_GODOT_CPP_TARGET})\n"
-        << "if(GDPP_PLATFORM STREQUAL \"linux\" OR GDPP_PLATFORM STREQUAL \"android\")\n"
-        << "  file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/gdpp.exports.map\"\n"
-        << "    \"{ global: gdpp_project_library_init; local: *; };\\n\")\n"
-        << "  target_link_options(gdpp_project PRIVATE \"LINKER:--exclude-libs,ALL\")\n"
-        << "  target_link_options(gdpp_project PRIVATE\n"
-        << "    \"LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/gdpp.exports.map\")\n"
-        << "elseif(GDPP_PLATFORM STREQUAL \"macos\")\n"
-        << "  file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/gdpp.exports.macos\"\n"
-        << "    \"_gdpp_project_library_init\\n\")\n"
-        << "  target_link_options(gdpp_project PRIVATE\n"
-        << "    \"LINKER:-exported_symbols_list,${CMAKE_CURRENT_BINARY_DIR}/gdpp.exports.macos\")\n"
-        << "endif()\n"
-        << "target_compile_options(gdpp_project PRIVATE\n"
-        << "  $<$<CXX_COMPILER_ID:MSVC>:/utf-8>\n"
-        << "  $<$<CXX_COMPILER_ID:MSVC>:/bigobj>\n"
-        << "  $<$<CXX_COMPILER_ID:MSVC>:/permissive->\n"
-        << "  $<$<CXX_COMPILER_ID:MSVC>:/Zc:__cplusplus>\n"
-        << "  $<$<CXX_COMPILER_ID:MSVC>:/EHsc>\n"
-        << "  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-fno-exceptions>\n"
-        << ")\n"
-        << "set_target_properties(gdpp_project PROPERTIES\n"
-        << "  POSITION_INDEPENDENT_CODE ON\n"
-        << "  CXX_VISIBILITY_PRESET hidden\n"
-        << "  VISIBILITY_INLINES_HIDDEN YES)\n"
-        << "if(MSVC AND CMAKE_GENERATOR MATCHES \"Ninja\")\n"
-        << "  set_property(TARGET gdpp_project PROPERTY JOB_POOL_COMPILE gdpp_compile_pool)\n"
-        << "  set_property(TARGET gdpp_project PROPERTY JOB_POOL_LINK gdpp_link_pool)\n"
-        << "endif()\n\n";
-    std::size_t bridge_index = 0;
-    for (const auto& bridge : bridges) {
-        if (std::all_of(bridge.classes.begin(), bridge.classes.end(),
-                        [](const ExtensionBridgeClass& type) { return type.runtime_only; })) {
-            continue;
-        }
-        output << "set(GDPP_BRIDGE_TARGET_" << bridge_index << " FALSE)\n";
-        for (const auto& target : bridge.targets) {
-            if (target.profile != "development")
-                continue;
-            output << "if(GDPP_PLATFORM STREQUAL \"" << target.platform
-                   << "\" AND GDPP_ARCH STREQUAL \"" << target.architecture << "\")\n";
-            output << "  set(GDPP_BRIDGE_TARGET_" << bridge_index << " TRUE)\n";
-            if (!target.include_directories.empty()) {
-                output << "  target_include_directories(gdpp_project PRIVATE\n";
-                for (const auto& include : target.include_directories)
-                    output << "    \"" << cmake_path(include) << "\"\n";
-                output << "  )\n";
-            }
-            if (!target.link_libraries.empty()) {
-                output << "  target_link_libraries(gdpp_project PRIVATE\n";
-                for (const auto& library : target.link_libraries)
-                    output << "    \"" << cmake_path(library) << "\"\n";
-                output << "  )\n";
-            }
-            output << "endif()\n";
-        }
-        output << "if(NOT GDPP_BRIDGE_TARGET_" << bridge_index << ")\n"
-               << "  message(FATAL_ERROR \"No development target in third-party bridge: "
-               << cmake_path(bridge.manifest_path) << "\")\n"
-               << "endif()\n";
-        ++bridge_index;
-    }
-    output << "set_target_properties(gdpp_project PROPERTIES\n"
-           << "  OUTPUT_NAME \"gdpp_project.development.${GDPP_PLATFORM}.${GDPP_ARCH}." << build_id
-           << "\"\n"
-           << "  LIBRARY_OUTPUT_DIRECTORY \"" << cmake_path(native_library_directory) << "\"\n"
-           << "  RUNTIME_OUTPUT_DIRECTORY \"" << cmake_path(native_library_directory) << "\"\n"
-           << "  ARCHIVE_OUTPUT_DIRECTORY \"" << cmake_path(native_library_directory) << "\"\n"
-           << ")\n"
-           << "add_custom_command(TARGET gdpp_project POST_BUILD\n"
-           << "  COMMAND \"${CMAKE_COMMAND}\"\n"
-           << "    \"-DGDPP_ARTIFACT_DIRECTORY=$<TARGET_FILE_DIR:gdpp_project>\"\n"
-           << "    \"-DGDPP_CURRENT_ARTIFACT=$<TARGET_FILE_NAME:gdpp_project>\"\n"
-           << "    \"-DGDPP_ARTIFACT_PREFIX=${CMAKE_SHARED_LIBRARY_PREFIX}"
-              "gdpp_project.development.${GDPP_PLATFORM}.${GDPP_ARCH}.\"\n"
-           << "    \"-DGDPP_ARTIFACT_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}\"\n"
-           << "    -P \"${CMAKE_CURRENT_SOURCE_DIR}/prune_stale_development.cmake\"\n"
-           << "  VERBATIM\n"
-           << ")\n";
-    return output.str();
-}
-
-std::string generated_artifact_pruner() {
-    return R"cmake(# Generated by GDPP. Do not edit.
-foreach(GDPP_REQUIRED_VARIABLE IN ITEMS
-        GDPP_ARTIFACT_DIRECTORY GDPP_CURRENT_ARTIFACT GDPP_ARTIFACT_PREFIX GDPP_ARTIFACT_SUFFIX)
-  if(NOT DEFINED ${GDPP_REQUIRED_VARIABLE})
-    message(FATAL_ERROR "Missing ${GDPP_REQUIRED_VARIABLE} for GDPP artifact cleanup")
-  endif()
-endforeach()
-
-file(GLOB GDPP_ARTIFACT_CANDIDATES LIST_DIRECTORIES false
-     "${GDPP_ARTIFACT_DIRECTORY}/${GDPP_ARTIFACT_PREFIX}*${GDPP_ARTIFACT_SUFFIX}")
-string(LENGTH "${GDPP_ARTIFACT_PREFIX}" GDPP_PREFIX_LENGTH)
-string(LENGTH "${GDPP_ARTIFACT_SUFFIX}" GDPP_SUFFIX_LENGTH)
-foreach(GDPP_ARTIFACT IN LISTS GDPP_ARTIFACT_CANDIDATES)
-  get_filename_component(GDPP_FILENAME "${GDPP_ARTIFACT}" NAME)
-  if(GDPP_FILENAME STREQUAL GDPP_CURRENT_ARTIFACT)
-    continue()
-  endif()
-  string(LENGTH "${GDPP_FILENAME}" GDPP_FILENAME_LENGTH)
-  math(EXPR GDPP_BUILD_ID_LENGTH
-       "${GDPP_FILENAME_LENGTH} - ${GDPP_PREFIX_LENGTH} - ${GDPP_SUFFIX_LENGTH}")
-  if(NOT GDPP_BUILD_ID_LENGTH EQUAL 16)
-    continue()
-  endif()
-  string(SUBSTRING "${GDPP_FILENAME}" ${GDPP_PREFIX_LENGTH} 16 GDPP_BUILD_ID)
-  if(NOT GDPP_BUILD_ID MATCHES "^[0-9A-Fa-f]+$")
-    continue()
-  endif()
-  file(REMOVE "${GDPP_ARTIFACT}")
-  if(EXISTS "${GDPP_ARTIFACT}")
-    message(FATAL_ERROR "Cannot remove stale GDPP development library: ${GDPP_ARTIFACT}")
-  endif()
-endforeach()
-)cmake";
-}
-
-std::string generated_godot_cpp_class_db_patch() {
-    return R"cmake(# Generated by GDPP. Do not edit.
-foreach(GDPP_REQUIRED_VARIABLE IN ITEMS GDPP_CLASS_DB_INPUT GDPP_CLASS_DB_OUTPUT)
-  if(NOT DEFINED ${GDPP_REQUIRED_VARIABLE})
-    message(FATAL_ERROR "Missing ${GDPP_REQUIRED_VARIABLE} for the godot-cpp registration patch")
-  endif()
-endforeach()
-if(NOT EXISTS "${GDPP_CLASS_DB_INPUT}")
-  message(FATAL_ERROR "godot-cpp ClassDB header is missing: ${GDPP_CLASS_DB_INPUT}")
-endif()
-
-file(READ "${GDPP_CLASS_DB_INPUT}" GDPP_CLASS_DB_HEADER)
-if(NOT GDPP_CLASS_DB_HEADER MATCHES "register_runtime_abstract_class")
-  string(ASCII 9 GDPP_TAB)
-  set(GDPP_RUNTIME_DECLARATION
-      "${GDPP_TAB}template <typename T>\n${GDPP_TAB}static void register_runtime_class();")
-  set(GDPP_RUNTIME_DECLARATION_PATCHED
-      "${GDPP_RUNTIME_DECLARATION}\n${GDPP_TAB}template <typename T>\n${GDPP_TAB}static void register_runtime_abstract_class();")
-  string(FIND "${GDPP_CLASS_DB_HEADER}" "${GDPP_RUNTIME_DECLARATION}"
-         GDPP_RUNTIME_DECLARATION_OFFSET)
-  if(GDPP_RUNTIME_DECLARATION_OFFSET LESS 0)
-    message(FATAL_ERROR "Unsupported godot-cpp ClassDB declaration layout")
-  endif()
-  string(REPLACE "${GDPP_RUNTIME_DECLARATION}" "${GDPP_RUNTIME_DECLARATION_PATCHED}"
-         GDPP_CLASS_DB_HEADER "${GDPP_CLASS_DB_HEADER}")
-
-  set(GDPP_RUNTIME_DEFINITION
-      "template <typename T>\nvoid ClassDB::register_runtime_class() {\n${GDPP_TAB}ClassDB::_register_class<T, false>(false, true, true);\n}")
-  set(GDPP_RUNTIME_DEFINITION_PATCHED
-      "${GDPP_RUNTIME_DEFINITION}\n\ntemplate <typename T>\nvoid ClassDB::register_runtime_abstract_class() {\n${GDPP_TAB}ClassDB::_register_class<T, true>(false, true, true);\n}")
-  string(FIND "${GDPP_CLASS_DB_HEADER}" "${GDPP_RUNTIME_DEFINITION}"
-         GDPP_RUNTIME_DEFINITION_OFFSET)
-  if(GDPP_RUNTIME_DEFINITION_OFFSET LESS 0)
-    message(FATAL_ERROR "Unsupported godot-cpp ClassDB definition layout")
-  endif()
-  string(REPLACE "${GDPP_RUNTIME_DEFINITION}" "${GDPP_RUNTIME_DEFINITION_PATCHED}"
-         GDPP_CLASS_DB_HEADER "${GDPP_CLASS_DB_HEADER}")
-endif()
-
-get_filename_component(GDPP_CLASS_DB_OUTPUT_DIRECTORY "${GDPP_CLASS_DB_OUTPUT}" DIRECTORY)
-file(MAKE_DIRECTORY "${GDPP_CLASS_DB_OUTPUT_DIRECTORY}")
-file(WRITE "${GDPP_CLASS_DB_OUTPUT}" "${GDPP_CLASS_DB_HEADER}")
-)cmake";
-}
-
 std::string generated_registration(const std::vector<CompiledProjectScript>& scripts) {
     std::ostringstream output;
     const bool has_attached_scripts = std::any_of(
@@ -1229,16 +875,10 @@ std::string generated_registration(const std::vector<CompiledProjectScript>& scr
             return script.is_editor_only || !script.editor_only_inner_class_names.empty();
         });
     const auto emit_registration = [&](const std::string& class_name, const bool is_abstract,
-                                       const bool is_tool, const bool is_editor_only) {
+                                       const bool is_editor_only) {
         output << (is_editor_only ? "    if (gdpp_editor_environment) {\n        " : "    ");
-        if (is_tool) {
-            output << (is_abstract ? "GDREGISTER_ABSTRACT_CLASS(" : "GDREGISTER_CLASS(")
-                   << class_name << ");\n";
-        } else if (is_abstract) {
-            output << "godot::ClassDB::register_runtime_abstract_class<" << class_name << ">();\n";
-        } else {
-            output << "GDREGISTER_RUNTIME_CLASS(" << class_name << ");\n";
-        }
+        output << (is_abstract ? "GDREGISTER_ABSTRACT_CLASS(" : "GDREGISTER_CLASS(")
+               << class_name << ");\n";
         if (is_editor_only)
             output << "    }\n";
     };
@@ -1268,7 +908,6 @@ std::string generated_registration(const std::vector<CompiledProjectScript>& scr
                << "    GDREGISTER_CLASS(gdpp::runtime::AttachedCompiledScript);\n";
     }
     for (const auto& script : scripts) {
-        const bool editor_visible = script.is_tool || script.is_attached;
         for (const auto& inner_class_name : script.inner_class_names) {
             const bool is_abstract =
                 std::find(script.abstract_inner_class_names.begin(),
@@ -1278,18 +917,34 @@ std::string generated_registration(const std::vector<CompiledProjectScript>& scr
                 std::find(script.editor_only_inner_class_names.begin(),
                           script.editor_only_inner_class_names.end(),
                           inner_class_name) != script.editor_only_inner_class_names.end();
-            emit_registration(inner_class_name, is_abstract, editor_visible, editor_only);
+            emit_registration(inner_class_name, is_abstract, editor_only);
         }
-        emit_registration(script.class_name, script.is_abstract, editor_visible,
-                          script.is_editor_only);
+        emit_registration(script.class_name, script.is_abstract, script.is_editor_only);
     }
     if (has_attached_scripts) {
         for (const auto& script : scripts) {
             if (!script.is_attached)
                 continue;
-            const auto indent = script.is_editor_only ? "        " : "    ";
+            const std::string indent = script.is_editor_only ? "        " : "    ";
             if (script.is_editor_only)
                 output << "    if (gdpp_editor_environment) {\n";
+            for (const auto& inner_class_name : script.inner_class_names) {
+                const bool inner_editor_only =
+                    std::find(script.editor_only_inner_class_names.begin(),
+                              script.editor_only_inner_class_names.end(),
+                              inner_class_name) != script.editor_only_inner_class_names.end();
+                if (inner_editor_only)
+                    output << indent << "if (gdpp_editor_environment) {\n";
+                const auto inner_indent = inner_editor_only ? indent + "    " : indent;
+                output << inner_indent << "{\n"
+                       << inner_indent << "    godot::String error;\n"
+                       << inner_indent
+                       << "    ERR_FAIL_COND_MSG(!gdpp::runtime::register_attached_script("
+                       << inner_class_name << "::_gdpp_descriptor(), &error), error);\n"
+                       << inner_indent << "}\n";
+                if (inner_editor_only)
+                    output << indent << "}\n";
+            }
             output << indent << "{\n"
                    << indent << "    godot::String error;\n"
                    << indent << "    ERR_FAIL_COND_MSG(!gdpp::runtime::register_attached_script("
@@ -1338,43 +993,6 @@ std::string generated_registration(const std::vector<CompiledProjectScript>& scr
     return output.str();
 }
 
-std::string generated_descriptor(const std::filesystem::path& project_relative_library_directory,
-                                 const std::string& build_id, GodotVersion target_version,
-                                 const std::vector<CompiledProjectScript>& scripts) {
-    const auto root = "res://" + generic_path_to_utf8(project_relative_library_directory) + "/";
-    const auto path = [&](NativePlatform platform, std::string_view architecture) {
-        return root + native_library_name(NativeBuildProfile::development, platform, architecture,
-                                          build_id);
-    };
-    std::ostringstream output;
-    const bool has_attached_scripts = std::any_of(
-        scripts.begin(), scripts.end(), [](const auto& script) { return script.is_attached; });
-    output << "[configuration]\n\n"
-           << "entry_symbol = \"gdpp_project_library_init\"\n"
-           << "compatibility_minimum = \"" << godot_version_name(target_version) << "\"\n"
-           << "reloadable = " << (has_attached_scripts ? "false" : "true") << "\n\n"
-           << "[libraries]\n\n"
-           << "macos.editor.arm64 = \"" << path(NativePlatform::macos, "arm64") << "\"\n"
-           << "macos.editor.x86_64 = \"" << path(NativePlatform::macos, "x86_64") << "\"\n"
-           << "macos.editor.universal = \"" << path(NativePlatform::macos, "universal") << "\"\n"
-           << "macos.editor.universal.arm64 = \"" << path(NativePlatform::macos, "universal")
-           << "\"\n"
-           << "macos.editor.universal.x86_64 = \"" << path(NativePlatform::macos, "universal")
-           << "\"\n"
-           << "linux.editor.x86_64 = \"" << path(NativePlatform::linux, "x86_64") << "\"\n"
-           << "windows.editor.x86_64 = \"" << path(NativePlatform::windows, "x86_64") << "\"\n";
-    if (std::any_of(scripts.begin(), scripts.end(),
-                    [](const auto& script) { return script.icon_path.has_value(); })) {
-        output << "\n[icons]\n\n";
-        for (const auto& script : scripts) {
-            if (script.icon_path)
-                output << script.class_name << " = " << gdextension_string(*script.icon_path)
-                       << "\n";
-        }
-    }
-    return output.str();
-}
-
 Diagnostic project_error(std::string code, std::string message) {
     return {DiagnosticSeverity::error, std::move(code), std::move(message), {}};
 }
@@ -1394,15 +1012,14 @@ void report_project_progress(const ProjectCompileOptions& options, const Project
 } // namespace
 
 ProjectCompileResult ProjectCompiler::compile(const ProjectCompileOptions& options) const {
-    return compile_impl(options, true);
+    return compile_impl(options);
 }
 
 ProjectCompileResult ProjectCompiler::compile_direct(const ProjectCompileOptions& options) const {
-    return compile_impl(options, false);
+    return compile_impl(options);
 }
 
-ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& options,
-                                                   const bool include_cmake_scaffold) const {
+ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& options) const {
     ProjectCompileResult result;
     std::error_code error;
     const auto root = std::filesystem::absolute(options.project_root, error).lexically_normal();
@@ -1563,6 +1180,7 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
         std::optional<std::size_t> local_inner_base;
         BridgeClassReference extension_base;
         std::string external_base_name;
+        std::string attached_native_base{"Node"};
         bool attached{false};
         bool globally_named{false};
         std::string autoload_name;
@@ -1718,21 +1336,29 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
         }
         input.base_reference = script.base_type.value_or("Node");
         for (const auto& variable : script.variables) {
-            input.members.push_back(
-                {variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field,
-                 variable.name,
-                 signature_type(variable.type,
-                                variable.infer_type || variable.is_constant
-                                    ? variable.initializer.get()
-                                    : nullptr,
-                                target_api),
-                 {},
-                 0,
-                 variable.is_constant || variable.is_static,
-                 variable.getter.has_value() || variable.setter.has_value(),
-                 false,
-                 {},
-                 {}});
+            ScriptMemberSymbol member;
+            member.kind =
+                variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field;
+            member.name = variable.name;
+            member.type =
+                signature_type(variable.type,
+                               variable.infer_type || variable.is_constant
+                                   ? variable.initializer.get()
+                                   : nullptr,
+                               target_api);
+            member.is_static = variable.is_constant || variable.is_static;
+            member.has_accessor = variable.getter.has_value() || variable.setter.has_value();
+            for (const auto& annotation : variable.annotations) {
+                if (annotation.name == "export_storage") {
+                    member.property_storage = true;
+                } else if (annotation.name == "export_tool_button") {
+                    member.property_editor = true;
+                } else if (annotation.name.rfind("export", 0) == 0) {
+                    member.property_storage = true;
+                    member.property_editor = true;
+                }
+            }
+            input.members.push_back(std::move(member));
         }
         for (const auto& function : script.functions) {
             ScriptMemberSymbol member;
@@ -1747,6 +1373,7 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
             member.is_abstract = function.is_abstract;
             member.has_explicit_type = function.name == "_init" || function.return_type.has_value();
             for (const auto& parameter : function.parameters) {
+                member.parameter_names.push_back(parameter.name);
                 member.parameters.push_back(signature_type(
                     parameter.type, parameter.infer_type ? parameter.default_value.get() : nullptr,
                     target_api));
@@ -1764,6 +1391,7 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
             member.name = signal.name;
             member.type = {TypeKind::builtin, "Signal"};
             for (const auto& parameter : signal.parameters) {
+                member.parameter_names.push_back(parameter.name);
                 member.parameters.push_back(signature_type(parameter.type, nullptr, target_api));
                 ++member.required_arguments;
             }
@@ -1781,16 +1409,12 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
                 previous.emplace(entry.name, resolved);
                 enumeration.entries.push_back({entry.name, resolved});
                 if (!declaration.name) {
-                    input.members.push_back({ScriptMemberKind::enum_value,
-                                             entry.name,
-                                             {TypeKind::integer, "int"},
-                                             {},
-                                             0,
-                                             true,
-                                             false,
-                                             false,
-                                             {},
-                                             {}});
+                    ScriptMemberSymbol member;
+                    member.kind = ScriptMemberKind::enum_value;
+                    member.name = entry.name;
+                    member.type = {TypeKind::integer, "int"};
+                    member.is_static = true;
+                    input.members.push_back(std::move(member));
                 }
                 if (resolved != std::numeric_limits<std::int64_t>::max())
                     next_value = resolved + 1;
@@ -1814,9 +1438,11 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
         for (auto& inner : input.inner_classes) {
             if (target_api.find_class(inner.base_class_name)) {
                 inner.godot_base_type = inner.base_class_name;
+                inner.attached_native_base = inner.base_class_name;
                 inner.base_class_name.clear();
             } else if (inner.base_class_name.empty()) {
                 inner.godot_base_type = "RefCounted";
+                inner.attached_native_base = "RefCounted";
             }
         }
         const auto resolve_inner_reference =
@@ -1879,6 +1505,7 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
                 current = &*base;
             }
             inner.godot_base_type = current->godot_base_type;
+            inner.attached_native_base = current->attached_native_base;
         }
         if (input.globally_named && target_api.find_class(input.script_class_name)) {
             result.diagnostics.push_back(
@@ -1993,6 +1620,15 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
             if (local_base != input.inner_classes.end())
                 continue;
 
+            if (const auto external = bridge_classes.find(inner.base_class_name);
+                external != bridge_classes.end()) {
+                inner.external_base_name = inner.base_class_name;
+                inner.godot_base_type = external->second.type->godot_base;
+                inner.attached_native_base = inner.external_base_name;
+                inner.base_class_name.clear();
+                continue;
+            }
+
             std::optional<std::size_t> script_base;
             const auto alias = std::find_if(
                 input.script.variables.begin(), input.script.variables.end(),
@@ -2070,6 +1706,8 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
         auto& input = inputs[index];
         if (target_api.find_class(input.base_reference)) {
             input.semantic_base_type = input.base_reference;
+            input.attached_native_base = input.base_reference;
+            input.attached = true;
             continue;
         }
         const auto by_class = script_classes.find(input.base_reference);
@@ -2088,9 +1726,25 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
             std::find_if(input.inner_classes.begin(), input.inner_classes.end(),
                          [&](const auto& inner) { return inner.name == input.base_reference; });
         if (local_inner != input.inner_classes.end()) {
+            auto terminal = local_inner;
+            std::unordered_set<std::string> visited;
+            while (!terminal->base_class_name.empty() &&
+                   visited.insert(terminal->name).second) {
+                const auto base = std::find_if(
+                    input.inner_classes.begin(), input.inner_classes.end(),
+                    [&](const auto& candidate) {
+                        return candidate.name == terminal->base_class_name;
+                    });
+                if (base == input.inner_classes.end())
+                    break;
+                terminal = base;
+            }
             input.local_inner_base =
                 static_cast<std::size_t>(std::distance(input.inner_classes.begin(), local_inner));
-            input.semantic_base_type = local_inner->godot_base_type;
+            input.semantic_base_type = terminal->godot_base_type;
+            input.attached_native_base = terminal->attached_native_base;
+            input.external_base_name = terminal->external_base_name;
+            input.attached = true;
             continue;
         }
         const auto bridged = bridge_classes.find(input.base_reference);
@@ -2105,6 +1759,7 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
             }
             input.extension_base = bridged->second;
             input.external_base_name = input.base_reference;
+            input.attached_native_base = input.base_reference;
             input.attached = true;
             input.semantic_base_type = bridged->second.type->godot_base;
             continue;
@@ -2202,6 +1857,8 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
                 inputs[*inputs[index].script_base].semantic_base_type;
             inputs[index].external_base_name =
                 inputs[*inputs[index].script_base].external_base_name;
+            inputs[index].attached_native_base =
+                inputs[*inputs[index].script_base].attached_native_base;
             inputs[index].attached = inputs[*inputs[index].script_base].attached;
         }
         for (auto& inner : inputs[index].inner_classes) {
@@ -2213,6 +1870,30 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
             if (!self(self, dependency->second))
                 return false;
             inner.godot_base_type = inputs[dependency->second].semantic_base_type;
+            inner.attached_native_base = inputs[dependency->second].attached_native_base;
+            inner.external_base_name = inputs[dependency->second].external_base_name;
+        }
+        for (std::size_t pass = 0; pass < inputs[index].inner_classes.size(); ++pass) {
+            bool changed = false;
+            for (auto& inner : inputs[index].inner_classes) {
+                if (inner.base_class_name.empty())
+                    continue;
+                const auto base = std::find_if(
+                    inputs[index].inner_classes.begin(), inputs[index].inner_classes.end(),
+                    [&](const auto& candidate) { return candidate.name == inner.base_class_name; });
+                if (base == inputs[index].inner_classes.end())
+                    continue;
+                if (inner.godot_base_type != base->godot_base_type ||
+                    inner.attached_native_base != base->attached_native_base ||
+                    inner.external_base_name != base->external_base_name) {
+                    inner.godot_base_type = base->godot_base_type;
+                    inner.attached_native_base = base->attached_native_base;
+                    inner.external_base_name = base->external_base_name;
+                    changed = true;
+                }
+            }
+            if (!changed)
+                break;
         }
         inheritance_stack.pop_back();
         visit_state[index] = 2;
@@ -2323,6 +2004,7 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
                  << ":native-stem:" << input.native_class_stem << ":base:" << input.base_reference
                  << ":api-base:" << input.semantic_base_type << ":autoload:" << input.autoload_name
                  << ":external-base:" << input.external_base_name << ":attached:" << input.attached
+                 << ":attached-native-base:" << input.attached_native_base
                  << ":abstract:" << input.is_abstract << ":tool:" << input.script.tool << ':';
         append_annotation_identity(identity, input.script.annotations);
         identity << '\n';
@@ -2338,7 +2020,8 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
                      << static_cast<int>(member.type.kind) << ':' << member.type.name << ':'
                      << member.required_arguments << ':' << member.is_static << ':'
                      << member.has_accessor << ':' << member.has_explicit_type << ':'
-                     << member.is_vararg << ':' << member.is_coroutine << ':' << member.is_abstract;
+                     << member.is_vararg << ':' << member.is_coroutine << ':' << member.is_abstract
+                     << ':' << member.property_storage << ':' << member.property_editor;
             if (const auto bridge = bridge_classes.find(member.type.name);
                 bridge != bridge_classes.end()) {
                 identity << ":bridge-abi:" << bridge_contract_identity(*bridge->second.bridge);
@@ -2346,6 +2029,10 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
             for (std::size_t index = 0; index < member.parameters.size(); ++index) {
                 const auto& parameter = member.parameters[index];
                 identity << ':' << static_cast<int>(parameter.kind) << ':' << parameter.name << ':'
+                         << (index < member.parameter_names.size()
+                                 ? member.parameter_names[index]
+                                 : std::string{})
+                         << ':'
                          << (index < member.explicit_parameter_types.size() &&
                              member.explicit_parameter_types[index])
                          << ':'
@@ -2366,6 +2053,7 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
         }
         for (const auto& inner : input.inner_classes) {
             identity << "inner:" << inner.name << ':' << inner.godot_base_type << ':'
+                     << inner.attached_native_base << ':' << inner.external_base_name << ':'
                      << inner.base_class_name << ':' << inner.base_script_path << ':'
                      << inner.is_abstract << '\n';
             for (const auto& member : inner.members) {
@@ -2591,6 +2279,7 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
         symbol.native_class_name = native_script_names[input_index];
         symbol.header_file_name = to_snake_case(input.native_class_stem) + ".gd.hpp";
         symbol.godot_base_type = input.semantic_base_type;
+        symbol.attached_native_base = input.attached_native_base;
         symbol.external_base_name = input.external_base_name;
         symbol.attached = input.attached;
         if (input.script_base)
@@ -2854,6 +2543,12 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
         script.icon_path = input.icon_path;
         script.native_base_type = input.semantic_base_type;
         script.external_base_name = input.external_base_name;
+            script.attached_native_base = input.attached_native_base;
+            script.global_name = input.globally_named ? input.script_class_name : "";
+            if (input.script_base)
+                script.base_script_path =
+                    "res://" + generic_path_to_utf8(inputs[*input.script_base].relative);
+            script.reflection_members = input.members;
         script.is_abstract = input.is_abstract;
         script.is_tool = input.script.tool;
         script.is_attached = input.attached;
@@ -2893,10 +2588,13 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
             script_options.current_script_path = input.relative;
             script_options.semantic_base_type = input.semantic_base_type;
             script_options.attached_script = input.attached;
-            script_options.attached_native_base = input.external_base_name;
+            script_options.attached_native_base = input.attached_native_base;
+            script_options.script_contract_hash = input.public_abi_hash;
             if (input.script_base) {
                 const auto& base = inputs[*input.script_base];
                 const auto* base_symbol = script_symbols.find_path(base.relative);
+                script_options.attached_base_script_path =
+                    "res://" + generic_path_to_utf8(base.relative);
                 script_options.native_base_class =
                     base_symbol ? base_symbol->native_class_name : "";
                 script_options.native_base_header =
@@ -2905,6 +2603,9 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
                 script_options.native_base_class = input.extension_base.type->cpp_type;
                 script_options.native_base_header = input.extension_base.type->header;
             } else if (input.local_inner_base) {
+                script_options.attached_base_script_path =
+                    "res://" + generic_path_to_utf8(input.relative) + "::" +
+                    input.inner_classes[*input.local_inner_base].name;
                 script_options.native_base_class =
                     "GDPPNative_" + input.native_class_stem + "_" +
                     input.public_abi_hash.substr(0, 16) + "__" +
@@ -3020,27 +2721,10 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
         return result;
     }
 
-    const auto relative_library_directory = native_library_directory.lexically_relative(root);
     const auto relative_output = output.lexically_relative(root);
     const auto build_directory = containing_build_directory(root, relative_output);
-    const bool cmake_written =
-        !include_cmake_scaffold ||
-        write_file_if_changed(output / "CMakeLists.txt",
-                              generated_cmake(options, result.scripts, result.build_id,
-                                              native_library_directory, bridge_load.bridges));
-    const bool artifact_pruner_written =
-        !include_cmake_scaffold || write_file_if_changed(output / "prune_stale_development.cmake",
-                                                         generated_artifact_pruner());
-    const bool class_db_patch_written =
-        !include_cmake_scaffold || write_file_if_changed(output / "patch_godot_cpp_class_db.cmake",
-                                                         generated_godot_cpp_class_db_patch());
     if (!write_file_if_changed(output / "register_types.cpp",
                                generated_registration(result.scripts)) ||
-        !cmake_written || !artifact_pruner_written || !class_db_patch_written ||
-        !write_file_if_changed(output / "gdpp_project.gdextension",
-                               generated_descriptor(relative_library_directory, result.build_id,
-                                                    options.compiler.target_version,
-                                                    result.scripts)) ||
         !write_file_if_changed(output / "build_id.txt", result.build_id + "\n") ||
         !write_file_if_changed(output / "bridge.lock",
                                write_extension_bridge_lock(bridge_load.bridges)) ||
@@ -3055,11 +2739,6 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
     }
 
     result.success = true;
-    if (include_cmake_scaffold) {
-        result.cmake_source_directory = output;
-        result.cmake_build_directory = output / "native";
-    }
-    result.extension_descriptor = output / "gdpp_project.gdextension";
     result.native_library_directory = native_library_directory;
     report_project_progress(options, ProjectCompilePhase::generate, 1, 1);
     return result;

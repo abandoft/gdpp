@@ -57,6 +57,13 @@ struct CompiledProjectScript {
     std::optional<std::string> icon_path;
     std::string native_base_type;
     std::string external_base_name;
+    // Exact ClassDB type instantiated as the owner of this compiled behavior. For ordinary
+    // scripts this is the source-level Godot base; for scripts rooted in another GDExtension it
+    // remains that provider-owned class rather than its nearest built-in ancestor.
+    std::string attached_native_base;
+    std::string global_name;
+    std::string base_script_path;
+    std::vector<ScriptMemberSymbol> reflection_members;
     bool is_abstract{false};
     bool is_tool{false};
     bool is_attached{false};
@@ -71,9 +78,6 @@ struct ProjectCompileResult {
     std::size_t compiled_count{0};
     std::size_t cache_hit_count{0};
     std::size_t removed_count{0};
-    std::filesystem::path cmake_source_directory;
-    std::filesystem::path cmake_build_directory;
-    std::filesystem::path extension_descriptor;
     std::filesystem::path native_library_directory;
     std::string build_id;
 };
@@ -84,8 +88,7 @@ class ProjectCompiler final {
     [[nodiscard]] ProjectCompileResult compile_direct(const ProjectCompileOptions& options) const;
 
   private:
-    [[nodiscard]] ProjectCompileResult compile_impl(const ProjectCompileOptions& options,
-                                                    bool include_cmake_scaffold) const;
+    [[nodiscard]] ProjectCompileResult compile_impl(const ProjectCompileOptions& options) const;
 };
 
 } // namespace gdpp

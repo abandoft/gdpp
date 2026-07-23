@@ -125,18 +125,13 @@ TEST_CASE("project compiler incrementally generates a unified native extension")
     REQUIRE(first.success);
     REQUIRE_EQ(first.compiled_count, std::size_t{2});
     REQUIRE_EQ(first.cache_hit_count, std::size_t{0});
-    REQUIRE(std::filesystem::is_regular_file(options.output_directory / "CMakeLists.txt"));
-    REQUIRE(std::filesystem::is_regular_file(options.output_directory /
-                                             "prune_stale_development.cmake"));
-    REQUIRE(std::filesystem::is_regular_file(options.output_directory /
-                                             "patch_godot_cpp_class_db.cmake"));
+    REQUIRE(!std::filesystem::exists(options.output_directory / "CMakeLists.txt"));
+    REQUIRE(!std::filesystem::exists(options.output_directory /
+                                     "prune_stale_development.cmake"));
+    REQUIRE(!std::filesystem::exists(options.output_directory /
+                                     "patch_godot_cpp_class_db.cmake"));
     REQUIRE(std::filesystem::is_regular_file(options.output_directory / "register_types.cpp"));
-    REQUIRE(std::filesystem::is_regular_file(first.extension_descriptor));
     REQUIRE_EQ(first.native_library_directory, root / "addons/gdpp/binary");
-    REQUIRE(read_text(first.extension_descriptor).find("compatibility_minimum = \"4.4\"") !=
-            std::string::npos);
-    REQUIRE(read_text(first.extension_descriptor).find("res://addons/gdpp/binary/") !=
-            std::string::npos);
     REQUIRE_EQ(first.build_id.size(), std::size_t{16});
     for (const auto& script : first.scripts)
         REQUIRE(script.class_name.find("GDPPNative_") == 0);
@@ -145,38 +140,6 @@ TEST_CASE("project compiler incrementally generates a unified native extension")
     REQUIRE(read_text(options.output_directory / "manifest.txt")
                 .find(std::string{"GDPP_MANIFEST 3 "} + GDPP_VERSION_STRING + " " +
                       GDPP_CODEGEN_FINGERPRINT + "\n") == 0);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
-                .find("add_custom_command(TARGET gdpp_project POST_BUILD") != std::string::npos);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
-                .find("INTERFACE_INCLUDE_DIRECTORIES") != std::string::npos);
-    REQUIRE(
-        read_text(options.output_directory / "CMakeLists.txt").find("gdpp-godot-cpp-override") !=
-        std::string::npos);
-    REQUIRE(read_text(options.output_directory / "patch_godot_cpp_class_db.cmake")
-                .find("register_runtime_abstract_class") != std::string::npos);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
-                .find("set(CMAKE_MSVC_RUNTIME_LIBRARY \"MultiThreaded\")") != std::string::npos);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
-                .find("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>") != std::string::npos);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
-                .find("$<$<CXX_COMPILER_ID:MSVC>:/bigobj>") != std::string::npos);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
-                .find("$<$<CXX_COMPILER_ID:MSVC>:/permissive->") != std::string::npos);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
-                .find("set(GDPP_MSVC_COMPILE_JOBS 4 CACHE STRING") != std::string::npos);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
-                .find("JOB_POOL_COMPILE gdpp_compile_pool") != std::string::npos);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
-                .find("target_link_options(gdpp_project PRIVATE \"LINKER:--exclude-libs,ALL\")") !=
-            std::string::npos);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
-                .find("--version-script=${CMAKE_CURRENT_BINARY_DIR}/gdpp.exports.map") !=
-            std::string::npos);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
-                .find("-exported_symbols_list,${CMAKE_CURRENT_BINARY_DIR}/gdpp.exports.macos") !=
-            std::string::npos);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
-                .find("CXX_VISIBILITY_PRESET hidden") != std::string::npos);
 
     const auto second = compiler.compile(options);
     REQUIRE(second.success);
@@ -223,10 +186,8 @@ TEST_CASE("project compiler publishes normalized extension class icons") {
     REQUIRE(first.success);
     const auto enemy_class = native_class_for(first, "enemy.gd");
     const auto global_class = native_class_for(first, "global_icon.gd");
-    const auto descriptor = read_text(first.extension_descriptor);
-    REQUIRE(descriptor.find("[icons]\n\n") != std::string::npos);
-    REQUIRE(descriptor.find(enemy_class + " = \"res://icons/type.svg\"") != std::string::npos);
-    REQUIRE(descriptor.find(global_class + " = \"res://icons/type.svg\"") != std::string::npos);
+    REQUIRE(!enemy_class.empty());
+    REQUIRE(!global_class.empty());
     REQUIRE(std::all_of(first.scripts.begin(), first.scripts.end(), [](const auto& script) {
         return script.icon_path == std::optional<std::string>{"res://icons/type.svg"};
     }));
@@ -234,7 +195,8 @@ TEST_CASE("project compiler publishes normalized extension class icons") {
     const auto cached = compiler.compile(options);
     REQUIRE(cached.success);
     REQUIRE_EQ(cached.cache_hit_count, std::size_t{2});
-    REQUIRE_EQ(read_text(cached.extension_descriptor), descriptor);
+    REQUIRE_EQ(cached.scripts.front().icon_path,
+               std::optional<std::string>{"res://icons/type.svg"});
 }
 
 TEST_CASE("project compiler rejects icon paths outside project resources") {
@@ -308,8 +270,9 @@ TEST_CASE("project compiler preserves tool mode across incremental cache hits") 
                std::ptrdiff_t{1});
     const auto registration = read_text(options.output_directory / "register_types.cpp");
     REQUIRE(registration.find("GDREGISTER_CLASS(" + editor->class_name + ")") != std::string::npos);
-    REQUIRE(registration.find("GDREGISTER_RUNTIME_CLASS(" + runtime->class_name + ")") !=
+    REQUIRE(registration.find("GDREGISTER_CLASS(" + runtime->class_name + ")") !=
             std::string::npos);
+    REQUIRE(registration.find("GDREGISTER_RUNTIME_CLASS") == std::string::npos);
 }
 
 TEST_CASE("project compiler excludes editor class hierarchies from runtime registration") {
@@ -351,8 +314,9 @@ TEST_CASE("project compiler excludes editor class hierarchies from runtime regis
                               plugin->class_name + ");\n    }") != std::string::npos);
     REQUIRE(registration.find("if (gdpp_editor_environment) {\n        GDREGISTER_CLASS(" +
                               derived->class_name + ");\n    }") != std::string::npos);
-    REQUIRE(registration.find("    GDREGISTER_RUNTIME_CLASS(" + runtime->class_name + ");") !=
+    REQUIRE(registration.find("    GDREGISTER_CLASS(" + runtime->class_name + ");") !=
             std::string::npos);
+    REQUIRE(registration.find("GDREGISTER_RUNTIME_CLASS") == std::string::npos);
 }
 
 TEST_CASE("project compiler isolates tool access to runtime script state") {
@@ -485,7 +449,13 @@ TEST_CASE("project compiler includes source-less GDScript embedded in text resou
                std::string{"data/marker.tres::GDScript_marker"});
     const auto generated =
         read_text(options.output_directory / "generated" / result.scripts.front().header_file_name);
-    REQUIRE(generated.find("public godot::Resource") != std::string::npos);
+    REQUIRE(generated.find("public gdpp::runtime::AttachedScriptBehavior") !=
+            std::string::npos);
+    REQUIRE(generated.find("res://data/marker.tres::GDScript_marker") != std::string::npos);
+    const auto source =
+        read_text(options.output_directory / "generated" / result.scripts.front().source_file_name);
+    REQUIRE(source.find("descriptor.native_base_type = godot::StringName(\"Resource\")") !=
+            std::string::npos);
 }
 
 TEST_CASE("project compiler rejects source-less embedded scripts with no concrete owner") {
@@ -574,9 +544,10 @@ TEST_CASE("project compiler transactionally replaces renamed and incompatible ge
     REQUIRE(!std::filesystem::exists(options.output_directory / "generated" / old_source));
     REQUIRE(!std::filesystem::exists(options.output_directory / "generated/orphan.gd.hpp"));
     REQUIRE(!std::filesystem::exists(options.output_directory / "generated/orphan.gd.cpp"));
-    const auto generated_cmake = read_text(options.output_directory / "CMakeLists.txt");
-    REQUIRE(generated_cmake.find(old_source) == std::string::npos);
-    REQUIRE(generated_cmake.find("renamed_widget.gd.cpp") != std::string::npos);
+    REQUIRE(!std::filesystem::exists(options.output_directory / "CMakeLists.txt"));
+    const auto manifest = read_text(options.output_directory / "manifest.txt");
+    REQUIRE(manifest.find(old_source) == std::string::npos);
+    REQUIRE(manifest.find("renamed_widget.gd.cpp") != std::string::npos);
 }
 
 TEST_CASE("project compiler never follows generated manifest paths outside its owned directory") {
@@ -730,8 +701,8 @@ TEST_CASE("project compiler preserves nested internal class identities across ca
         read_text(options.output_directory / "generated" / result.scripts.front().header_file_name);
     REQUIRE(header.find("class " + *derived + " : public " + *base) != std::string::npos);
     const auto registration = read_text(options.output_directory / "register_types.cpp");
-    REQUIRE(registration.find("GDREGISTER_RUNTIME_CLASS(" + *base + ")") <
-            registration.find("GDREGISTER_RUNTIME_CLASS(" + *derived + ")"));
+    REQUIRE(registration.find("GDREGISTER_CLASS(" + *base + ")") <
+            registration.find("GDREGISTER_CLASS(" + *derived + ")"));
 
     const auto cached = compiler.compile(options);
     REQUIRE(cached.success);
@@ -766,7 +737,7 @@ TEST_CASE("onready dependencies remain forward declarations and do not create he
     REQUIRE(header_b.find("class GDPPNative_HeaderA_") != std::string::npos);
 }
 
-TEST_CASE("project target version changes descriptors SDK configuration and build identity") {
+TEST_CASE("project target version changes build identity") {
     const auto root = fixture_root("project-version");
     std::error_code error;
     std::filesystem::remove_all(root, error);
@@ -780,12 +751,6 @@ TEST_CASE("project target version changes descriptors SDK configuration and buil
     const auto latest = compiler.compile(options);
     REQUIRE(latest.success);
     REQUIRE(latest.build_id != baseline.build_id);
-    REQUIRE(read_text(latest.extension_descriptor).find("compatibility_minimum = \"4.7\"") !=
-            std::string::npos);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt")
-                .find("GDPP_TARGET_GODOT_VERSION \"4.7\"") != std::string::npos);
-    REQUIRE(read_text(options.output_directory / "CMakeLists.txt").find("addons/gdpp/binary") !=
-            std::string::npos);
 }
 
 TEST_CASE("project compiler lowers internal classes derived from preloaded scripts") {
@@ -920,8 +885,8 @@ TEST_CASE("project compiler exposes preloaded scripts as typed namespaces") {
     const auto header =
         read_text(options.output_directory / "generated" / consumer->header_file_name);
     REQUIRE(header.find("#include \"" + library->header_file_name + "\"") != std::string::npos);
-    REQUIRE(header.find("godot::Ref<" + item_class + "> item") != std::string::npos);
-    REQUIRE(header.find("godot::Ref<" + library->class_name + "> root_value") != std::string::npos);
+    REQUIRE(header.find("godot::Ref<godot::RefCounted> item") != std::string::npos);
+    REQUIRE(header.find("godot::Ref<godot::RefCounted> root_value") != std::string::npos);
     const auto source =
         read_text(options.output_directory / "generated" / consumer->source_file_name);
     REQUIRE(source.find("InternalClassResource<" + item_class + ">{}.instantiate()") !=
@@ -929,8 +894,10 @@ TEST_CASE("project compiler exposes preloaded scripts as typed namespaces") {
     REQUIRE(source.find(library->class_name + "::answer(") != std::string::npos);
     REQUIRE(source.find(library->class_name + "::_gdpp_get_TAG()") != std::string::npos);
     REQUIRE(source.find(library->class_name + "::_gdpp_set_TAG(value)") != std::string::npos);
-    REQUIRE(source.find("godot::Object::cast_to<" + library->class_name + ">((value).ptr())") !=
-            std::string::npos);
+    REQUIRE(source.find("cast_attached_script(gdpp::runtime::to_variant(value), "
+                        "godot::String(\"res://library.gd\"))") != std::string::npos);
+    REQUIRE(source.find("is_attached_script_instance") != std::string::npos);
+    REQUIRE(source.find("Object::cast_to<" + library->class_name) == std::string::npos);
     REQUIRE(source.find(library->class_name + "::LIMIT") != std::string::npos);
     REQUIRE(source.find(library->class_name + "::State::_gdpp_enum_READY") != std::string::npos);
     REQUIRE(source.find(item_class + "::Mode::_gdpp_enum_HOT") != std::string::npos);
@@ -1012,24 +979,22 @@ TEST_CASE("project compiler resolves class and path inheritance in parent-first 
     REQUIRE(child_header.find("#include \"project_middle.gd.hpp\"") != std::string::npos);
     REQUIRE(child_header.find("GDCLASS(" + child_class + ", " + middle_class + ")") !=
             std::string::npos);
-    REQUIRE(child_header.find(base_class + "* linked") != std::string::npos);
-    REQUIRE(child_header.find(base_class + "* typed_identity(" + base_class + "* value)") !=
+    REQUIRE(child_header.find("godot::Object* linked") != std::string::npos);
+    REQUIRE(child_header.find("godot::Object* typed_identity(godot::Object* value)") !=
             std::string::npos);
     REQUIRE(child_source.find(base_class + "::static_answer()") != std::string::npos);
-    REQUIRE(child_source.find("->_gdpp_get_base_value()") != std::string::npos);
-    REQUIRE(child_source.find("Cannot access member 'base_value' on a null or freed object") !=
+    REQUIRE(child_source.find("get_named(value, godot::StringName(\"base_value\"))") !=
             std::string::npos);
-    REQUIRE(child_source.find("value->_gdpp_set_base_value(static_cast<int64_t>(40))") !=
+    REQUIRE(child_source.find("set_named(_gdpp_dynamic_root_") != std::string::npos);
+    REQUIRE(child_source.find("godot::StringName(\"base_value\")") !=
             std::string::npos);
-    REQUIRE(child_source.find("godot::Object::cast_to<" + base_class +
-                              ">((value).get_validated_object()) != nullptr") != std::string::npos);
+    REQUIRE(child_source.find("is_attached_script_instance") != std::string::npos);
+    REQUIRE(child_source.find("godot::String(\"res://base.gd\")") != std::string::npos);
+    REQUIRE(child_source.find("Object::cast_to<" + base_class) == std::string::npos);
     const auto registration = read_text(options.output_directory / "register_types.cpp");
-    const auto base_position =
-        registration.find("GDREGISTER_RUNTIME_CLASS(GDPPNative_ProjectBase_");
-    const auto middle_position =
-        registration.find("GDREGISTER_RUNTIME_CLASS(GDPPNative_ProjectMiddle_");
-    const auto child_position =
-        registration.find("GDREGISTER_RUNTIME_CLASS(GDPPNative_ProjectChild_");
+    const auto base_position = registration.find("GDREGISTER_CLASS(GDPPNative_ProjectBase_");
+    const auto middle_position = registration.find("GDREGISTER_CLASS(GDPPNative_ProjectMiddle_");
+    const auto child_position = registration.find("GDREGISTER_CLASS(GDPPNative_ProjectChild_");
     REQUIRE(base_position < middle_position);
     REQUIRE(middle_position < child_position);
 }
@@ -1155,9 +1120,8 @@ TEST_CASE("project compiler compares internal script overrides by emitted native
     const auto header =
         read_text(options.output_directory / "generated" / generated->header_file_name);
     REQUIRE(header.find("New() override;") != std::string::npos);
-    REQUIRE(header.find("MergeFrom(godot::Ref<GDPPNative_NativeMessageContract") !=
+    REQUIRE(header.find("MergeFrom(godot::Ref<godot::RefCounted> other) override;") !=
             std::string::npos);
-    REQUIRE(header.find(" other) override;") != std::string::npos);
     REQUIRE(header.find("_gdpp_native_override_New") == std::string::npos);
     REQUIRE(header.find("_gdpp_native_override_MergeFrom") == std::string::npos);
 }
@@ -1225,7 +1189,8 @@ TEST_CASE("project compiler preserves internal default vararg and super call ABI
     REQUIRE(header.find("godot::Array extras) override;") != std::string::npos);
     REQUIRE(source.find("__Base::combine(") != std::string::npos);
     REQUIRE(source.find("godot::Array _gdpp_call_rest_") != std::string::npos);
-    REQUIRE(source.find("->collect(_gdpp_call_argument_") != std::string::npos);
+    REQUIRE(source.find("gdpp::runtime::call_dynamic(") != std::string::npos);
+    REQUIRE(source.find("godot::StringName(\"collect\")") != std::string::npos);
 }
 
 TEST_CASE("project compiler normalizes nested enum identities across typed containers") {
@@ -1373,13 +1338,18 @@ TEST_CASE("project compiler attaches scripts to third-party GDExtension instance
                "\"header\": \"include/vendor_base.hpp\", \"godot_base\": \"Node\", "
                "\"methods\": [{\"name\": \"answer\", \"return_type\": \"int\", "
                "\"hash\": 305419896}]}],\n"
-               "  \"targets\": [{\"platform\": \"macos\", "
-               "\"architecture\": \"arm64\", \"profile\": \"development\", "
-               "\"include_dirs\": [\".\"], "
-               "\"link_libraries\": [\"lib/libvendor.a\"]}]\n"
+               "  \"targets\": []\n"
                "}\n");
-    write_text(root / "derived.gd", "extends VendorBase\nclass_name BridgedDerived\n"
-                                    "func answer() -> int:\n    return super.answer() + 1\n");
+    write_text(root / "derived.gd",
+               "extends VendorBase\nclass_name BridgedDerived\n"
+               "class VendorWorker:\n"
+               "    extends VendorBase\n"
+               "    func answer() -> int:\n"
+               "        return super.answer() + 2\n"
+               "func answer() -> int:\n"
+               "    return super.answer() + 1\n"
+               "func make_worker() -> VendorWorker:\n"
+               "    return VendorWorker.new()\n");
 
     const auto options = project_options(root);
     const auto result = gdpp::ProjectCompiler{}.compile(options);
@@ -1390,18 +1360,22 @@ TEST_CASE("project compiler attaches scripts to third-party GDExtension instance
     REQUIRE_EQ(result.scripts.front().external_base_name, "VendorBase");
     const auto header = read_text(options.output_directory / "generated/bridged_derived.gd.hpp");
     const auto source = read_text(options.output_directory / "generated/bridged_derived.gd.cpp");
-    const auto cmake = read_text(options.output_directory / "CMakeLists.txt");
     const auto registration = read_text(options.output_directory / "register_types.cpp");
-    const auto descriptor = read_text(options.output_directory / "gdpp_project.gdextension");
     REQUIRE(header.find("public gdpp::runtime::AttachedScriptBehavior") != std::string::npos);
     REQUIRE(header.find("vendor_base.hpp") == std::string::npos);
     REQUIRE(source.find("descriptor.native_base_type = godot::StringName(\"VendorBase\")") !=
             std::string::npos);
+    REQUIRE(source.find("res://derived.gd::VendorWorker") != std::string::npos);
+    const auto first_native_base =
+        source.find("descriptor.native_base_type = godot::StringName(\"VendorBase\")");
+    REQUIRE(first_native_base != std::string::npos);
+    REQUIRE(source.find("descriptor.native_base_type = godot::StringName(\"VendorBase\")",
+                        first_native_base + 1) != std::string::npos);
     REQUIRE(source.find("godot::Ref<gdpp::runtime::AttachedScriptBehavior>") != std::string::npos);
     REQUIRE(source.find("call_attached_native_base") != std::string::npos);
     REQUIRE(source.find("static_cast<std::uint32_t>(305419896)") != std::string::npos);
-    REQUIRE(cmake.find("attached_script_instance.cpp") != std::string::npos);
-    REQUIRE(cmake.find("libvendor") == std::string::npos);
+    REQUIRE(!std::filesystem::exists(options.output_directory / "CMakeLists.txt"));
+    REQUIRE(!std::filesystem::exists(options.output_directory / "gdpp_project.gdextension"));
     REQUIRE(registration.find("register_attached_script") != std::string::npos);
     REQUIRE(registration.find("register_singleton") != std::string::npos);
     REQUIRE(registration.find("GDREGISTER_CLASS(gdpp::runtime::AttachedCompiledLanguage)") !=
@@ -1410,11 +1384,9 @@ TEST_CASE("project compiler attaches scripts to third-party GDExtension instance
             std::string::npos);
     REQUIRE(registration.find("GDREGISTER_CLASS(" + result.scripts.front().class_name + ")") !=
             std::string::npos);
-    REQUIRE(descriptor.find("reloadable = false") != std::string::npos);
-    REQUIRE(descriptor.find("linux.editor.x86_64") != std::string::npos);
-    REQUIRE(descriptor.find("windows.editor.x86_64") != std::string::npos);
-    REQUIRE(descriptor.find("linux.editor.arm64") == std::string::npos);
-    REQUIRE(descriptor.find("windows.editor.arm64") == std::string::npos);
+    REQUIRE(registration.find("GDREGISTER_CLASS(" +
+                              result.scripts.front().inner_class_names.front() + ")") !=
+            std::string::npos);
 }
 
 TEST_CASE("project compiler dynamically bridges a binary-only GDExtension class") {
@@ -1489,8 +1461,6 @@ TEST_CASE("project compiler dynamically bridges a binary-only GDExtension class"
     REQUIRE(source.find("exact = 9007199254740993;") != std::string::npos);
     const auto lock = read_text(options.output_directory / "bridge.lock");
     REQUIRE(lock.find("runtime\n") != std::string::npos);
-    const auto cmake = read_text(options.output_directory / "CMakeLists.txt");
-    REQUIRE(cmake.find("No development target in third-party bridge") == std::string::npos);
 
     const auto cached = gdpp::ProjectCompiler{}.compile(options);
     REQUIRE(cached.success);
@@ -1750,15 +1720,21 @@ TEST_CASE("project compiler hoists a script-local class used as the root base") 
     REQUIRE(result.success);
     REQUIRE_EQ(result.scripts.front().inner_class_names.size(), std::size_t{1});
     const auto header = read_text(options.output_directory / "generated/local_root_derived.gd.hpp");
+    const auto source = read_text(options.output_directory / "generated/local_root_derived.gd.cpp");
     const auto& inner = result.scripts.front().inner_class_names.front();
-    REQUIRE(header.find("class " + inner + " : public godot::Node2D") != std::string::npos);
+    REQUIRE(header.find("class " + inner +
+                        " : public gdpp::runtime::AttachedScriptBehavior") != std::string::npos);
     REQUIRE(header.find("class " + result.scripts.front().class_name + " : public " + inner) !=
             std::string::npos);
     REQUIRE(header.find("#include \"\"") == std::string::npos);
+    REQUIRE(source.find("descriptor.native_base_type = godot::StringName(\"Node2D\")") !=
+            std::string::npos);
+    REQUIRE(source.find("descriptor.base_script_path = "
+                        "godot::String(\"res://renderer.gd::LocalRootBase\")") !=
+            std::string::npos);
     const auto registration = read_text(options.output_directory / "register_types.cpp");
-    REQUIRE(
-        registration.find("register_runtime_abstract_class<" + inner + ">()") <
-        registration.find("GDREGISTER_RUNTIME_CLASS(" + result.scripts.front().class_name + ")"));
+    REQUIRE(registration.find("GDREGISTER_ABSTRACT_CLASS(" + inner + ")") <
+            registration.find("GDREGISTER_CLASS(" + result.scripts.front().class_name + ")"));
 
     write_text(root / "renderer.gd", "class_name LocalRootDerived\n"
                                      "extends LocalRootBase\n"
@@ -1771,7 +1747,7 @@ TEST_CASE("project compiler hoists a script-local class used as the root base") 
                         [](const auto& item) { return item.diagnostic.code == "GDS4149"; }));
 }
 
-TEST_CASE("attached bridges ignore obsolete provider development paths") {
+TEST_CASE("attached bridges ignore provider build-system paths") {
     const auto root = fixture_root("project-extension-bridge-invalid");
     std::error_code error;
     std::filesystem::remove_all(root, error);
@@ -1792,13 +1768,11 @@ TEST_CASE("attached bridges ignore obsolete provider development paths") {
     REQUIRE_EQ(result.scripts.size(), std::size_t{1});
     const auto header =
         read_text(options.output_directory / "generated" / result.scripts.front().header_file_name);
-    const auto cmake = read_text(options.output_directory / "CMakeLists.txt");
     REQUIRE(header.find("outside.hpp") == std::string::npos);
-    REQUIRE(cmake.find("outside.hpp") == std::string::npos);
 }
 
 #ifndef _WIN32
-TEST_CASE("attached bridges never traverse obsolete provider header symlinks") {
+TEST_CASE("attached bridges never traverse provider header symlinks") {
     const auto root = fixture_root("project-extension-bridge-symlink");
     const auto outside = fixture_root("project-extension-bridge-symlink-outside");
     std::error_code error;
@@ -1824,9 +1798,7 @@ TEST_CASE("attached bridges never traverse obsolete provider header symlinks") {
     REQUIRE_EQ(result.scripts.size(), std::size_t{1});
     const auto header =
         read_text(options.output_directory / "generated" / result.scripts.front().header_file_name);
-    const auto cmake = read_text(options.output_directory / "CMakeLists.txt");
     REQUIRE(header.find("vendor_base.hpp") == std::string::npos);
-    REQUIRE(cmake.find("include/vendor_base.hpp") == std::string::npos);
 }
 #endif
 
@@ -1903,7 +1875,10 @@ TEST_CASE("global class types win over same-stem embedded scripts in typed conta
     const auto source =
         read_text(options.output_directory / "generated" / consumer->source_file_name);
     REQUIRE(source.find("cast_to<godot::Variant>") == std::string::npos);
-    REQUIRE(source.find("->_gdpp_get_progress()") != std::string::npos);
+    REQUIRE(source.find("cast_attached_script") != std::string::npos);
+    REQUIRE(source.find("godot::String(\"res://timeline_action.gd\")") != std::string::npos);
+    REQUIRE(source.find("get_named(") != std::string::npos);
+    REQUIRE(source.find("godot::StringName(\"progress\")") != std::string::npos);
     const auto timeline =
         std::find_if(initial.scripts.begin(), initial.scripts.end(), [](const auto& script) {
             return script.relative_path == std::filesystem::path{"timeline_action.gd"};
@@ -1980,9 +1955,11 @@ TEST_CASE("project compiler preserves cross-script call contracts through cache 
     REQUIRE(consumer != initial.scripts.end());
     const auto initial_source =
         read_text(options.output_directory / "generated" / consumer->source_file_name);
-    REQUIRE(initial_source.find("gdpp::runtime::packed_array_storage<godot::PackedByteArray>("
-                                "gdpp::runtime::to_variant(_gdpp_call_argument_") !=
+    REQUIRE(initial_source.find("gdpp::runtime::packed_array_storage<godot::PackedByteArray>(") !=
             std::string::npos);
+    REQUIRE(initial_source.find("gdpp::runtime::call_dynamic(") != std::string::npos);
+    REQUIRE(initial_source.find("godot::StringName(\"parse\")") != std::string::npos);
+    REQUIRE(initial_source.find("gdpp::runtime::to_variant(value)") != std::string::npos);
 
     write_text(root / "parser.gd",
                "extends RefCounted\n"
@@ -2001,9 +1978,81 @@ TEST_CASE("project compiler preserves cross-script call contracts through cache 
     REQUIRE(changed_consumer != changed.scripts.end());
     const auto changed_source =
         read_text(options.output_directory / "generated" / changed_consumer->source_file_name);
-    REQUIRE(changed_source.find("gdpp::runtime::packed_array_storage<godot::PackedInt32Array>("
-                                "gdpp::runtime::to_variant(_gdpp_call_argument_") !=
+    REQUIRE(changed_source.find("godot::StringName(\"parse\")") !=
             std::string::npos);
+    REQUIRE(changed_source.find("gdpp::runtime::to_variant(value)") != std::string::npos);
+}
+
+TEST_CASE("attached cross-script properties recover their semantic native value types") {
+    const auto root = fixture_root("project-attached-cross-script-property-types");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "record.gd",
+               "extends Node\n"
+               "class_name AttachedPropertyRecord\n"
+               "var values: Dictionary[Vector3i, int] = {}\n");
+    write_text(root / "consumer.gd",
+               "extends Node\n"
+               "class_name AttachedPropertyConsumer\n"
+               "func contains(record: AttachedPropertyRecord, key: Vector3i) -> bool:\n"
+               "    return record.values.has(key)\n"
+               "func read(record: AttachedPropertyRecord, key: Vector3i) -> int:\n"
+               "    return record.values[key]\n");
+    const auto options = project_options(root);
+
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    const auto consumer =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path == std::filesystem::path{"consumer.gd"};
+        });
+    REQUIRE(consumer != result.scripts.end());
+    const auto source =
+        read_text(options.output_directory / "generated" / consumer->source_file_name);
+    REQUIRE(source.find("gdpp::runtime::get_named(") != std::string::npos);
+    REQUIRE(source.find(
+                "strict_typed_storage<"
+                "godot::TypedDictionary<godot::Vector3i, int64_t>>"
+                "(gdpp::runtime::to_variant(") != std::string::npos);
+    REQUIRE(source.find(".has(") != std::string::npos);
+}
+
+TEST_CASE("attached internal classes dispatch self locally and other instances through scripts") {
+    const auto root = fixture_root("project-attached-inner-dispatch");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "records.gd",
+               "extends Node\n"
+               "class Record:\n"
+               "    var value: int\n"
+               "    func _init(initial: int) -> void:\n"
+               "        self.value = initial\n"
+               "    func increment() -> int:\n"
+               "        self.value += 1\n"
+               "        return self.value\n"
+               "func read(record: Record) -> int:\n"
+               "    return record.value\n"
+               "func write(record: Record, next: int) -> void:\n"
+               "    record.value = next\n"
+               "func invoke(record: Record) -> int:\n"
+               "    return record.increment()\n"
+               "func create(initial: int) -> Record:\n"
+               "    return Record.new(initial)\n");
+    const auto options = project_options(root);
+
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    const auto source =
+        read_text(options.output_directory / "generated" / result.scripts.front().source_file_name);
+    REQUIRE(source.find("owner()->_gdpp_") == std::string::npos);
+    REQUIRE(source.find("->_gdpp_get_value") == std::string::npos);
+    REQUIRE(source.find("->_gdpp_set_value") == std::string::npos);
+    REQUIRE(source.find("gdpp::runtime::get_named(") != std::string::npos);
+    REQUIRE(source.find("gdpp::runtime::set_named(") != std::string::npos);
+    REQUIRE(source.find("gdpp::runtime::call_dynamic(") != std::string::npos);
+    REQUIRE(source.find("-> godot::Ref<godot::RefCounted>") != std::string::npos);
 }
 
 TEST_CASE("project symbol signature changes invalidate dependent script caches") {
@@ -2152,8 +2201,10 @@ TEST_CASE("preload alias casts preserve void coroutine ABI at call sites") {
         read_text(options.output_directory / "generated" / consumer->source_file_name);
     REQUIRE(producer_header.find("virtual godot::Variant run();") != std::string::npos);
     REQUIRE(consumer_source.find("[&]() -> godot::Variant") != std::string::npos);
-    REQUIRE(consumer_source.find("return _gdpp_call_receiver_") != std::string::npos);
-    REQUIRE(consumer_source.find("->run(); }())") != std::string::npos);
+    REQUIRE(consumer_source.find("cast_attached_script") != std::string::npos);
+    REQUIRE(consumer_source.find("godot::String(\"res://producer.gd\")") != std::string::npos);
+    REQUIRE(consumer_source.find("gdpp::runtime::call_dynamic(") != std::string::npos);
+    REQUIRE(consumer_source.find("godot::StringName(\"run\")") != std::string::npos);
 }
 
 TEST_CASE("project compiler isolates coroutine overrides behind dynamic script dispatch") {
@@ -2426,8 +2477,10 @@ TEST_CASE("project compiler lowers cross-script constants enums and resource fac
     REQUIRE(base_header.find("static const int64_t& LIMIT();") != std::string::npos);
     REQUIRE(base_header.find("static const int64_t& MASK();") != std::string::npos);
     const auto& base_class = native_class_for(result, "base.gd");
-    REQUIRE(base_header.find(base_class + "(godot::Variant _gdpp_argument_value = "
-                                          "gdpp::runtime::default_argument())") !=
+    REQUIRE(base_header.find("virtual void _init(godot::Variant _gdpp_argument_value = "
+                             "gdpp::runtime::default_argument())") !=
+            std::string::npos);
+    REQUIRE(base_header.find("public gdpp::runtime::AttachedScriptBehavior") !=
             std::string::npos);
     const auto consumer_header =
         read_text(options.output_directory / "generated/shared_consumer.gd.hpp");
@@ -2534,7 +2587,8 @@ TEST_CASE("project compiler resolves autoloads and invalidates their cached symb
     const auto source = read_text(options.output_directory / "generated/autoload_consumer.gd.cpp");
     REQUIRE(source.find("gdpp::runtime::find_autoload(godot::StringName(\"Settings\"))") !=
             std::string::npos);
-    REQUIRE(source.find("->_gdpp_get_quality()") != std::string::npos);
+    REQUIRE(source.find("gdpp::runtime::get_named(") != std::string::npos);
+    REQUIRE(source.find("godot::StringName(\"quality\")") != std::string::npos);
     REQUIRE(source.find("::DEFAULT_QUALITY") != std::string::npos);
     const auto settings_script =
         std::find_if(initial.scripts.begin(), initial.scripts.end(), [](const auto& script) {
@@ -2544,7 +2598,7 @@ TEST_CASE("project compiler resolves autoloads and invalidates their cached symb
     const auto settings_source =
         read_text(options.output_directory / "generated" / settings_script->source_file_name);
     REQUIRE(settings_source.find(
-                "gdpp::runtime::register_autoload(godot::StringName(\"Settings\"), this)") !=
+                "gdpp::runtime::register_autoload(godot::StringName(\"Settings\"), owner())") !=
             std::string::npos);
 
     write_text(root / "project.godot", "[application]\nconfig/name=\"Autoload Test\"\n\n"
@@ -2588,7 +2642,7 @@ TEST_CASE("project compiler resolves UID script autoloads into native globals") 
             std::string::npos);
     REQUIRE(consumer.find("get_singleton_object") == std::string::npos);
     REQUIRE(autoload.find(
-                "gdpp::runtime::register_autoload(godot::StringName(\"AudioManager\"), this)") !=
+                "gdpp::runtime::register_autoload(godot::StringName(\"AudioManager\"), owner())") !=
             std::string::npos);
 }
 
@@ -2636,7 +2690,9 @@ TEST_CASE("project compiler resolves the root script of a scene autoload") {
         read_text(options.output_directory / "generated" / generated_source->source_file_name);
     REQUIRE(source.find("gdpp::runtime::find_autoload(godot::StringName(\"Transition\"))") !=
             std::string::npos);
-    REQUIRE(source.find("->change_scene(") != std::string::npos);
+    REQUIRE(source.find("gdpp::runtime::call_dynamic(") != std::string::npos);
+    REQUIRE(source.find("godot::StringName(\"change_scene\")") != std::string::npos);
+    REQUIRE(source.find("Object::cast_to<GDPPNative_") == std::string::npos);
 }
 
 TEST_CASE("project autoloads shadow same-named engine globals") {
@@ -2669,7 +2725,9 @@ TEST_CASE("project autoloads shadow same-named engine globals") {
     REQUIRE(source.find("#include \"" + setting->header_file_name + "\"") != std::string::npos);
     REQUIRE(source.find("gdpp::runtime::find_autoload(godot::StringName(\"Setting\"))") !=
             std::string::npos);
-    REQUIRE(source.find("->save_project()") != std::string::npos);
+    REQUIRE(source.find("gdpp::runtime::call_dynamic(") != std::string::npos);
+    REQUIRE(source.find("godot::StringName(\"save_project\")") != std::string::npos);
+    REQUIRE(source.find("Object::cast_to<GDPPNative_") == std::string::npos);
 }
 
 TEST_CASE("project symbol graph preserves untyped fields as Variant") {
@@ -2743,7 +2801,7 @@ TEST_CASE("project source selection compiles scripts beside native addons and ne
                "addons/vendor/vendor_scene.tscn::GDScript_vendor";
     }));
     const auto registration = read_text(options.output_directory / "register_types.cpp");
-    REQUIRE(registration.find("register_runtime_abstract_class<GDPPNative_RuntimeAddonBase_") !=
+    REQUIRE(registration.find("GDREGISTER_ABSTRACT_CLASS(GDPPNative_RuntimeAddonBase_") !=
             std::string::npos);
 }
 
@@ -2780,9 +2838,9 @@ TEST_CASE("project compiler enforces cross-script abstract method obligations") 
                              [](const auto& script) { return script.is_abstract; }),
                std::ptrdiff_t{2});
     const auto registration = read_text(options.output_directory / "register_types.cpp");
-    REQUIRE(registration.find("register_runtime_abstract_class<GDPPNative_WorkContract_") !=
+    REQUIRE(registration.find("GDREGISTER_ABSTRACT_CLASS(GDPPNative_WorkContract_") !=
             std::string::npos);
-    REQUIRE(registration.find("register_runtime_abstract_class<GDPPNative_DeferredWork_") !=
+    REQUIRE(registration.find("GDREGISTER_ABSTRACT_CLASS(GDPPNative_DeferredWork_") !=
             std::string::npos);
     REQUIRE(registration.find("GDREGISTER_ABSTRACT_CLASS(GDPPNative_InnerContracts_") !=
             std::string::npos);
@@ -2819,4 +2877,56 @@ TEST_CASE("project frontend limit failures never commit generated state") {
     REQUIRE(!std::filesystem::exists(options.output_directory / "manifest.txt"));
     REQUIRE(!std::filesystem::exists(options.output_directory / "generated"));
     REQUIRE(!std::filesystem::exists(options.output_directory / "register_types.cpp"));
+}
+
+TEST_CASE("project compiler emits source-free editor reflection on cache hits") {
+    const auto root = fixture_root("project-editor-reflection");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "base.gd", "extends Node\nclass_name ReflectionBase\n"
+                                 "signal inherited_signal\n");
+    write_text(root / "child.gd",
+               "extends ReflectionBase\n"
+               "class_name ReflectionChild\n"
+               "@export var score: int = 7\n"
+               "var transient: String = \"ready\"\n"
+               "static var shared: int = 1\n"
+               "signal completed(value: int)\n"
+               "func execute(value: int = 3) -> String:\n"
+               "    return str(value)\n");
+    const auto options = project_options(root);
+    const auto first = gdpp::ProjectCompiler{}.compile(options);
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(first.success);
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.cache_hit_count, std::size_t{2});
+    const auto child =
+        std::find_if(result.scripts.begin(), result.scripts.end(), [](const auto& script) {
+            return script.relative_path == std::filesystem::path{"child.gd"};
+        });
+    REQUIRE(child != result.scripts.end());
+    REQUIRE_EQ(child->global_name, std::string{"ReflectionChild"});
+    REQUIRE_EQ(child->base_script_path, std::string{"res://base.gd"});
+    const auto member = [&](const std::string_view name) {
+        return std::find_if(child->reflection_members.begin(), child->reflection_members.end(),
+                            [&](const auto& value) { return value.name == name; });
+    };
+    const auto score = member("score");
+    const auto transient = member("transient");
+    const auto shared = member("shared");
+    const auto completed = member("completed");
+    const auto execute = member("execute");
+    REQUIRE(score != child->reflection_members.end());
+    REQUIRE(score->property_storage);
+    REQUIRE(score->property_editor);
+    REQUIRE(transient != child->reflection_members.end());
+    REQUIRE(!transient->property_storage);
+    REQUIRE(shared != child->reflection_members.end());
+    REQUIRE(shared->is_static);
+    REQUIRE(completed != child->reflection_members.end());
+    REQUIRE_EQ(completed->parameter_names, std::vector<std::string>{"value"});
+    REQUIRE(execute != child->reflection_members.end());
+    REQUIRE_EQ(execute->parameter_names, std::vector<std::string>{"value"});
+    REQUIRE_EQ(execute->default_parameters, std::vector<bool>{true});
 }
