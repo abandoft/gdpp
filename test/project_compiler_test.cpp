@@ -1333,7 +1333,8 @@ TEST_CASE("project compiler attaches scripts to third-party GDExtension instance
                "\"cpp_type\": \"vendor::VendorBase\", "
                "\"header\": \"include/vendor_base.hpp\", \"godot_base\": \"Node\", "
                "\"methods\": [{\"name\": \"answer\", \"return_type\": \"int\", "
-               "\"hash\": 305419896}]}],\n"
+               "\"hash\": 305419896}, {\"name\": \"native_answer\", "
+               "\"return_type\": \"int\", \"hash\": 2271560481}]}],\n"
                "  \"targets\": []\n"
                "}\n");
     write_text(root / "derived.gd", "extends VendorBase\nclass_name BridgedDerived\n"
@@ -1343,6 +1344,10 @@ TEST_CASE("project compiler attaches scripts to third-party GDExtension instance
                                     "        return super.answer() + 2\n"
                                     "func answer() -> int:\n"
                                     "    return super.answer() + 1\n"
+                                    "func call_native() -> int:\n"
+                                    "    return native_answer()\n"
+                                    "func call_native_explicit() -> int:\n"
+                                    "    return self.native_answer()\n"
                                     "func make_worker() -> VendorWorker:\n"
                                     "    return VendorWorker.new()\n");
 
@@ -1369,6 +1374,8 @@ TEST_CASE("project compiler attaches scripts to third-party GDExtension instance
     REQUIRE(source.find("godot::Ref<gdpp::runtime::AttachedScriptBehavior>") != std::string::npos);
     REQUIRE(source.find("call_attached_native_base") != std::string::npos);
     REQUIRE(source.find("static_cast<std::uint32_t>(305419896)") != std::string::npos);
+    REQUIRE(source.find("gdpp::runtime::to_variant(owner())") != std::string::npos);
+    REQUIRE(source.find("godot::StringName(\"native_answer\")") != std::string::npos);
     REQUIRE(!std::filesystem::exists(options.output_directory / "CMakeLists.txt"));
     REQUIRE(!std::filesystem::exists(options.output_directory / "gdpp_project.gdextension"));
     REQUIRE(registration.find("register_attached_script") != std::string::npos);

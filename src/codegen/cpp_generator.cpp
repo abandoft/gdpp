@@ -3513,6 +3513,11 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
              (callee.kind == ir::ExpressionKind::member && !callee.operands.empty() &&
               callee.operands.at(0)->kind == ir::ExpressionKind::identifier &&
               callee.operands.at(0)->value == "self"));
+        // Generated script methods live on the attached behavior, but inherited ClassDB methods
+        // still live on the provider-owned Godot object. External dynamic resolutions carry their
+        // provider owner; only owner-less script dispatch may target the behavior itself.
+        const bool attached_behavior_dynamic_call =
+            attached_self_dynamic_call && callee.resolved_owner.empty();
         const bool explicit_self_script_call =
             callee.kind == ir::ExpressionKind::member && !callee.operands.empty() &&
             callee.operands.at(0)->kind == ir::ExpressionKind::identifier &&
@@ -3533,7 +3538,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             const auto method_name = "_gdpp_dynamic_method_" + suffix;
             std::string result = "([&]() -> godot::Variant { godot::Variant " + target_name +
                                  " = gdpp::runtime::to_variant(" +
-                                 (attached_self_dynamic_call ? "this"
+                                 (attached_behavior_dynamic_call ? "this"
                                   : callee.kind == ir::ExpressionKind::identifier
                                       ? self_object_expression()
                                       : emit_expression(*callee.operands.at(0))) +
