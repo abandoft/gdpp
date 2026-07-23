@@ -73,6 +73,7 @@ def main() -> int:
     godot_cpp = source_root / "third/godot-cpp"
     class_db_patch = source_root / "cmake/PatchGodotCppClassDB.cmake"
     runtime_header = source_root / "include/gdpp/runtime/variant_ops.hpp"
+    reference_semantics_header = source_root / "include/gdpp/runtime/reference_semantics.hpp"
     runtime_source = source_root / "src/runtime/variant_ops.cpp"
     attached_runtime_files = (
         source_root / "include/gdpp/runtime/attached_script.hpp",
@@ -85,6 +86,7 @@ def main() -> int:
         godot_cpp / "CMakeLists.txt",
         class_db_patch,
         runtime_header,
+        reference_semantics_header,
         runtime_source,
         *attached_runtime_files,
         integer_semantics_header,
@@ -159,6 +161,10 @@ def main() -> int:
     shutil.copytree(directory / "gen/include", stage / "godot-cpp/gen/include", dirs_exist_ok=True)
     shutil.copy2(godot_cpp / "LICENSE.md", stage / "godot-cpp/LICENSE.md")
     shutil.copy2(runtime_header, stage / "include/gdpp/runtime/variant_ops.hpp")
+    shutil.copy2(
+        reference_semantics_header,
+        stage / "include/gdpp/runtime/reference_semantics.hpp",
+    )
     shutil.copy2(runtime_source, stage / "src/runtime/variant_ops.cpp")
     shutil.copy2(attached_runtime_files[0], stage / "include/gdpp/runtime/attached_script.hpp")
     for source in attached_runtime_files[1:]:
@@ -190,6 +196,7 @@ def main() -> int:
         "msvc_runtime not_applicable\n"
         f"runtime_abi {args.runtime_abi}\n"
         f"runtime_header_sha256 {sha256(runtime_header)}\n"
+        f"reference_semantics_header_sha256 {sha256(reference_semantics_header)}\n"
         f"runtime_source_sha256 {sha256(runtime_source)}\n"
         f"attached_runtime_header_sha256 {sha256(attached_runtime_files[0])}\n"
         f"attached_runtime_registry_source_sha256 {sha256(attached_runtime_files[1])}\n"

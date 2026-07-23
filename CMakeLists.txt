@@ -118,10 +118,12 @@ set(GDPP_GODOT_EXECUTABLE "" CACHE FILEPATH "Optional Godot executable used for 
 # The generated C++ and the compiler-only SDK form one native runtime contract.  Keep exact
 # content hashes in the compiler as well as every packaged SDK so an old or partially copied SDK
 # is rejected during preflight instead of failing later with thousands of C++ diagnostics.
-set(GDPP_NATIVE_SDK_SCHEMA 9)
-set(GDPP_NATIVE_RUNTIME_ABI 8)
+set(GDPP_NATIVE_SDK_SCHEMA 10)
+set(GDPP_NATIVE_RUNTIME_ABI 9)
 set(GDPP_NATIVE_RUNTIME_HEADER
     "${CMAKE_SOURCE_DIR}/include/gdpp/runtime/variant_ops.hpp")
+set(GDPP_REFERENCE_SEMANTICS_HEADER
+    "${CMAKE_SOURCE_DIR}/include/gdpp/runtime/reference_semantics.hpp")
 set(GDPP_NATIVE_RUNTIME_SOURCE
     "${CMAKE_SOURCE_DIR}/src/runtime/variant_ops.cpp")
 set(GDPP_ATTACHED_RUNTIME_HEADER
@@ -136,6 +138,7 @@ set(GDPP_INTEGER_SEMANTICS_HEADER
     "${CMAKE_SOURCE_DIR}/include/gdpp/numeric/integer_semantics.hpp")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${GDPP_NATIVE_RUNTIME_HEADER}"
+    "${GDPP_REFERENCE_SEMANTICS_HEADER}"
     "${GDPP_NATIVE_RUNTIME_SOURCE}"
     "${GDPP_ATTACHED_RUNTIME_HEADER}"
     "${GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE}"
@@ -145,6 +148,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 )
 foreach(GDPP_NATIVE_RUNTIME_FILE IN ITEMS
         "${GDPP_NATIVE_RUNTIME_HEADER}"
+        "${GDPP_REFERENCE_SEMANTICS_HEADER}"
         "${GDPP_NATIVE_RUNTIME_SOURCE}"
         "${GDPP_ATTACHED_RUNTIME_HEADER}"
         "${GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE}"
@@ -160,6 +164,7 @@ foreach(GDPP_NATIVE_RUNTIME_FILE IN ITEMS
 endforeach()
 unset(GDPP_NATIVE_RUNTIME_CONTENT)
 file(SHA256 "${GDPP_NATIVE_RUNTIME_HEADER}" GDPP_NATIVE_RUNTIME_HEADER_SHA256)
+file(SHA256 "${GDPP_REFERENCE_SEMANTICS_HEADER}" GDPP_REFERENCE_SEMANTICS_HEADER_SHA256)
 file(SHA256 "${GDPP_NATIVE_RUNTIME_SOURCE}" GDPP_NATIVE_RUNTIME_SOURCE_SHA256)
 file(SHA256 "${GDPP_ATTACHED_RUNTIME_HEADER}" GDPP_ATTACHED_RUNTIME_HEADER_SHA256)
 file(SHA256 "${GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE}"
@@ -273,6 +278,7 @@ if(GDPP_ANDROID_SDK_VERSIONS)
                     "${CMAKE_SOURCE_DIR}/tools/build_android_sdk.py"
                     "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
                     "${GDPP_NATIVE_RUNTIME_HEADER}"
+                    "${GDPP_REFERENCE_SEMANTICS_HEADER}"
                     "${GDPP_NATIVE_RUNTIME_SOURCE}"
                     "${GDPP_ATTACHED_RUNTIME_HEADER}"
                     "${GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE}"
@@ -319,6 +325,7 @@ if(GDPP_WEB_SDK_VERSIONS)
                     "${CMAKE_SOURCE_DIR}/tools/build_web_sdk.py"
                     "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
                     "${GDPP_NATIVE_RUNTIME_HEADER}"
+                    "${GDPP_REFERENCE_SEMANTICS_HEADER}"
                     "${GDPP_NATIVE_RUNTIME_SOURCE}"
                     "${GDPP_ATTACHED_RUNTIME_HEADER}"
                     "${GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE}"
@@ -362,6 +369,7 @@ if(GDPP_IOS_SDK_VERSIONS)
                 "${CMAKE_SOURCE_DIR}/tools/build_ios_sdk.py"
                 "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
                 "${GDPP_NATIVE_RUNTIME_HEADER}"
+                "${GDPP_REFERENCE_SEMANTICS_HEADER}"
                 "${GDPP_NATIVE_RUNTIME_SOURCE}"
                 "${GDPP_ATTACHED_RUNTIME_HEADER}"
                 "${GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE}"

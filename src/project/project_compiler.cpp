@@ -966,9 +966,13 @@ std::string generated_cmake(const ProjectCompileOptions& options,
         << "endif()\n"
         << "file(SHA256 \"${GDPP_SDK_DIR}/include/gdpp/runtime/variant_ops.hpp\" "
            "GDPP_RUNTIME_HEADER_SHA256)\n"
+        << "file(SHA256 \"${GDPP_SDK_DIR}/include/gdpp/runtime/reference_semantics.hpp\" "
+           "GDPP_REFERENCE_SEMANTICS_HEADER_SHA256)\n"
         << "file(SHA256 \"${GDPP_SDK_DIR}/src/runtime/variant_ops.cpp\" "
            "GDPP_RUNTIME_SOURCE_SHA256)\n"
         << "if(NOT GDPP_RUNTIME_HEADER_SHA256 STREQUAL \"" << GDPP_NATIVE_RUNTIME_HEADER_SHA256
+        << "\" OR NOT GDPP_REFERENCE_SEMANTICS_HEADER_SHA256 STREQUAL \""
+        << GDPP_REFERENCE_SEMANTICS_HEADER_SHA256
         << "\" OR NOT GDPP_RUNTIME_SOURCE_SHA256 STREQUAL \"" << GDPP_NATIVE_RUNTIME_SOURCE_SHA256
         << "\")\n"
         << "  message(FATAL_ERROR \"GDPP SDK runtime contract does not match generated code; "

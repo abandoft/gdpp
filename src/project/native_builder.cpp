@@ -253,6 +253,7 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
     std::string editor_optimization;
     std::string runtime_abi;
     std::string runtime_header_sha256;
+    std::string reference_semantics_header_sha256;
     std::string runtime_source_sha256;
     std::string attached_runtime_header_sha256;
     std::string attached_runtime_registry_source_sha256;
@@ -292,6 +293,8 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
             runtime_abi = value;
         else if (key == "runtime_header_sha256")
             runtime_header_sha256 = value;
+        else if (key == "reference_semantics_header_sha256")
+            reference_semantics_header_sha256 = value;
         else if (key == "runtime_source_sha256")
             runtime_source_sha256 = value;
         else if (key == "attached_runtime_header_sha256")
@@ -481,6 +484,7 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
                               "; reinstall the matching GDPP SDK");
     }
     if (runtime_header_sha256 != GDPP_NATIVE_RUNTIME_HEADER_SHA256 ||
+        reference_semantics_header_sha256 != GDPP_REFERENCE_SEMANTICS_HEADER_SHA256 ||
         runtime_source_sha256 != GDPP_NATIVE_RUNTIME_SOURCE_SHA256 ||
         attached_runtime_header_sha256 != GDPP_ATTACHED_RUNTIME_HEADER_SHA256 ||
         attached_runtime_registry_source_sha256 != GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE_SHA256 ||
@@ -506,6 +510,8 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
     };
     verify_runtime_file(options.sdk_root / "include/gdpp/runtime/variant_ops.hpp",
                         runtime_header_sha256, "runtime header");
+    verify_runtime_file(options.sdk_root / "include/gdpp/runtime/reference_semantics.hpp",
+                        reference_semantics_header_sha256, "reference semantics header");
     verify_runtime_file(options.sdk_root / "src/runtime/variant_ops.cpp", runtime_source_sha256,
                         "runtime source");
     verify_runtime_file(options.sdk_root / "include/gdpp/runtime/attached_script.hpp",
@@ -1281,6 +1287,7 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
     }
     for (const auto& required :
          {registration, runtime, includes[1] / "gdpp/runtime/variant_ops.hpp",
+          includes[1] / "gdpp/runtime/reference_semantics.hpp",
           includes[1] / "gdpp/numeric/integer_semantics.hpp", includes[2] / "godot_cpp/godot.hpp",
           includes[3] / "godot_cpp/core/version.hpp", includes[3] / "gdextension_interface.h"}) {
         if (!std::filesystem::is_regular_file(required))
@@ -1395,6 +1402,7 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
         build_configuration,
         options.sdk_root / "sdk.manifest",
         options.sdk_root / "include/gdpp/runtime/variant_ops.hpp",
+        options.sdk_root / "include/gdpp/runtime/reference_semantics.hpp",
         options.sdk_root / "include/gdpp/numeric/integer_semantics.hpp",
     };
     if (has_attached_runtime) {

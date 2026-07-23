@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 SUPPORTED_GODOT_VERSIONS = ("4.4", "4.5", "4.6", "4.7")
-SDK_SCHEMA = 9
+SDK_SCHEMA = 10
 STATIC_ADDON_FILES = (
     "build_progress.gd",
     "native_build_job.gd",
@@ -220,6 +220,7 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
     runtime_contract = (
         "runtime_abi",
         "runtime_header_sha256",
+        "reference_semantics_header_sha256",
         "runtime_source_sha256",
         "attached_runtime_header_sha256",
         "attached_runtime_registry_source_sha256",

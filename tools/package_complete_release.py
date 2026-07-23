@@ -15,6 +15,7 @@ import package_release
 WEB_VARIANTS = ("nothreads", "threads")
 RUNTIME_FILES = {
     "runtime_header_sha256": "include/gdpp/runtime/variant_ops.hpp",
+    "reference_semantics_header_sha256": "include/gdpp/runtime/reference_semantics.hpp",
     "runtime_source_sha256": "src/runtime/variant_ops.cpp",
     "attached_runtime_header_sha256": "include/gdpp/runtime/attached_script.hpp",
     "attached_runtime_registry_source_sha256": "src/runtime/attached_script_registry.cpp",

@@ -26,11 +26,12 @@ import package_release  # noqa: E402
 RUNTIME_FIELDS = {
     "runtime_abi": "2",
     "runtime_header_sha256": "a" * 64,
-    "runtime_source_sha256": "b" * 64,
-    "attached_runtime_header_sha256": "c" * 64,
-    "attached_runtime_registry_source_sha256": "d" * 64,
-    "attached_runtime_instance_source_sha256": "e" * 64,
-    "attached_runtime_language_source_sha256": "f" * 64,
+    "reference_semantics_header_sha256": "b" * 64,
+    "runtime_source_sha256": "c" * 64,
+    "attached_runtime_header_sha256": "d" * 64,
+    "attached_runtime_registry_source_sha256": "e" * 64,
+    "attached_runtime_instance_source_sha256": "f" * 64,
+    "attached_runtime_language_source_sha256": "1" * 64,
     "integer_semantics_header_sha256": "0" * 64,
 }
 COMMON_ABI_FIELDS = {

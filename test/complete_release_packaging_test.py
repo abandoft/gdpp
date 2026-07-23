@@ -25,6 +25,10 @@ import package_release  # noqa: E402
 
 RUNTIME_CONTENT = {
     "runtime_header_sha256": ("include/gdpp/runtime/variant_ops.hpp", "runtime-header"),
+    "reference_semantics_header_sha256": (
+        "include/gdpp/runtime/reference_semantics.hpp",
+        "reference-semantics-header",
+    ),
     "runtime_source_sha256": ("src/runtime/variant_ops.cpp", "runtime-source"),
     "attached_runtime_header_sha256": (
         "include/gdpp/runtime/attached_script.hpp",

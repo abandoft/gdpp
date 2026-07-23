@@ -83,6 +83,10 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
                                    "include/gdpp/runtime/variant_ops.hpp",
                                root / "sdk/include/gdpp/runtime/variant_ops.hpp",
                                std::filesystem::copy_options::overwrite_existing);
+    std::filesystem::copy_file(std::filesystem::path{GDPP_TEST_SOURCE_DIR} /
+                                   "include/gdpp/runtime/reference_semantics.hpp",
+                               root / "sdk/include/gdpp/runtime/reference_semantics.hpp",
+                               std::filesystem::copy_options::overwrite_existing);
     for (const auto& relative :
          {"src/runtime/attached_script_registry.cpp", "src/runtime/attached_script_instance.cpp",
           "src/runtime/attached_script_language.cpp", "include/gdpp/runtime/attached_script.hpp"}) {
@@ -135,7 +139,9 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
                     "\nprofiles development,debug,release\n" + binding_manifest_fields(platform) +
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
-                    GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
+                    GDPP_NATIVE_RUNTIME_HEADER_SHA256 +
+                    "\nreference_semantics_header_sha256 " +
+                    GDPP_REFERENCE_SEMANTICS_HEADER_SHA256 + "\nruntime_source_sha256 " +
                     GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\n" + attached_runtime_manifest_fields() +
                     "integer_semantics_header_sha256 " + GDPP_INTEGER_SEMANTICS_HEADER_SHA256 +
                     "\n" + native_abi_manifest_fields(platform) + platform_contract + web_threads +
@@ -925,7 +931,9 @@ TEST_CASE("native builder fails closed for incomplete iOS target contracts") {
                     binding_manifest_fields("ios") +
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
-                    GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
+                    GDPP_NATIVE_RUNTIME_HEADER_SHA256 +
+                    "\nreference_semantics_header_sha256 " +
+                    GDPP_REFERENCE_SEMANTICS_HEADER_SHA256 + "\nruntime_source_sha256 " +
                     GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\n" + attached_runtime_manifest_fields() +
                     "integer_semantics_header_sha256 " + GDPP_INTEGER_SEMANTICS_HEADER_SHA256 +
                     "\n" + native_abi_manifest_fields("ios") +
@@ -1103,7 +1111,9 @@ TEST_CASE("native builder emits a macOS universal compile and link plan") {
                     "platform_minimum macOS_11.0\n"
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
-                    GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
+                    GDPP_NATIVE_RUNTIME_HEADER_SHA256 +
+                    "\nreference_semantics_header_sha256 " +
+                    GDPP_REFERENCE_SEMANTICS_HEADER_SHA256 + "\nruntime_source_sha256 " +
                     GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\n" + attached_runtime_manifest_fields() +
                     "integer_semantics_header_sha256 " + GDPP_INTEGER_SEMANTICS_HEADER_SHA256 +
                     "\n" + native_abi_manifest_fields("macos") + "compiler fixture\n");
@@ -1136,7 +1146,9 @@ TEST_CASE("macOS universal SDK can build a thin host development library") {
                     "platform_minimum macOS_11.0\n"
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
-                    GDPP_NATIVE_RUNTIME_HEADER_SHA256 + "\nruntime_source_sha256 " +
+                    GDPP_NATIVE_RUNTIME_HEADER_SHA256 +
+                    "\nreference_semantics_header_sha256 " +
+                    GDPP_REFERENCE_SEMANTICS_HEADER_SHA256 + "\nruntime_source_sha256 " +
                     GDPP_NATIVE_RUNTIME_SOURCE_SHA256 + "\n" + attached_runtime_manifest_fields() +
                     "integer_semantics_header_sha256 " + GDPP_INTEGER_SEMANTICS_HEADER_SHA256 +
                     "\n" + native_abi_manifest_fields("macos") + "compiler fixture\n");
