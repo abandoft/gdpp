@@ -47,6 +47,7 @@ file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/build_progress.gd" build_
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/native_build_job.gd" native_build_job)
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/plugin.gd" editor_plugin)
 file(READ "${GDPP_TEST_SOURCE_DIR}/src/integration/godot/compiler_service.cpp" compiler_service)
+file(READ "${GDPP_TEST_SOURCE_DIR}/cmake/GodotPlugin.cmake" godot_plugin_build)
 string(FIND "${compiler_service}"
     "output[\"attached_script_bases\"] = attached_script_bases;"
     attached_metadata_offset)
@@ -110,8 +111,14 @@ foreach(required_windows_process_contract IN ITEMS
         "STARTF_USESTDHANDLES"
         "SW_HIDE"
         "CREATE_NO_WINDOW"
-        "command_line += command;"
-        "return execute_hidden_windows_command_line(std::move(command_line));"
+        "CreateDesktopW("
+        "CREATE_UNICODE_ENVIRONMENT"
+        "VSCMD_SKIP_SENDTELEMETRY"
+        "VSCMD_SKIP_VCPKG_ACTIVATION"
+        "cached_msvc_environment("
+        "resolve_msvc_executable("
+        "options.environment = &environment->block;"
+        "return execute_hidden_windows_command_line(std::move(command_line), options);"
         "return execute_hidden_windows_process(wide_arguments);")
     string(FIND "${compiler_service}" "${required_windows_process_contract}"
         windows_process_offset)
@@ -121,6 +128,18 @@ foreach(required_windows_process_contract IN ITEMS
             "${required_windows_process_contract}")
     endif()
 endforeach()
+string(FIND "${compiler_service}" "execute_with_vcvars(" repeated_vcvars_offset)
+if(NOT repeated_vcvars_offset EQUAL -1)
+    message(FATAL_ERROR
+        "MSVC environment initialization must not wrap every compiler command")
+endif()
+string(FIND "${godot_plugin_build}"
+    "target_link_libraries(gdpp_godot_plugin PRIVATE user32)"
+    hidden_desktop_link_offset)
+if(hidden_desktop_link_offset EQUAL -1)
+    message(FATAL_ERROR
+        "Windows compiler plugin does not link the isolated desktop API")
+endif()
 string(FIND "${compiler_service}" "_wspawnvp(" visible_windows_spawn_offset)
 if(NOT visible_windows_spawn_offset EQUAL -1)
     message(FATAL_ERROR
