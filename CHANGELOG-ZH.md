@@ -11,6 +11,7 @@
 - 每个仅含元数据的 ScriptInstance 只序列化从源 SceneState/Resource 明确复制的字段，未触碰字段继续由目标 C++ 行为构造器提供默认值，避免空强类型容器或 `nil` 覆盖 AOT 默认值。
 - 跨脚本字段与方法、Autoload、`is` / `as`、内部类、RefCounted 对象及显式 `self` 统一经过同一套附着式脚本身份与分派契约；静态类型直接访问保持不变，不再把 C++ 类名转换成 Variant。
 - ABI 兼容的附着式脚本 `self` 调用改走生成 C++ 虚继承链；跨对象调用及 ABI 变化的 override 仍保留 ScriptLanguage 动态分派。强制执行的 GDScript/AOT 运行矩阵直接测量优化路径，且不放宽性能回归阈值。
+- 继承的 ClassDB 调用继续作用于提供方持有的 Godot 对象，生成脚本分派则作用于附着 behavior，确保原生 GDExtension 方法能够反向调用客户脚本 override。
 - 附着式或动态属性读取跨越 Variant 边界时保留语义值类型，包括强类型 Dictionary 和跨脚本访问器。
 - 每个客户目标 SDK 只发布一套优化后的 `template_release` godot-cpp 归档，并同时用于 Debug 与 Release 导出；编译器的 editor 绑定只保留在预构建插件内部，不再分发第二套客户静态库。
 - 将原有 16 个按版本单宿主包与完整包收敛为三个跨版本桌面包：`gdpp-mac.zip`、`gdpp-linux.zip`、`gdpp-win.zip`。每个包包含本宿主 compiler/fallback 和 Godot 4.4～4.7 全部桌面 Release SDK；三个包均包含 Android 与 Web Release SDK，仅 mac 包包含 iOS。
