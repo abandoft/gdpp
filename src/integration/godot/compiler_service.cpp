@@ -37,9 +37,11 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -782,6 +784,37 @@ std::string windows_text_to_utf8(const std::string& input) {
     return output;
 }
 
+std::string windows_wide_text_to_utf8(const std::wstring& input) {
+    if (input.empty())
+        return {};
+    const int length = static_cast<int>(
+        std::min(input.size(), static_cast<std::size_t>(std::numeric_limits<int>::max())));
+    const int required =
+        WideCharToMultiByte(CP_UTF8, 0, input.data(), length, nullptr, 0, nullptr, nullptr);
+    if (required <= 0)
+        return {};
+    std::string output(static_cast<std::size_t>(required), '\0');
+    if (WideCharToMultiByte(CP_UTF8, 0, input.data(), length, output.data(), required, nullptr,
+                            nullptr) != required)
+        return {};
+    return output;
+}
+
+std::string windows_utf16_output_to_utf8(const std::string& input) {
+    if (input.empty())
+        return {};
+    const auto code_units = input.size() / sizeof(wchar_t);
+    if (code_units == 0)
+        return {};
+    std::wstring wide(code_units, L'\0');
+    std::memcpy(wide.data(), input.data(), code_units * sizeof(wchar_t));
+    if (!wide.empty() && wide.front() == wchar_t{0xfeff})
+        wide.erase(wide.begin());
+    while (!wide.empty() && wide.back() == L'\0')
+        wide.pop_back();
+    return windows_wide_text_to_utf8(wide);
+}
+
 bool is_msvc_tool(const std::filesystem::path& executable) {
     auto filename = executable.filename().wstring();
     std::transform(filename.begin(), filename.end(), filename.begin(),
@@ -790,7 +823,44 @@ bool is_msvc_tool(const std::filesystem::path& executable) {
            filename == L"link.exe";
 }
 
-NativeProcessResult execute_hidden_windows_command_line(std::wstring command_line) {
+class HiddenToolchainDesktop final {
+  public:
+    HiddenToolchainDesktop()
+        : name_{L"GDPPToolchain-" + std::to_wstring(GetCurrentProcessId())},
+          handle_{CreateDesktopW(name_.data(), nullptr, nullptr, 0, GENERIC_ALL, nullptr)},
+          creation_error_{handle_ == nullptr ? GetLastError() : DWORD{0}} {}
+
+    ~HiddenToolchainDesktop() {
+        if (handle_ != nullptr)
+            CloseDesktop(handle_);
+    }
+
+    HiddenToolchainDesktop(const HiddenToolchainDesktop&) = delete;
+    HiddenToolchainDesktop& operator=(const HiddenToolchainDesktop&) = delete;
+
+    [[nodiscard]] bool available() const { return handle_ != nullptr; }
+    [[nodiscard]] const std::wstring& name() const { return name_; }
+    [[nodiscard]] DWORD creation_error() const { return creation_error_; }
+
+  private:
+    std::wstring name_;
+    HDESK handle_{nullptr};
+    DWORD creation_error_{0};
+};
+
+HiddenToolchainDesktop& hidden_toolchain_desktop() {
+    static HiddenToolchainDesktop desktop;
+    return desktop;
+}
+
+struct WindowsProcessOptions {
+    const std::vector<wchar_t>* environment{nullptr};
+    const std::wstring* desktop_name{nullptr};
+    bool utf16_output{false};
+};
+
+NativeProcessResult execute_hidden_windows_command_line(std::wstring command_line,
+                                                        const WindowsProcessOptions& options = {}) {
     NativeProcessResult result;
     if (command_line.empty())
         return result;
@@ -832,10 +902,18 @@ NativeProcessResult execute_hidden_windows_command_line(std::wstring command_lin
     startup_information.hStdOutput = output_write;
     startup_information.hStdError = output_write;
     startup_information.hStdInput = input_handle;
+    startup_information.lpDesktop = options.desktop_name == nullptr
+                                        ? nullptr
+                                        : const_cast<wchar_t*>(options.desktop_name->data());
+    DWORD creation_flags = CREATE_NO_WINDOW;
+    if (options.environment != nullptr)
+        creation_flags |= CREATE_UNICODE_ENVIRONMENT;
+    void* environment = options.environment == nullptr
+                            ? nullptr
+                            : const_cast<wchar_t*>(options.environment->data());
     PROCESS_INFORMATION process_information{};
-    if (CreateProcessW(nullptr, mutable_command_line.data(), nullptr, nullptr, TRUE,
-                       CREATE_NO_WINDOW, nullptr, nullptr, &startup_information,
-                       &process_information) == FALSE) {
+    if (CreateProcessW(nullptr, mutable_command_line.data(), nullptr, nullptr, TRUE, creation_flags,
+                       environment, nullptr, &startup_information, &process_information) == FALSE) {
         result.launch_error =
             "cannot start the C++ toolchain (Windows error " + std::to_string(GetLastError()) + ")";
         CloseHandle(input_handle);
@@ -865,13 +943,15 @@ NativeProcessResult execute_hidden_windows_command_line(std::wstring command_lin
                            GetExitCodeProcess(process_information.hProcess, &exit_code) != FALSE;
     CloseHandle(process_information.hProcess);
     result.exit_code = completed ? static_cast<int64_t>(exit_code) : int64_t{-1};
-    result.output = windows_text_to_utf8(result.output);
+    result.output = options.utf16_output ? windows_utf16_output_to_utf8(result.output)
+                                         : windows_text_to_utf8(result.output);
     if (output_truncated)
         result.output += "\n[toolchain output truncated after 512 KiB]";
     return result;
 }
 
-NativeProcessResult execute_hidden_windows_process(const std::vector<std::wstring>& arguments) {
+NativeProcessResult execute_hidden_windows_process(const std::vector<std::wstring>& arguments,
+                                                   const WindowsProcessOptions& options = {}) {
     if (arguments.empty() || arguments.front().empty())
         return {};
     std::wstring command_line;
@@ -880,23 +960,157 @@ NativeProcessResult execute_hidden_windows_process(const std::vector<std::wstrin
             command_line.push_back(L' ');
         command_line += quote_windows_argument(argument);
     }
-    return execute_hidden_windows_command_line(std::move(command_line));
+    return execute_hidden_windows_command_line(std::move(command_line), options);
 }
 
-NativeProcessResult execute_with_vcvars(const std::wstring& executable,
-                                        const std::vector<std::wstring>& arguments,
-                                        const std::filesystem::path& vcvars) {
-    std::wstring command = L"call " + quote_windows_argument(vcvars.wstring()) + L" >nul && " +
-                           quote_windows_argument(executable);
-    for (std::size_t index = 1; index < arguments.size(); ++index)
-        command += L" " + quote_windows_argument(arguments[index]);
-    // cmd.exe owns all text after /c. Applying C-runtime argv escaping to the complete payload
-    // inserts backslashes before its nested quotes; cmd treats those backslashes literally and
-    // never reaches cl.exe. Keep the control switches fixed and append the already quoted command
-    // as raw /c input instead.
-    std::wstring command_line = quote_windows_argument(L"cmd.exe") + L" /d /s /c ";
-    command_line += command;
-    return execute_hidden_windows_command_line(std::move(command_line));
+struct MsvcEnvironmentSnapshot {
+    std::vector<std::wstring> entries;
+    std::vector<wchar_t> block;
+    std::string diagnostic;
+
+    [[nodiscard]] bool valid() const { return !block.empty() && diagnostic.empty(); }
+};
+
+std::wstring environment_entry_name(const std::wstring& entry) {
+    const auto separator =
+        entry.empty() || entry.front() != L'=' ? entry.find(L'=') : entry.find(L'=', 1);
+    return separator == std::wstring::npos ? std::wstring{} : entry.substr(0, separator);
+}
+
+bool equal_windows_environment_name(const std::wstring& left, const std::wstring& right) {
+    if (left.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+        right.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        return false;
+    return CompareStringOrdinal(left.data(), static_cast<int>(left.size()), right.data(),
+                                static_cast<int>(right.size()), TRUE) == CSTR_EQUAL;
+}
+
+std::optional<std::wstring> snapshot_environment_value(const MsvcEnvironmentSnapshot& snapshot,
+                                                       const std::wstring& name) {
+    for (const auto& entry : snapshot.entries) {
+        if (!equal_windows_environment_name(environment_entry_name(entry), name))
+            continue;
+        const auto separator = entry.find(L'=');
+        if (separator != std::wstring::npos)
+            return entry.substr(separator + 1);
+    }
+    return std::nullopt;
+}
+
+MsvcEnvironmentSnapshot parse_msvc_environment(std::string output) {
+    MsvcEnvironmentSnapshot snapshot;
+    for (std::size_t begin = 0; begin <= output.size();) {
+        const auto end = output.find('\n', begin);
+        auto line =
+            output.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (!line.empty() && line.find('=') != std::string::npos) {
+            auto wide = utf8_to_wide(line);
+            if (!wide.empty())
+                snapshot.entries.push_back(std::move(wide));
+        }
+        if (end == std::string::npos)
+            break;
+        begin = end + 1;
+    }
+    std::sort(snapshot.entries.begin(), snapshot.entries.end(),
+              [](const auto& left, const auto& right) {
+                  return _wcsicmp(left.c_str(), right.c_str()) < 0;
+              });
+    snapshot.entries.erase(std::unique(snapshot.entries.begin(), snapshot.entries.end(),
+                                       [](const auto& left, const auto& right) {
+                                           return equal_windows_environment_name(
+                                               environment_entry_name(left),
+                                               environment_entry_name(right));
+                                       }),
+                           snapshot.entries.end());
+    if (snapshot.entries.empty()) {
+        snapshot.diagnostic = "Visual Studio environment bootstrap returned no variables";
+        return snapshot;
+    }
+    std::size_t block_size = 1;
+    for (const auto& entry : snapshot.entries)
+        block_size += entry.size() + 1;
+    snapshot.block.reserve(block_size);
+    for (const auto& entry : snapshot.entries) {
+        snapshot.block.insert(snapshot.block.end(), entry.begin(), entry.end());
+        snapshot.block.push_back(L'\0');
+    }
+    snapshot.block.push_back(L'\0');
+    return snapshot;
+}
+
+MsvcEnvironmentSnapshot capture_msvc_environment(const std::filesystem::path& vcvars) {
+    MsvcEnvironmentSnapshot snapshot;
+    auto& desktop = hidden_toolchain_desktop();
+    if (!desktop.available()) {
+        snapshot.diagnostic = "cannot create the isolated MSVC bootstrap desktop (Windows error " +
+                              std::to_string(desktop.creation_error()) + ")";
+        return snapshot;
+    }
+    std::wstring command_line = quote_windows_argument(L"cmd.exe") + L" /d /s /u /c ";
+    command_line += L"set \"VSCMD_SKIP_SENDTELEMETRY=1\" && "
+                    L"set \"VSCMD_SKIP_VCPKG_ACTIVATION=1\" && call ";
+    command_line += quote_windows_argument(vcvars.wstring());
+    command_line += L" >nul && set";
+    WindowsProcessOptions options;
+    options.desktop_name = &desktop.name();
+    options.utf16_output = true;
+    auto process_result = execute_hidden_windows_command_line(std::move(command_line), options);
+    if (process_result.exit_code != 0) {
+        snapshot.diagnostic = !process_result.launch_error.empty()
+                                  ? std::move(process_result.launch_error)
+                                  : "Visual Studio environment bootstrap failed with exit code " +
+                                        std::to_string(process_result.exit_code);
+        return snapshot;
+    }
+    return parse_msvc_environment(std::move(process_result.output));
+}
+
+std::shared_ptr<const MsvcEnvironmentSnapshot>
+cached_msvc_environment(const std::filesystem::path& vcvars) {
+    auto key = vcvars.wstring();
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](wchar_t value) { return static_cast<wchar_t>(std::towlower(value)); });
+    static std::mutex cache_mutex;
+    static std::unordered_map<std::wstring, std::shared_ptr<const MsvcEnvironmentSnapshot>> cache;
+    std::lock_guard<std::mutex> lock{cache_mutex};
+    const auto existing = cache.find(key);
+    if (existing != cache.end())
+        return existing->second;
+    auto snapshot =
+        std::make_shared<const MsvcEnvironmentSnapshot>(capture_msvc_environment(vcvars));
+    cache.emplace(std::move(key), snapshot);
+    return snapshot;
+}
+
+std::optional<std::wstring> resolve_msvc_executable(const std::wstring& executable,
+                                                    const MsvcEnvironmentSnapshot& environment) {
+    const std::filesystem::path requested{executable};
+    std::error_code error;
+    if (requested.has_parent_path() && std::filesystem::is_regular_file(requested, error))
+        return requested.wstring();
+    const auto path = snapshot_environment_value(environment, L"PATH");
+    if (!path)
+        return std::nullopt;
+    for (std::size_t begin = 0; begin <= path->size();) {
+        const auto end = path->find(L';', begin);
+        auto directory =
+            path->substr(begin, end == std::wstring::npos ? std::wstring::npos : end - begin);
+        if (directory.size() >= 2 && directory.front() == L'"' && directory.back() == L'"')
+            directory = directory.substr(1, directory.size() - 2);
+        if (!directory.empty()) {
+            const auto candidate = std::filesystem::path{directory} / requested;
+            error.clear();
+            if (std::filesystem::is_regular_file(candidate, error))
+                return candidate.wstring();
+        }
+        if (end == std::wstring::npos)
+            break;
+        begin = end + 1;
+    }
+    return std::nullopt;
 }
 #endif
 
@@ -916,20 +1130,31 @@ NativeProcessResult execute_native_process(const std::string& executable,
         wide_arguments.push_back(std::move(converted));
     }
     if (is_msvc_tool(std::filesystem::path{wide_executable})) {
-        static std::mutex discovery_mutex;
-        static std::optional<std::filesystem::path> cached_vcvars;
-        static bool discovery_complete = false;
-        std::optional<std::filesystem::path> vcvars;
-        {
-            std::lock_guard<std::mutex> lock{discovery_mutex};
-            if (!discovery_complete) {
-                cached_vcvars = find_vcvars_batch(std::filesystem::path{wide_executable});
-                discovery_complete = true;
+        if (!windows_environment(L"INCLUDE")) {
+            const auto vcvars = find_vcvars_batch(std::filesystem::path{wide_executable});
+            if (!vcvars) {
+                NativeProcessResult result;
+                result.launch_error = "cannot locate vcvars64.bat for the requested MSVC toolchain";
+                return result;
             }
-            vcvars = cached_vcvars;
+            const auto environment = cached_msvc_environment(*vcvars);
+            if (!environment->valid()) {
+                NativeProcessResult result;
+                result.launch_error = environment->diagnostic;
+                return result;
+            }
+            const auto resolved = resolve_msvc_executable(wide_executable, *environment);
+            if (!resolved) {
+                NativeProcessResult result;
+                result.launch_error = "cannot resolve '" + executable +
+                                      "' from the initialized Visual Studio environment";
+                return result;
+            }
+            wide_arguments.front() = *resolved;
+            WindowsProcessOptions options;
+            options.environment = &environment->block;
+            return execute_hidden_windows_process(wide_arguments, options);
         }
-        if (vcvars && !windows_environment(L"INCLUDE"))
-            return execute_with_vcvars(wide_executable, wide_arguments, *vcvars);
     }
     return execute_hidden_windows_process(wide_arguments);
 #else

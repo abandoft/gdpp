@@ -229,6 +229,9 @@ target_link_libraries(
     gdpp_godot_plugin
     PRIVATE gdpp::core gdpp::runtime godot::cpp Threads::Threads
 )
+if(WIN32)
+    target_link_libraries(gdpp_godot_plugin PRIVATE user32)
+endif()
 target_include_directories(
     gdpp_godot_plugin
     PRIVATE "${CMAKE_SOURCE_DIR}/src/integration/godot"
