@@ -55,6 +55,7 @@ ALLOWED_DEPENDENCIES = {
 }
 
 INCLUDE_PATTERN = re.compile(r'^\s*#\s*include\s+[<"]gdpp/([^>"]+)[>"]')
+DIRECT_GENERATED_VARIANT_PATTERN = re.compile(r"godot::Variant\((?!\))")
 
 
 def source_module(path: Path) -> str | None:
@@ -133,10 +134,21 @@ def validate_dependencies(errors: list[str]) -> None:
                 )
 
 
+def validate_generated_variant_boundaries(errors: list[str]) -> None:
+    generator = SOURCE_ROOT / "codegen" / "cpp_generator.cpp"
+    for line_number, line in enumerate(generator.read_text(encoding="utf-8").splitlines(), 1):
+        if DIRECT_GENERATED_VARIANT_PATTERN.search(line):
+            errors.append(
+                f"{generator.relative_to(ROOT)}:{line_number}: generated native-to-Variant "
+                "boundaries must use gdpp::runtime::to_variant"
+            )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_layout(errors)
     validate_dependencies(errors)
+    validate_generated_variant_boundaries(errors)
     if errors:
         print("GDPP architecture validation failed:", file=sys.stderr)
         for error in errors:
