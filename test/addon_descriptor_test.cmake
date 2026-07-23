@@ -44,6 +44,7 @@ endif()
 
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/export_plugin.gd" export_plugin)
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/build_progress.gd" build_progress)
+file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/native_build_job.gd" native_build_job)
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/plugin.gd" editor_plugin)
 file(READ "${GDPP_TEST_SOURCE_DIR}/src/integration/godot/compiler_service.cpp" compiler_service)
 string(FIND "${compiler_service}"
@@ -127,7 +128,7 @@ if(NOT visible_windows_spawn_offset EQUAL -1)
 endif()
 foreach(required_serial_build_contract IN ITEMS
         "for (std::size_t index = begin; index < end; ++index)"
-        "process_result ="
+        "auto process_result ="
         "toolchain output for '")
     string(FIND "${compiler_service}" "${required_serial_build_contract}"
         serial_build_offset)
@@ -139,7 +140,9 @@ foreach(required_serial_build_contract IN ITEMS
 endforeach()
 foreach(forbidden_parallel_build_contract IN ITEMS
         "hardware_concurrency()"
-        "worker_count")
+        "worker_count"
+        "std::thread worker"
+        "refresh_editor_display()")
     string(FIND "${compiler_service}" "${forbidden_parallel_build_contract}"
         parallel_build_offset)
     if(NOT parallel_build_offset EQUAL -1)
@@ -149,17 +152,19 @@ foreach(forbidden_parallel_build_contract IN ITEMS
     endif()
 endforeach()
 foreach(required_build_progress_contract IN ITEMS
-        "extends Window"
-        "transient_to_focused = true"
-        "exclusive = true"
+        "extends CanvasLayer"
+        "layer = 127"
         "func begin(stages: PackedStringArray) -> void:"
         "func set_active_stage(stage: String) -> void:"
         "func update(stage: String, phase: String, completed: int, total: int) -> void:"
+        "func refresh(snap_to_target := false) -> void:"
         "static func calculate_hierarchical_progress("
         "float(stage_index) + stage_progress"
         "float(phase_index) + item_progress"
-        "_fill.size = Vector2(_track.size.x * _displayed_progress, _track.size.y)"
-        "popup_centered(size)"
+        "_fill.scale = Vector2(maxf(_displayed_progress, 0.00001), 1.0)"
+        "get_last_exclusive_window()"
+        "DisplayServer.window_get_active_popup()"
+        "reparent(host_window, false)"
         "\"Preparing AOT export\""
         "\"Precompiling project scripts\""
         "\"Compiling project sources\""
@@ -173,10 +178,11 @@ foreach(required_build_progress_contract IN ITEMS
     endif()
 endforeach()
 foreach(forbidden_build_progress_contract IN ITEMS
-        "extends CanvasLayer"
+        "extends Window"
         "FILL_COLUMN_COUNT"
         "_fill_columns"
-        "set_translation_profile")
+        "set_translation_profile"
+        "_fill.size = Vector2(_track.size.x * _displayed_progress")
     string(FIND "${build_progress}" "${forbidden_build_progress_contract}"
         forbidden_build_progress_offset)
     if(NOT forbidden_build_progress_offset EQUAL -1)
@@ -185,19 +191,44 @@ foreach(forbidden_build_progress_contract IN ITEMS
             "${forbidden_build_progress_contract}")
     endif()
 endforeach()
+foreach(required_background_build_contract IN ITEMS
+        "extends RefCounted"
+        "compiler.prepare_project_build()"
+        "_thread = Thread.new()"
+        "_thread.start("
+        "while _thread.is_alive():"
+        "_thread.wait_to_finish()"
+        "_progress_mutex.lock()"
+        "_dispatch_progress(progress_callback)"
+        "_advance_frame(frame_callback, false)"
+        "_advance_frame(frame_callback, true)"
+        "DisplayServer.process_events()"
+        "RenderingServer.force_draw()"
+        "compiler.compile_project("
+        "compiler.execute_project_build(")
+    string(FIND "${native_build_job}" "${required_background_build_contract}"
+        background_build_offset)
+    if(background_build_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Responsive background native-build contract is missing: "
+            "${required_background_build_contract}")
+    endif()
+endforeach()
 foreach(required_progress_integration IN ITEMS
         "_export_plugin.configure(_compiler, _build_progress)"
         "_build_progress.begin(PackedStringArray(["
         "_build_progress.set_active_stage("
         "_build_progress.finish()"
         "Callable(self, \"_on_native_build_progress\")"
+        "NATIVE_BUILD_JOB.new()"
         "godot::D_METHOD(\"compile_project\", \"project_root\""
+        "godot::D_METHOD(\"prepare_project_build\")"
         "options.progress_callback ="
         "ProjectCompilePhase::translate"
         "godot::D_METHOD(\"execute_project_build\", \"build_plan\", \"progress_callback\")"
         "report_build_progress(progress_callback, phase")
     string(FIND
-        "${editor_plugin}\n${export_plugin}\n${compiler_service}"
+        "${editor_plugin}\n${export_plugin}\n${native_build_job}\n${compiler_service}"
         "${required_progress_integration}"
         progress_integration_offset)
     if(progress_integration_offset EQUAL -1)
