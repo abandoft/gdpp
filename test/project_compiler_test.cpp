@@ -1980,9 +1980,9 @@ TEST_CASE("project compiler preserves cross-script call contracts through cache 
     REQUIRE(consumer != initial.scripts.end());
     const auto initial_source =
         read_text(options.output_directory / "generated" / consumer->source_file_name);
-    REQUIRE(initial_source.find(
-                "gdpp::runtime::packed_array_storage<godot::PackedByteArray>("
-                "godot::Variant(_gdpp_call_argument_") != std::string::npos);
+    REQUIRE(initial_source.find("gdpp::runtime::packed_array_storage<godot::PackedByteArray>("
+                                "gdpp::runtime::to_variant(_gdpp_call_argument_") !=
+            std::string::npos);
 
     write_text(root / "parser.gd",
                "extends RefCounted\n"
@@ -2001,9 +2001,9 @@ TEST_CASE("project compiler preserves cross-script call contracts through cache 
     REQUIRE(changed_consumer != changed.scripts.end());
     const auto changed_source =
         read_text(options.output_directory / "generated" / changed_consumer->source_file_name);
-    REQUIRE(changed_source.find(
-                "gdpp::runtime::packed_array_storage<godot::PackedInt32Array>("
-                "godot::Variant(_gdpp_call_argument_") != std::string::npos);
+    REQUIRE(changed_source.find("gdpp::runtime::packed_array_storage<godot::PackedInt32Array>("
+                                "gdpp::runtime::to_variant(_gdpp_call_argument_") !=
+            std::string::npos);
 }
 
 TEST_CASE("project symbol signature changes invalidate dependent script caches") {

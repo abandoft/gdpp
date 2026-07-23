@@ -1718,7 +1718,7 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
     const bool source_external = source.kind == TypeKind::object && script_symbols_ &&
                                  script_symbols_->find_external(source.name);
     if (target_external)
-        return "godot::Variant(" + value + ")";
+        return "gdpp::runtime::to_variant(" + value + ")";
     if (target == source)
         return value;
     // Project symbol refinement can express the same nested enum through its source-qualified
@@ -1735,20 +1735,21 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
     }
     if (describe_container_type(target)) {
         if (is_explicitly_typed_container(target) && target != source) {
-            return "gdpp::runtime::strict_typed_storage<" + cpp_type(target) + ">(godot::Variant(" +
-                   value + "))";
+            return "gdpp::runtime::strict_typed_storage<" + cpp_type(target) +
+                   ">(gdpp::runtime::to_variant(" + value + "))";
         }
-        return cpp_type(target) + "(godot::Variant(" + value + "))";
+        return cpp_type(target) + "(gdpp::runtime::to_variant(" + value + "))";
     }
     if (target.is_packed_array()) {
         return "gdpp::runtime::packed_array_storage<godot::" + target.name +
-               ">(godot::Variant(" + value + "))";
+               ">(gdpp::runtime::to_variant(" + value + "))";
     }
     if (target.kind == TypeKind::object && source.kind == TypeKind::object &&
         target.name != source.name) {
         auto source_object = value;
         if (source_external)
-            source_object = "(godot::Variant(" + source_object + ")).get_validated_object()";
+            source_object =
+                "(gdpp::runtime::to_variant(" + source_object + ")).get_validated_object()";
         const bool source_ref_counted = is_ref_counted_object(source);
         if (source_ref_counted && !source_external)
             source_object = "(" + source_object + ").ptr()";
@@ -1781,7 +1782,7 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
     }
     const auto conversion = classify_conversion(target, source);
     if (conversion == ConversionKind::implicit || conversion == ConversionKind::dynamic) {
-        return "static_cast<" + cpp_type(target) + ">(godot::Variant(" + value + "))";
+        return "static_cast<" + cpp_type(target) + ">(gdpp::runtime::to_variant(" + value + "))";
     }
     diagnostics_.error("GDS3008",
                        "unresolved conversion from " + source.display_name() + " to " +
@@ -1798,15 +1799,15 @@ std::string CodeGenerator::emit_explicit_conversion(const Type& target, const Ty
         return emit_conversion(target, source, std::move(value));
     if (is_explicitly_typed_container(target) && target != source) {
         const auto base = target.kind == TypeKind::array ? "godot::Array" : "godot::Dictionary";
-        return std::string{base} + "(godot::Variant(" + value + "))";
+        return std::string{base} + "(gdpp::runtime::to_variant(" + value + "))";
     }
     if (target.kind == TypeKind::enumeration)
         return emit_conversion(target, source, std::move(value));
     const auto target_variant = variant_type(target);
     if (target_variant == "godot::Variant::NIL")
         return emit_conversion(target, source, std::move(value));
-    return "gdpp::runtime::explicit_variant_cast<" + cpp_type(target) + ">" + "(godot::Variant(" +
-           value + "), " + target_variant + ")";
+    return "gdpp::runtime::explicit_variant_cast<" + cpp_type(target) +
+           ">(gdpp::runtime::to_variant(" + value + "), " + target_variant + ")";
 }
 
 std::string CodeGenerator::emit_parameter_default(const ir::Parameter& parameter) const {
@@ -1845,7 +1846,7 @@ CodeGenerator::emit_parameter_default_initializers(const std::vector<ir::Paramet
                 !native_type.empty() && native_type.back() == '*' ? "nullptr" : native_type + "{}";
         }
         if (parameter.type.is_dynamic())
-            fallback = "godot::Variant(" + fallback + ")";
+            fallback = "gdpp::runtime::to_variant(" + fallback + ")";
         const auto supplied =
             emit_conversion(parameter.type, {TypeKind::variant, "Variant"}, native_name);
         result += prefix + cpp_type(parameter.type) + " " + source_name + " = " +
@@ -1929,10 +1930,10 @@ std::string CodeGenerator::emit_method_callback_definition(
         const auto native_type = parameter_native_type(parameter);
         result << "    " << native_type << ' ' << local << " = ";
         if (parameter.default_value) {
-            result << "p_argument_count > " << index << " ? godot::Variant(*positional[" << index
-                   << "]) : gdpp::runtime::default_argument();\n";
+            result << "p_argument_count > " << index << " ? gdpp::runtime::to_variant(*positional["
+                   << index << "]) : gdpp::runtime::default_argument();\n";
         } else if (parameter.type.is_dynamic()) {
-            result << "godot::Variant(*positional[" << index << "]);\n";
+            result << "gdpp::runtime::to_variant(*positional[" << index << "]);\n";
         } else {
             result << "godot::VariantCasterAndValidate<" << native_type
                    << ">::cast(positional.data(), " << index << ", *r_error);\n"
@@ -2026,7 +2027,7 @@ std::string CodeGenerator::emit_api_argument(std::string_view api_type,
             if (position + 1 >= cpp_name.size() || cpp_name[position + 1] != ':')
                 cpp_name.insert(position, 1, ':');
         }
-        const auto integer = "static_cast<int64_t>(godot::Variant(" + value + "))";
+        const auto integer = "static_cast<int64_t>(gdpp::runtime::to_variant(" + value + "))";
         if (bitfield)
             return "godot::BitField<godot::" + cpp_name + ">(" + integer + ")";
         return "static_cast<godot::" + cpp_name + ">(" + integer + ")";
@@ -2361,19 +2362,19 @@ std::string CodeGenerator::emit_truthy(const ir::Expression& expression) const {
     case TruthinessKind::dynamic_value:
         if (expression.type.kind == TypeKind::boolean)
             return "static_cast<bool>(" + value + ")";
-        return "(godot::Variant(" + value + ")).booleanize()";
+        return "(gdpp::runtime::to_variant(" + value + ")).booleanize()";
     case TruthinessKind::object_validity:
         break;
     }
     if (expression.type.kind == TypeKind::object) {
         if (script_symbols_ && script_symbols_->find_external(expression.type.name))
-            return "(godot::Variant(" + value + ")).booleanize()";
+            return "(gdpp::runtime::to_variant(" + value + ")).booleanize()";
         const bool ref_counted = is_ref_counted_object(expression.type);
         if (value == "this")
             return "true";
         return ref_counted ? "(" + value + ").is_valid()" : "(" + value + " != nullptr)";
     }
-    return "(godot::Variant(" + value + ")).booleanize()";
+    return "(gdpp::runtime::to_variant(" + value + ")).booleanize()";
 }
 
 std::string CodeGenerator::emit_integer_binary(const ir::Expression& expression) const {
@@ -2454,7 +2455,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         auto path = expression.value;
         if (!path.empty() && path.front() == '$')
             path.erase(path.begin());
-        return "godot::Variant(" +
+        return "gdpp::runtime::to_variant(" +
                (attached_script_ ? godot_owner_expression() + "->" : std::string{}) +
                "get_node<godot::Node>(" + godot_node_path(path) + "))";
     }
@@ -2480,11 +2481,11 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         if (expression.resolution == ir::ResolutionKind::external_type)
             return godot_string_name(expression.resolved_owner);
         if (expression.resolution == ir::ResolutionKind::external_callable)
-            return "gdpp::runtime::external_callable(godot::Variant(" + self_object_expression() +
-                   "), " + godot_string_name(expression.value) + ")";
+            return "gdpp::runtime::external_callable(gdpp::runtime::to_variant(" +
+                   self_object_expression() + "), " + godot_string_name(expression.value) + ")";
         if (expression.resolution == ir::ResolutionKind::external_signal)
-            return "gdpp::runtime::external_signal(godot::Variant(" + self_object_expression() +
-                   "), " + godot_string_name(expression.value) + ")";
+            return "gdpp::runtime::external_signal(gdpp::runtime::to_variant(" +
+                   self_object_expression() + "), " + godot_string_name(expression.value) + ")";
         if (expression.resolution == ir::ResolutionKind::script_type)
             return godot_string_name(expression.resolved_owner);
         if (expression.resolution == ir::ResolutionKind::script_resource)
@@ -2534,7 +2535,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                     "] = _gdpp_static_arguments[index]; ";
             }
             if (function.return_type.kind != TypeKind::void_type)
-                result += "return godot::Variant(";
+                result += "return gdpp::runtime::to_variant(";
             result += current_native_class_name_ + "::" + sanitize_identifier(function.name) + "(";
             for (std::size_t index = 0; index < function.parameters.size(); ++index) {
                 if (index != 0)
@@ -2543,7 +2544,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 const auto indexed = "_gdpp_static_arguments[" + std::to_string(index) + "]";
                 if (parameter.default_value) {
                     result += "_gdpp_static_arguments.size() > " + std::to_string(index) +
-                              " ? godot::Variant(" + indexed +
+                              " ? gdpp::runtime::to_variant(" + indexed +
                               ") : gdpp::runtime::default_argument()";
                 } else {
                     result +=
@@ -2596,8 +2597,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             return (attached_script_ ? godot_owner_expression() + "->" : std::string{}) +
                    sanitize_identifier(expression.value);
         if (expression.resolution == ir::ResolutionKind::dynamic_property)
-            return "gdpp::runtime::get_named(godot::Variant(" + self_object_expression() + "), " +
-                   godot_string_name(expression.value) + ")";
+            return "gdpp::runtime::get_named(gdpp::runtime::to_variant(" +
+                   self_object_expression() + "), " + godot_string_name(expression.value) + ")";
         if (expression.resolution == ir::ResolutionKind::global_constant ||
             expression.resolution == ir::ResolutionKind::global_enum_value ||
             expression.resolution == ir::ResolutionKind::global_enum_type)
@@ -2730,7 +2731,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             }
             if (target.type.kind == TypeKind::object) {
                 if (target.resolution == ir::ResolutionKind::external_type) {
-                    return type_test("gdpp::runtime::is_external_instance(godot::Variant(" +
+                    return type_test("gdpp::runtime::is_external_instance("
+                                     "gdpp::runtime::to_variant(" +
                                      emitted_value + "), " +
                                      godot_string_name(target.resolved_owner) + ")");
                 }
@@ -2751,8 +2753,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                     const bool external_value =
                         script_symbols_ && script_symbols_->find_external(value.type.name);
                     if (external_value)
-                        object_value =
-                            "(godot::Variant(" + object_value + ")).get_validated_object()";
+                        object_value = "(gdpp::runtime::to_variant(" + object_value +
+                                       ")).get_validated_object()";
                     const bool ref_counted = is_ref_counted_object(value.type);
                     if (ref_counted && !external_value && emitted_value != "this")
                         object_value = "(" + object_value + ").ptr()";
@@ -2850,7 +2852,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                     result += "if (!static_cast<bool>(" + left + ")) return false; ";
                 else
                     result += "if (static_cast<bool>(" + left + ")) return true; ";
-                return result + "return static_cast<bool>(godot::Variant(" +
+                return result + "return static_cast<bool>(gdpp::runtime::to_variant(" +
                        emit_expression(*expression.operands.at(1)) + ")); }())";
             }
             std::string runtime_function{"gdpp::runtime::binary"};
@@ -2888,7 +2890,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         const auto emit_branch = [&](const ir::Expression& branch) {
             auto value = emit_expression(branch);
             if (expression.type.is_dynamic())
-                return "godot::Variant(" + value + ")";
+                return "gdpp::runtime::to_variant(" + value + ")";
             return emit_conversion(expression.type, branch.type, std::move(value));
         };
         return "(" + emit_truthy(*expression.operands.at(1)) + " ? " +
@@ -3237,8 +3239,9 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 } else if (argument.resolution == ir::ResolutionKind::inner_type) {
                     type_name = inner_cpp_type(argument.resolved_owner);
                 }
-                return type_name.empty() ? emit_expression(argument)
-                                         : "godot::Variant(" + godot_string_name(type_name) + ")";
+                return type_name.empty()
+                           ? emit_expression(argument)
+                           : "gdpp::runtime::to_variant(" + godot_string_name(type_name) + ")";
             };
             const bool zero_arity_vararg = utility_function && utility_function->is_vararg &&
                                            utility_function->required_arguments == 0 &&
@@ -3349,7 +3352,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 }
                 result += self_object_expression() + "->emit_signal(" + signal_name;
                 for (std::size_t index = 1; index < expression.operands.size(); ++index) {
-                    result += ", _gdpp_signal_argument_" + suffix + "_" + std::to_string(index - 1);
+                    result += ", gdpp::runtime::to_variant(_gdpp_signal_argument_" + suffix + "_" +
+                              std::to_string(index - 1) + ")";
                 }
                 return result + "); }())";
             }
@@ -3370,7 +3374,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             for (std::size_t index = 1; index < expression.operands.size(); ++index) {
                 if (index > 1)
                     result += ", ";
-                result += "_gdpp_callable_argument_" + suffix + "_" + std::to_string(index - 1);
+                result += "gdpp::runtime::to_variant(_gdpp_callable_argument_" + suffix + "_" +
+                          std::to_string(index - 1) + ")";
             }
             return result + "); }())";
         }
@@ -3380,16 +3385,16 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             const auto target_name = "_gdpp_dynamic_target_" + suffix;
             const auto method_name = "_gdpp_dynamic_method_" + suffix;
             std::string result = "([&]() -> godot::Variant { godot::Variant " + target_name +
-                                 " = " +
+                                 " = gdpp::runtime::to_variant(" +
                                  (callee.kind == ir::ExpressionKind::identifier
                                       ? self_object_expression()
                                       : emit_expression(*callee.operands.at(0))) +
-                                 "; static const godot::StringName " + method_name + " = " +
+                                 "); static const godot::StringName " + method_name + " = " +
                                  godot_string_name(callee.value) + "; ";
             for (std::size_t index = 1; index < expression.operands.size(); ++index) {
                 result += "const godot::Variant _gdpp_dynamic_argument_" + suffix + "_" +
-                          std::to_string(index - 1) + " = " +
-                          emit_expression(*expression.operands[index]) + "; ";
+                          std::to_string(index - 1) + " = gdpp::runtime::to_variant(" +
+                          emit_expression(*expression.operands[index]) + "); ";
             }
             result += "return gdpp::runtime::call_dynamic(" + target_name + ", " + method_name;
             for (std::size_t index = 1; index < expression.operands.size(); ++index) {
@@ -3441,7 +3446,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                           std::to_string(rest_count) + "); ";
                 for (std::size_t index = 0; index < rest_count; ++index) {
                     result += rest + "[" + std::to_string(index) +
-                              "] = godot::Variant("
+                              "] = gdpp::runtime::to_variant("
                               "_gdpp_call_argument_" +
                               suffix + "_" + std::to_string(vararg_positional_count + index) +
                               "); ";
@@ -3529,8 +3534,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 current_source_path_ + ":" + std::to_string(callee.span.begin.line);
             const auto message = godot_string("Cannot call '" + callee.value +
                                               "' on a null or freed object at " + location);
-            result +=
-                "if (!gdpp::runtime::is_instance_valid(godot::Variant(" + receiver_name + "))) { ";
+            result += "if (!gdpp::runtime::is_instance_valid(gdpp::runtime::to_variant(" +
+                      receiver_name + "))) { ";
             result += !expression.coroutine_call && expression.type.kind == TypeKind::void_type
                           ? "ERR_FAIL_EDMSG(" + message + "); "
                           : "ERR_FAIL_V_EDMSG({}, " + message + "); ";
@@ -3560,7 +3565,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                       std::to_string(rest_count) + "); ";
             for (std::size_t index = 0; index < rest_count; ++index) {
                 result += rest_name + "[" + std::to_string(index) +
-                          "] = godot::Variant("
+                          "] = gdpp::runtime::to_variant("
                           "_gdpp_call_argument_" +
                           suffix + "_" + std::to_string(vararg_positional_count + index) + "); ";
             }
@@ -3637,7 +3642,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             return builtin_constant_expression(expression.resolved_owner);
         if (expression.resolution == ir::ResolutionKind::script_runtime_static_field) {
             const auto access = expression.resolved_owner + "::" + expression.getter + "()";
-            return "(gdpp::runtime::is_editor_hint() ? godot::Variant() : godot::Variant(" +
+            return "(gdpp::runtime::is_editor_hint() ? godot::Variant() : "
+                   "gdpp::runtime::to_variant(" +
                    access + "))";
         }
         const auto object = expression.operands.at(0)->resolution == ir::ResolutionKind::script_type
@@ -3672,7 +3678,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             const auto message = godot_string("Cannot access member '" + expression.value +
                                               "' on a null or freed object at " + location);
             return "([&]() -> " + cpp_type(expression.type) + " { auto &&" + receiver_name + " = " +
-                   object + "; if (!gdpp::runtime::is_instance_valid(godot::Variant(" +
+                   object + "; if (!gdpp::runtime::is_instance_valid(gdpp::runtime::to_variant(" +
                    receiver_name + "))) { ERR_FAIL_V_EDMSG({}, " + message + "); } return " +
                    access + "; }())";
         };
@@ -3962,7 +3968,7 @@ std::string CodeGenerator::coroutine_return(const std::size_t indentation, std::
                                             const bool continuation_context) const {
     const auto prefix = indent(indentation);
     std::string result = prefix + "gdpp::runtime::complete_coroutine(" + current_coroutine_state_ +
-                         ", godot::Variant(" + std::move(value) + "));\n";
+                         ", gdpp::runtime::to_variant(" + std::move(value) + "));\n";
     if (continuation_context)
         return result + prefix + "return;\n";
     return result + prefix + "return gdpp::runtime::coroutine_result(" + current_coroutine_state_ +
@@ -4464,8 +4470,8 @@ std::string CodeGenerator::emit_match_pattern(const ir::MatchPattern& pattern,
         const auto suffix = std::to_string(temporary_counter_++);
         const auto actual = "_gdpp_pattern_actual_" + suffix;
         const auto expected = "_gdpp_pattern_expected_" + suffix;
-        return "([&]() -> bool { const godot::Variant " + actual + " = godot::Variant(" +
-               candidate + "); const godot::Variant " + expected + " = godot::Variant(" +
+        return "([&]() -> bool { const godot::Variant " + actual + " = gdpp::runtime::to_variant(" +
+               candidate + "); const godot::Variant " + expected + " = gdpp::runtime::to_variant(" +
                emit_expression(*pattern.expression) +
                "); return static_cast<bool>(gdpp::runtime::binary(" + "godot::Variant::OP_EQUAL, " +
                actual + ", " + expected + ")); }())";
@@ -4481,7 +4487,7 @@ std::string CodeGenerator::emit_match_pattern(const ir::MatchPattern& pattern,
             diagnostics_.error("GDS3005", "match binding has no native storage slot", pattern.span);
             return "false";
         }
-        return "([&]() -> bool { " + found->slot + " = godot::Variant(" + candidate +
+        return "([&]() -> bool { " + found->slot + " = gdpp::runtime::to_variant(" + candidate +
                "); return true; }())";
     }
     case ir::MatchPatternKind::array: {
@@ -4491,11 +4497,12 @@ std::string CodeGenerator::emit_match_pattern(const ir::MatchPattern& pattern,
         const bool has_rest =
             !pattern.elements.empty() && pattern.elements.back().kind == ir::MatchPatternKind::rest;
         const auto fixed_size = pattern.elements.size() - (has_rest ? 1U : 0U);
-        std::string result =
-            "([&]() -> bool { const godot::Variant " + actual + " = godot::Variant(" + candidate +
-            "); if (" + actual + ".get_type() != godot::Variant::ARRAY) return false; " +
-            "const godot::Array " + array + " = " + actual + "; if (" + array + ".size() " +
-            (has_rest ? "< " : "!= ") + std::to_string(fixed_size) + ") return false; ";
+        std::string result = "([&]() -> bool { const godot::Variant " + actual +
+                             " = gdpp::runtime::to_variant(" + candidate + "); if (" + actual +
+                             ".get_type() != godot::Variant::ARRAY) return false; " +
+                             "const godot::Array " + array + " = " + actual + "; if (" + array +
+                             ".size() " + (has_rest ? "< " : "!= ") + std::to_string(fixed_size) +
+                             ") return false; ";
         for (std::size_t index = 0; index < fixed_size; ++index) {
             result += "if (!(" +
                       emit_match_pattern(pattern.elements[index],
@@ -4513,14 +4520,14 @@ std::string CodeGenerator::emit_match_pattern(const ir::MatchPattern& pattern,
                               pattern.elements.back().kind == ir::MatchPatternKind::rest;
         const auto fixed_size = pattern.elements.size() - (has_rest ? 1U : 0U);
         std::string result = "([&]() -> bool { const godot::Variant " + actual +
-                             " = godot::Variant(" + candidate + "); if (" + actual +
+                             " = gdpp::runtime::to_variant(" + candidate + "); if (" + actual +
                              ".get_type() != godot::Variant::DICTIONARY) return false; " +
                              "const godot::Dictionary " + dictionary + " = " + actual + "; if (" +
                              dictionary + ".size() " + (has_rest ? "< " : "!= ") +
                              std::to_string(fixed_size) + ") return false; ";
         for (std::size_t index = 0; index < fixed_size; ++index) {
             const auto key = "_gdpp_pattern_key_" + std::to_string(temporary_counter_++);
-            result += "const godot::Variant " + key + " = godot::Variant(" +
+            result += "const godot::Variant " + key + " = gdpp::runtime::to_variant(" +
                       emit_expression(*pattern.keys[index]) + "); if (!" + dictionary + ".has(" +
                       key + ")) return false; ";
             if (pattern.elements[index].kind != ir::MatchPatternKind::wildcard) {
@@ -4550,7 +4557,7 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
         if (in_callable_lambda_) {
             return prefix + "return " +
                    (statement.expression
-                        ? "godot::Variant(" +
+                        ? "gdpp::runtime::to_variant(" +
                               emit_conversion(current_return_type_, statement.expression->type,
                                               emit_expression(*statement.expression)) +
                               ")"
@@ -5974,7 +5981,7 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                 }
                 const auto argument_name = "_gdpp_engine_argument_" + std::to_string(index);
                 if (parameter.default_value) {
-                    call += "godot::Variant(" + argument_name + ")";
+                    call += "gdpp::runtime::to_variant(" + argument_name + ")";
                 } else if (const auto* argument = api_.argument(*engine_virtual, index)) {
                     call += emit_conversion(parameter.type, type_from_godot_api(argument->type),
                                             argument_name);
@@ -6454,13 +6461,15 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     }
     header << "template <typename T> struct ScriptResource {\n"
            << "    operator godot::Variant() const {\n"
-           << "        return godot::Variant(godot::StringName(T::get_class_static()));\n"
+           << "        return gdpp::runtime::to_variant("
+              "godot::StringName(T::get_class_static()));\n"
            << "    }\n"
            << "    template <typename... Args>\n"
            << "    static auto instantiate(Args &&...args) {\n"
            << "        if constexpr (T::_gdpp_attached) {\n"
            << "            godot::Array gdpp_arguments;\n"
-           << "            (gdpp_arguments.push_back(godot::Variant(std::forward<Args>(args))), "
+           << "            (gdpp_arguments.push_back("
+              "gdpp::runtime::to_variant(std::forward<Args>(args))), "
               "...);\n"
            << "            godot::Variant instance = gdpp::runtime::instantiate_attached_script("
               "godot::String(T::_gdpp_source_path), gdpp_arguments);\n"
@@ -7217,7 +7226,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                    << ";\n";
             if (!variable.initializer || editor_safe_initializer(*variable.initializer)) {
                 source << "        property.has_default = true;\n"
-                       << "        property.default_value = godot::Variant(";
+                       << "        property.default_value = gdpp::runtime::to_variant(";
                 if (variable.initializer) {
                     source << emit_conversion(variable.type, variable.initializer->type,
                                               emit_expression(*variable.initializer));
@@ -7245,7 +7254,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                 source << "        method.flags |= GDEXTENSION_METHOD_FLAG_VARARG;\n";
             for (const auto& parameter : function.parameters) {
                 if (parameter.default_value)
-                    source << "        method.default_arguments.push_back(godot::Variant("
+                    source << "        method.default_arguments.push_back("
+                              "gdpp::runtime::to_variant("
                            << emit_expression(*parameter.default_value) << "));\n";
             }
             source << "        descriptor.methods.push_back(std::move(method));\n"
@@ -7262,7 +7272,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                 continue;
             const auto name = sanitize_identifier(variable.name);
             source << "    descriptor.constants[" << godot_string_name(variable.name)
-                   << "] = godot::Variant("
+                   << "] = gdpp::runtime::to_variant("
                    << (managed_constant_field(variable) ? name + "()" : name) << ");\n";
         }
         for (const auto& enumeration : module.enums) {
@@ -7399,7 +7409,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                 }
                 const auto argument_name = "_gdpp_engine_argument_" + std::to_string(index);
                 if (parameter.default_value) {
-                    call += "godot::Variant(" + argument_name + ")";
+                    call += "gdpp::runtime::to_variant(" + argument_name + ")";
                 } else if (const auto* argument = api_.argument(*engine_virtual, index)) {
                     call += emit_conversion(parameter.type, type_from_godot_api(argument->type),
                                             argument_name);
