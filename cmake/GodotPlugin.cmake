@@ -48,8 +48,17 @@ function(gdpp_add_sdk_binding target_name api_version godot_target output_variab
     # hundreds of megabytes without changing the GDExtension ABI used by exported games.
     if(godot_target STREQUAL "template_release")
         set(binding_build_type Release)
+        set(binding_build_config Release)
+    elseif(CMAKE_CONFIGURATION_TYPES)
+        set(binding_build_type "$<CONFIG>")
+        set(binding_build_config "$<CONFIG>")
     else()
         set(binding_build_type "${CMAKE_BUILD_TYPE}")
+        set(binding_build_config "${CMAKE_BUILD_TYPE}")
+    endif()
+    if(binding_build_type STREQUAL "")
+        set(binding_build_type Debug)
+        set(binding_build_config Debug)
     endif()
     set(configure_arguments
         -DCMAKE_BUILD_TYPE=${binding_build_type}
@@ -86,7 +95,8 @@ function(gdpp_add_sdk_binding target_name api_version godot_target output_variab
         ${generator_arguments}
         LIST_SEPARATOR "|"
         CMAKE_ARGS ${configure_arguments}
-        BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR> --target godot-cpp --parallel
+        BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR>
+                      --config "${binding_build_config}" --target godot-cpp --parallel
         INSTALL_COMMAND ""
         UPDATE_COMMAND ""
     )
@@ -198,6 +208,9 @@ endif()
 set(GDPP_EXAMPLE_DIRECTORY "${CMAKE_SOURCE_DIR}/example")
 set(GDPP_ADDON_DIRECTORY "${GDPP_EXAMPLE_DIRECTORY}/addons/gdpp")
 set(GDPP_EXTENSION_OUTPUT "${GDPP_ADDON_DIRECTORY}/binary")
+# A generator expression prevents multi-config generators from silently appending Debug/Release
+# below the install-ready add-on directory.
+set(GDPP_EXTENSION_OUTPUT_FLAT "${GDPP_EXTENSION_OUTPUT}/$<0:>")
 set(GDPP_PROJECT_BUILD_ROOT "${GDPP_ADDON_DIRECTORY}/build")
 file(MAKE_DIRECTORY
     "${GDPP_ADDON_DIRECTORY}"
@@ -243,14 +256,17 @@ elseif(APPLE)
     target_link_options(gdpp_godot_plugin PRIVATE
         "LINKER:-exported_symbols_list,${CMAKE_BINARY_DIR}/generated/gdpp/compiler.exports.macos")
 endif()
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    if(APPLE)
-        target_link_options(gdpp_godot_plugin PRIVATE "LINKER:-dead_strip" "LINKER:-x")
-    elseif(UNIX)
-        target_link_options(gdpp_godot_plugin PRIVATE "LINKER:-s")
-    elseif(MSVC)
-        target_link_options(gdpp_godot_plugin PRIVATE /OPT:REF /OPT:ICF /INCREMENTAL:NO)
-    endif()
+if(APPLE)
+    target_link_options(gdpp_godot_plugin PRIVATE
+        "$<$<CONFIG:Release>:LINKER:-dead_strip>"
+        "$<$<CONFIG:Release>:LINKER:-x>")
+elseif(UNIX)
+    target_link_options(gdpp_godot_plugin PRIVATE "$<$<CONFIG:Release>:LINKER:-s>")
+elseif(MSVC)
+    target_link_options(gdpp_godot_plugin PRIVATE
+        "$<$<CONFIG:Release>:/OPT:REF>"
+        "$<$<CONFIG:Release>:/OPT:ICF>"
+        "$<$<CONFIG:Release>:/INCREMENTAL:NO>")
 endif()
 target_compile_definitions(
     gdpp_godot_plugin
@@ -265,9 +281,9 @@ set_target_properties(
     gdpp_godot_plugin
     PROPERTIES
         OUTPUT_NAME "gdpp_compiler.${GDPP_PLATFORM}.${GDPP_ARCH}"
-        LIBRARY_OUTPUT_DIRECTORY "${GDPP_EXTENSION_OUTPUT}"
-        RUNTIME_OUTPUT_DIRECTORY "${GDPP_EXTENSION_OUTPUT}"
-        ARCHIVE_OUTPUT_DIRECTORY "${GDPP_EXTENSION_OUTPUT}"
+        LIBRARY_OUTPUT_DIRECTORY "${GDPP_EXTENSION_OUTPUT_FLAT}"
+        RUNTIME_OUTPUT_DIRECTORY "${GDPP_EXTENSION_OUTPUT_FLAT}"
+        ARCHIVE_OUTPUT_DIRECTORY "${GDPP_EXTENSION_OUTPUT_FLAT}"
 )
 
 if(GDPP_BUILD_TESTS)
@@ -395,22 +411,25 @@ elseif(APPLE)
     target_link_options(gdpp_fallback PRIVATE
         "LINKER:-exported_symbols_list,${CMAKE_BINARY_DIR}/generated/gdpp/fallback.exports.macos")
 endif()
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    if(APPLE)
-        target_link_options(gdpp_fallback PRIVATE "LINKER:-dead_strip" "LINKER:-x")
-    elseif(UNIX)
-        target_link_options(gdpp_fallback PRIVATE "LINKER:-s")
-    elseif(MSVC)
-        target_link_options(gdpp_fallback PRIVATE /OPT:REF /OPT:ICF /INCREMENTAL:NO)
-    endif()
+if(APPLE)
+    target_link_options(gdpp_fallback PRIVATE
+        "$<$<CONFIG:Release>:LINKER:-dead_strip>"
+        "$<$<CONFIG:Release>:LINKER:-x>")
+elseif(UNIX)
+    target_link_options(gdpp_fallback PRIVATE "$<$<CONFIG:Release>:LINKER:-s>")
+elseif(MSVC)
+    target_link_options(gdpp_fallback PRIVATE
+        "$<$<CONFIG:Release>:/OPT:REF>"
+        "$<$<CONFIG:Release>:/OPT:ICF>"
+        "$<$<CONFIG:Release>:/INCREMENTAL:NO>")
 endif()
 set_target_properties(
     gdpp_fallback
     PROPERTIES
         OUTPUT_NAME "gdpp_fallback.${GDPP_PLATFORM}.${GDPP_ARCH}"
-        LIBRARY_OUTPUT_DIRECTORY "${GDPP_EXTENSION_OUTPUT}"
-        RUNTIME_OUTPUT_DIRECTORY "${GDPP_EXTENSION_OUTPUT}"
-        ARCHIVE_OUTPUT_DIRECTORY "${GDPP_EXTENSION_OUTPUT}"
+        LIBRARY_OUTPUT_DIRECTORY "${GDPP_EXTENSION_OUTPUT_FLAT}"
+        RUNTIME_OUTPUT_DIRECTORY "${GDPP_EXTENSION_OUTPUT_FLAT}"
+        ARCHIVE_OUTPUT_DIRECTORY "${GDPP_EXTENSION_OUTPUT_FLAT}"
 )
 gdpp_set_project_warnings(gdpp_fallback)
 
@@ -421,16 +440,23 @@ if(GDPP_PLATFORM STREQUAL "windows")
 else()
     set(GDPP_SDK_MSVC_RUNTIME "not_applicable")
 endif()
+if(CMAKE_CONFIGURATION_TYPES)
+    set(GDPP_EDITOR_OPTIMIZATION "$<CONFIG>")
+elseif(CMAKE_BUILD_TYPE)
+    set(GDPP_EDITOR_OPTIMIZATION "${CMAKE_BUILD_TYPE}")
+else()
+    set(GDPP_EDITOR_OPTIMIZATION Debug)
+endif()
 foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
     string(REPLACE "." "_" GDPP_SDK_SUFFIX "${GDPP_SDK_VERSION}")
     set(GDPP_SDK_DIRECTORY "${GDPP_PACKAGED_SDK}/${GDPP_SDK_VERSION}")
     set(GDPP_PACKAGED_SDK_${GDPP_SDK_SUFFIX} "${GDPP_SDK_DIRECTORY}")
     set(GDPP_SDK_MANIFEST
-        "${CMAKE_BINARY_DIR}/generated/gdpp/sdk-${GDPP_SDK_VERSION}.manifest")
+        "${CMAKE_BINARY_DIR}/generated/gdpp/${GDPP_EDITOR_OPTIMIZATION}/sdk-${GDPP_SDK_VERSION}.manifest")
     file(GENERATE
         OUTPUT "${GDPP_SDK_MANIFEST}"
         CONTENT
-            "GDPP_SDK ${GDPP_NATIVE_SDK_SCHEMA}\napi ${GDPP_SDK_VERSION}\nplatform ${GDPP_PLATFORM}\narch ${GDPP_ARCH}\nprofiles development,debug,release\ndistribution_binding template_release\ndistribution_optimization Release\neditor_binding editor\neditor_optimization ${CMAKE_BUILD_TYPE}\nplatform_minimum ${GDPP_PLATFORM_MINIMUM}\ngdpp_version ${PROJECT_VERSION}\ncxx_standard 17\nexceptions disabled\nmsvc_runtime ${GDPP_SDK_MSVC_RUNTIME}\nruntime_abi ${GDPP_NATIVE_RUNTIME_ABI}\nruntime_header_sha256 ${GDPP_NATIVE_RUNTIME_HEADER_SHA256}\nreference_semantics_header_sha256 ${GDPP_REFERENCE_SEMANTICS_HEADER_SHA256}\nruntime_source_sha256 ${GDPP_NATIVE_RUNTIME_SOURCE_SHA256}\nattached_runtime_header_sha256 ${GDPP_ATTACHED_RUNTIME_HEADER_SHA256}\nattached_runtime_registry_source_sha256 ${GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE_SHA256}\nattached_runtime_instance_source_sha256 ${GDPP_ATTACHED_RUNTIME_INSTANCE_SOURCE_SHA256}\nattached_runtime_language_source_sha256 ${GDPP_ATTACHED_RUNTIME_LANGUAGE_SOURCE_SHA256}\ninteger_semantics_header_sha256 ${GDPP_INTEGER_SEMANTICS_HEADER_SHA256}\ncompiler ${CMAKE_CXX_COMPILER_ID}\ncompiler_version ${CMAKE_CXX_COMPILER_VERSION}\n"
+            "GDPP_SDK ${GDPP_NATIVE_SDK_SCHEMA}\napi ${GDPP_SDK_VERSION}\nplatform ${GDPP_PLATFORM}\narch ${GDPP_ARCH}\nprofiles development,debug,release\ndistribution_binding template_release\ndistribution_optimization Release\neditor_binding editor\neditor_optimization ${GDPP_EDITOR_OPTIMIZATION}\nplatform_minimum ${GDPP_PLATFORM_MINIMUM}\ngdpp_version ${PROJECT_VERSION}\ncxx_standard 17\nexceptions disabled\nmsvc_runtime ${GDPP_SDK_MSVC_RUNTIME}\nruntime_abi ${GDPP_NATIVE_RUNTIME_ABI}\nruntime_header_sha256 ${GDPP_NATIVE_RUNTIME_HEADER_SHA256}\nreference_semantics_header_sha256 ${GDPP_REFERENCE_SEMANTICS_HEADER_SHA256}\nruntime_source_sha256 ${GDPP_NATIVE_RUNTIME_SOURCE_SHA256}\nattached_runtime_header_sha256 ${GDPP_ATTACHED_RUNTIME_HEADER_SHA256}\nattached_runtime_registry_source_sha256 ${GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE_SHA256}\nattached_runtime_instance_source_sha256 ${GDPP_ATTACHED_RUNTIME_INSTANCE_SOURCE_SHA256}\nattached_runtime_language_source_sha256 ${GDPP_ATTACHED_RUNTIME_LANGUAGE_SOURCE_SHA256}\ninteger_semantics_header_sha256 ${GDPP_INTEGER_SEMANTICS_HEADER_SHA256}\ncompiler ${CMAKE_CXX_COMPILER_ID}\ncompiler_version ${CMAKE_CXX_COMPILER_VERSION}\n"
     )
 
     set(GDPP_SDK_PACKAGE_COMMANDS
