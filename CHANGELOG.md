@@ -4,7 +4,8 @@
 - Move project scanning, parsing, semantic analysis, native generation, compilation, and linking onto one background build worker while the editor thread remains responsible only for window events, rendering, and export coordination.
 - Snapshot third-party GDExtension ClassDB contracts before starting the worker and transfer progress through a mutex-protected mailbox, preventing background work from touching the live editor scene tree or UI.
 - Preserve GDScript's `Dictionary.key` read and write semantics when the receiver crosses a `Variant` boundary, including JSON/HTTP response dictionaries and nested compound assignments; asynchronous authentication and networking callbacks can now consume response fields without silently receiving null values.
-- Smoothly advance the fill between file callbacks without exposing backend translation terminology, and use concise AOT, Debug, and Release build labels throughout the overlay.
+- Reduce the `GDPP AOT Build` overlay to a title and current-task row, and append a live per-file counter while compiling project sources.
+- Submit progress geometry and changing task text directly to the rendering server, synchronizing each forced presentation so Windows updates both without requiring window movement.
 - Add real threaded-build, main-thread progress-dispatch, JSON Dictionary runtime, headless progress-model, packaging, and delivery contracts for responsive editor behavior, hierarchical allocation, exact UI text, and the single-fill implementation.
 
 ## 1.7.6
