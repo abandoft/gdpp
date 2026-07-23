@@ -15,6 +15,7 @@
 - 附着式或动态属性读取跨越 Variant 边界时保留语义值类型，包括强类型 Dictionary 和跨脚本访问器。
 - 每个客户目标 SDK 只发布一套优化后的 `template_release` godot-cpp 归档，并同时用于 Debug 与 Release 导出；编译器的 editor 绑定只保留在预构建插件内部，不再分发第二套客户静态库。
 - 将原有 16 个按版本单宿主包与完整包收敛为三个跨版本桌面包：`gdpp-mac.zip`、`gdpp-linux.zip`、`gdpp-win.zip`。每个包包含本宿主 compiler/fallback 和 Godot 4.4～4.7 全部桌面 Release SDK；三个包均包含 Android 与 Web Release SDK，仅 mac 包包含 iOS。
+- 通过显式运行时白名单暂存宿主 compiler/fallback，使 Windows 发布包排除 MSVC `.lib`/`.exp` 导入产物，同时保留最终归档的严格审计。
 - 每个生成的客户翻译单元仅针对所选导出目标编译一次；Debug/Release 对象缓存彼此隔离，同时共享确定性的前端结果和生成源码状态。
 - `Dictionary` 接收者跨越 `Variant` 边界时完整保留 GDScript 的 `Dictionary.key` 读写语义，覆盖 JSON/HTTP 响应字典与嵌套复合赋值；异步认证和网络回调不再因响应字段被静默读成空值而中断后续流程。
 - 为全部十种 `PackedArray` 建立共享存储语义，局部别名、字段、参数、返回值、默认参数、`Callable`、lambda、Signal 与动态调用均与 GDScript 一致；显式构造复制和参数重绑定仍保持独立。
