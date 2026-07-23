@@ -1414,13 +1414,13 @@ std::string CodeGenerator::inner_attached_native_base_type(std::string_view name
     if (separator != std::string_view::npos)
         name.remove_prefix(separator + 1);
     const auto found = inner_attached_native_base_types_.find(std::string{name});
-    return found == inner_attached_native_base_types_.end()
-               ? inner_godot_base_type(name)
-               : found->second;
+    return found == inner_attached_native_base_types_.end() ? inner_godot_base_type(name)
+                                                            : found->second;
 }
 
-std::string CodeGenerator::attached_script_source_path(
-    const Type& type, const std::string_view resolved_owner) const {
+std::string
+CodeGenerator::attached_script_source_path(const Type& type,
+                                           const std::string_view resolved_owner) const {
     if (type.kind != TypeKind::object || !script_symbols_)
         return {};
 
@@ -1464,8 +1464,7 @@ std::string CodeGenerator::attached_script_source_path(
     return owner ? resource_path(owner->path) + "::" + inner->name : std::string{};
 }
 
-std::string CodeGenerator::emit_attached_script_cast(const Type& target,
-                                                      std::string value) const {
+std::string CodeGenerator::emit_attached_script_cast(const Type& target, std::string value) const {
     const auto source_path = attached_script_source_path(target);
     if (source_path.empty())
         return value;
@@ -2693,8 +2692,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                    sanitize_identifier(expression.value);
         if (expression.resolution == ir::ResolutionKind::dynamic_property) {
             auto value = "gdpp::runtime::get_named(gdpp::runtime::to_variant(" +
-                         self_object_expression() + "), " +
-                         godot_string_name(expression.value) + ")";
+                         self_object_expression() + "), " + godot_string_name(expression.value) +
+                         ")";
             return emit_conversion(expression.type, {TypeKind::variant, "Variant"},
                                    std::move(value));
         }
@@ -2903,13 +2902,12 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                 if (const auto source_path =
                         attached_script_source_path(target.type, target.resolved_owner);
                     !source_path.empty()) {
-                    auto object =
-                        "gdpp::runtime::cast_attached_script(gdpp::runtime::to_variant(" +
-                        emitted_value + "), " + godot_string(source_path) + ")";
+                    auto object = "gdpp::runtime::cast_attached_script(gdpp::runtime::to_variant(" +
+                                  emitted_value + "), " + godot_string(source_path) + ")";
                     const auto target_cpp = cpp_type(expression.type);
                     if (target_cpp.rfind("godot::Ref<", 0) == 0) {
-                        return target_cpp +
-                               "(godot::Object::cast_to<godot::RefCounted>(" + object + "))";
+                        return target_cpp + "(godot::Object::cast_to<godot::RefCounted>(" + object +
+                               "))";
                     }
                     return object;
                 }
@@ -3271,7 +3269,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         const auto vararg_positional_count =
             expression.call_contract && expression.call_contract->is_vararg
                 ? expression.call_contract->parameters.size()
-            : script_method && script_method->is_vararg          ? script_method->parameters.size()
+            : script_method && script_method->is_vararg        ? script_method->parameters.size()
             : local_function && local_function->rest_parameter ? local_function->parameters.size()
             : constructor_function && constructor_function->rest_parameter
                 ? constructor_function->parameters.size()
@@ -3509,14 +3507,19 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             }
             return result + "); }())";
         }
+        const bool attached_self_dynamic_call =
+            attached_script_ &&
+            (callee.kind == ir::ExpressionKind::identifier ||
+             (callee.kind == ir::ExpressionKind::member && !callee.operands.empty() &&
+              callee.operands.at(0)->kind == ir::ExpressionKind::identifier &&
+              callee.operands.at(0)->value == "self"));
         const bool explicit_self_script_call =
             callee.kind == ir::ExpressionKind::member && !callee.operands.empty() &&
             callee.operands.at(0)->kind == ir::ExpressionKind::identifier &&
             callee.operands.at(0)->value == "self";
         const bool attached_instance_script_call =
             script_method && callee.kind == ir::ExpressionKind::member &&
-            !script_method->is_static && !callee.operands.empty() &&
-            !explicit_self_script_call &&
+            !script_method->is_static && !callee.operands.empty() && !explicit_self_script_call &&
             callee.resolution != ir::ResolutionKind::script_super &&
             callee.operands.at(0)->resolution != ir::ResolutionKind::script_type &&
             callee.operands.at(0)->resolution != ir::ResolutionKind::inner_type &&
@@ -3530,7 +3533,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             const auto method_name = "_gdpp_dynamic_method_" + suffix;
             std::string result = "([&]() -> godot::Variant { godot::Variant " + target_name +
                                  " = gdpp::runtime::to_variant(" +
-                                 (callee.kind == ir::ExpressionKind::identifier
+                                 (attached_self_dynamic_call ? "this"
+                                  : callee.kind == ir::ExpressionKind::identifier
                                       ? self_object_expression()
                                       : emit_expression(*callee.operands.at(0))) +
                                  "); static const godot::StringName " + method_name + " = " +
@@ -3865,8 +3869,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             }
             if (expression.operands.at(0)->resolution == ir::ResolutionKind::script_type ||
                 expression.operands.at(0)->resolution == ir::ResolutionKind::inner_type) {
-                return emit_expression(*expression.operands.at(0)) + "::" +
-                       expression.getter + "()";
+                return emit_expression(*expression.operands.at(0)) + "::" + expression.getter +
+                       "()";
             }
             const bool explicit_self =
                 attached_script_ &&
@@ -4829,14 +4833,14 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
             std::string assigned;
             if (statement.operation != "=") {
                 const auto current_name = "_gdpp_subscript_current_" + suffix;
-                result += nested_prefix + "const auto " + current_name + " = " +
-                          emit_subscript_read(
-                              target.operands.at(0)->type, target.type,
-                              container_name +
-                                  (target.operands.at(0)->type.is_packed_array() ? ".native()["
-                                                                                : "[") +
-                                  index_name + "]") +
-                          ";\n";
+                result +=
+                    nested_prefix + "const auto " + current_name + " = " +
+                    emit_subscript_read(
+                        target.operands.at(0)->type, target.type,
+                        container_name +
+                            (target.operands.at(0)->type.is_packed_array() ? ".native()[" : "[") +
+                            index_name + "]") +
+                    ";\n";
                 result += nested_prefix + "const auto " + value_name + " = " +
                           emit_expression(*statement.expression) + ";\n";
                 const auto operation =
@@ -5017,9 +5021,9 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                     return prefix + emit_expression(owner) + "::" + target.setter + "(" + value +
                            ");\n";
                 }
-                const bool explicit_self =
-                    attached_script_ && owner.kind == ir::ExpressionKind::identifier &&
-                    owner.value == "self";
+                const bool explicit_self = attached_script_ &&
+                                           owner.kind == ir::ExpressionKind::identifier &&
+                                           owner.value == "self";
                 if (explicit_self)
                     return prefix + target.setter + "(" + value + ");\n";
                 if (!attached_script_source_path(owner.type, target.resolved_owner).empty()) {
@@ -5319,8 +5323,7 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                 prefix + "{\n" + nested_prefix + "auto &&" + iterable_name + " = " +
                 emit_expression(*statement.condition) + ";\n" + nested_prefix + "for (int64_t " +
                 index_name + " = 0; " + index_name + " < " + iterable_name +
-                ".native().size(); ++" +
-                index_name + ") {\n" + body_prefix +
+                ".native().size(); ++" + index_name + ") {\n" + body_prefix +
                 (statement.declared_type.is_dynamic() ? std::string{"godot::Variant"}
                                                       : cpp_type(statement.declared_type)) +
                 " " + sanitize_identifier(statement.name) + " = " +
@@ -5419,19 +5422,18 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
 }
 
 void CodeGenerator::emit_attached_descriptor_definition(
-    std::ostringstream& source, const std::string& native_name,
-    const std::string& source_path, const std::string& global_name,
-    const std::string& native_base_type, const std::string& base_script_path,
-    const std::string& contract_hash, const bool tool_mode, const bool is_abstract,
-    const std::vector<ir::Field>& fields, const std::vector<ir::Function>& functions,
-    const std::vector<ir::Signal>& signals, const std::vector<ir::Enum>& enums) const {
+    std::ostringstream& source, const std::string& native_name, const std::string& source_path,
+    const std::string& global_name, const std::string& native_base_type,
+    const std::string& base_script_path, const std::string& contract_hash, const bool tool_mode,
+    const bool is_abstract, const std::vector<ir::Field>& fields,
+    const std::vector<ir::Function>& functions, const std::vector<ir::Signal>& signals,
+    const std::vector<ir::Enum>& enums) const {
     source << "gdpp::runtime::AttachedScriptDescriptor " << native_name
            << "::_gdpp_descriptor() {\n"
            << "    gdpp::runtime::AttachedScriptDescriptor descriptor;\n"
            << "    descriptor.source_path = " << godot_string(source_path) << ";\n"
            << "    descriptor.global_name = " << godot_string_name(global_name) << ";\n"
-           << "    descriptor.native_base_type = " << godot_string_name(native_base_type)
-           << ";\n"
+           << "    descriptor.native_base_type = " << godot_string_name(native_base_type) << ";\n"
            << "    descriptor.contract_hash = " << godot_string(contract_hash) << ";\n"
            << "    descriptor.base_script_path = " << godot_string(base_script_path) << ";\n"
            << "    descriptor.behavior_class = " << godot_string_name(native_name) << ";\n"
@@ -5447,8 +5449,7 @@ void CodeGenerator::emit_attached_descriptor_definition(
         source << "    {\n"
                << "        gdpp::runtime::AttachedScriptProperty property;\n"
                << "        property.info = "
-               << property_info(variable, api_, script_symbols_, cpp_type(variable.type))
-               << ";\n";
+               << property_info(variable, api_, script_symbols_, cpp_type(variable.type)) << ";\n";
         if (!variable.initializer || editor_safe_initializer(*variable.initializer)) {
             source << "        property.has_default = true;\n"
                    << "        property.default_value = gdpp::runtime::to_variant(";
@@ -5504,12 +5505,11 @@ void CodeGenerator::emit_attached_descriptor_definition(
     }
     for (const auto& enumeration : enums) {
         for (const auto& entry : enumeration.entries) {
-            const auto value = enumeration.name.empty()
-                                   ? enum_identifier(entry.name)
-                                   : sanitize_identifier(enumeration.name) +
-                                         "::" + enum_identifier(entry.name);
-            source << "    descriptor.constants[" << godot_string_name(entry.name)
-                   << "] = int64_t{" << value << "};\n";
+            const auto value = enumeration.name.empty() ? enum_identifier(entry.name)
+                                                        : sanitize_identifier(enumeration.name) +
+                                                              "::" + enum_identifier(entry.name);
+            source << "    descriptor.constants[" << godot_string_name(entry.name) << "] = int64_t{"
+                   << value << "};\n";
         }
     }
     if (has_rpc_configuration(functions)) {
@@ -5577,9 +5577,8 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
                                          ? script_symbols_->base_of(*current_inner_script_)
                                          : nullptr;
     const auto base_cpp = !native_inner_base.empty() ? native_inner_base
-                          : native_script_base
-                              ? native_script_base->native_class_name
-                              : "gdpp::runtime::AttachedScriptBehavior";
+                          : native_script_base       ? native_script_base->native_class_name
+                                                     : "gdpp::runtime::AttachedScriptBehavior";
     const auto godot_base = inner_godot_base_type(source_name);
     current_godot_base_type_ = godot_base;
     attached_godot_base_type_ = godot_base;
@@ -5815,13 +5814,12 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                                          ? script_symbols_->base_of(*current_inner_script_)
                                          : nullptr;
     const auto base_cpp = !native_inner_base.empty() ? native_inner_base
-                          : native_script_base
-                              ? native_script_base->native_class_name
-                              : "gdpp::runtime::AttachedScriptBehavior";
-    const auto base_script_path =
-        !native_inner_base.empty()
-            ? "res://" + current_source_path_ + "::" + source_base
-        : native_script_base ? "res://" + native_script_base->path : std::string{};
+                          : native_script_base       ? native_script_base->native_class_name
+                                                     : "gdpp::runtime::AttachedScriptBehavior";
+    const auto base_script_path = !native_inner_base.empty()
+                                      ? "res://" + current_source_path_ + "::" + source_base
+                                  : native_script_base ? "res://" + native_script_base->path
+                                                       : std::string{};
     const auto native_base_type = inner_attached_native_base_type(source_name);
     const auto engine_virtual_for = [&](const ir::Function& function) {
         static_cast<void>(function);
@@ -6017,11 +6015,11 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
     emit_instance_initializers();
     source << "}\n\n";
 
-    const auto notification = std::find_if(
-        declaration.functions.begin(), declaration.functions.end(),
-        [](const ir::Function& function) {
-            return !function.is_static && function.name == "_notification";
-        });
+    const auto notification =
+        std::find_if(declaration.functions.begin(), declaration.functions.end(),
+                     [](const ir::Function& function) {
+                         return !function.is_static && function.name == "_notification";
+                     });
     source << "void " << native_name
            << "::dispatch_notification(std::int32_t what, bool reversed) {\n"
            << "    if (reversed) " << base_cpp << "::dispatch_notification(what, true);\n";
@@ -6130,8 +6128,7 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         if (function.name == "_static_init" ||
             (!function.is_static && engine_virtual_for(function)))
             continue;
-        source << emit_method_registration(function, native_name,
-                                           function_return_type(function));
+        source << emit_method_registration(function, native_name, function_return_type(function));
     }
     for (const auto& field : declaration.fields) {
         if (field.is_constant || field.is_static)
@@ -6456,9 +6453,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                 symbol && !symbol->godot_base_type.empty()) {
                 inner_godot_base_types_.emplace(qualified, symbol->godot_base_type);
                 inner_attached_native_base_types_.emplace(
-                    qualified, symbol->attached_native_base.empty()
-                                   ? symbol->godot_base_type
-                                   : symbol->attached_native_base);
+                    qualified, symbol->attached_native_base.empty() ? symbol->godot_base_type
+                                                                    : symbol->attached_native_base);
                 continue;
             }
         }
@@ -6477,9 +6473,9 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         inner_godot_base_types_.emplace(qualified, api_.find_class(current->base_type)
                                                        ? current->base_type
                                                        : std::string{"RefCounted"});
-        inner_attached_native_base_types_.emplace(
-            qualified, api_.find_class(current->base_type) ? current->base_type
-                                                           : std::string{"RefCounted"});
+        inner_attached_native_base_types_.emplace(qualified, api_.find_class(current->base_type)
+                                                                 ? current->base_type
+                                                                 : std::string{"RefCounted"});
     }
     std::vector<std::pair<std::string, const ir::Class*>> ordered_inner_classes;
     std::unordered_set<std::string> ordered_inner_names;
@@ -6576,10 +6572,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                 const auto* inherited =
                     find_inherited_inner_function(local_base, function.name, &declaration_owner);
                 return inherited &&
-                       same_native_function_abi(
-                           function, godot_base_type, *inherited,
-                           inner_godot_base_type(declaration_owner.empty() ? local_base
-                                                                           : declaration_owner));
+                       same_native_function_abi(function, godot_base_type, *inherited,
+                                                inner_godot_base_type(declaration_owner.empty()
+                                                                          ? local_base
+                                                                          : declaration_owner));
             }
             auto* base_script = script_symbols_->base_of(*current_script_);
             bool generated_base_declares_method = false;
@@ -7012,12 +7008,11 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     std::ostringstream source;
     source << "// Generated by GDPP. Do not edit.\n"
            << "#include \"" << unit.header_file_name << "\"\n";
-    const bool has_any_rpc =
-        has_rpc_configuration(module) ||
-        std::any_of(ordered_inner_classes.begin(), ordered_inner_classes.end(),
-                    [](const auto& entry) {
-                        return has_rpc_configuration(entry.second->functions);
-                    });
+    const bool has_any_rpc = has_rpc_configuration(module) ||
+                             std::any_of(ordered_inner_classes.begin(), ordered_inner_classes.end(),
+                                         [](const auto& entry) {
+                                             return has_rpc_configuration(entry.second->functions);
+                                         });
     if (has_any_rpc) {
         source << "#include <godot_cpp/classes/multiplayer_api.hpp>\n"
                << "#include <godot_cpp/classes/multiplayer_peer.hpp>\n";
@@ -7492,7 +7487,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         emit_attached_descriptor_definition(
             source, unit.class_name, "res://" + current_source_path_,
             current_script_ && current_script_->globally_named ? current_script_->script_name
-                                                                : std::string{},
+                                                               : std::string{},
             attached_native_base, attached_base_script_path, script_contract_hash, module.is_tool,
             module.is_abstract, module.fields, module.functions, module.signals, module.enums);
     }

@@ -513,7 +513,8 @@ void SemanticAnalyzer::validate_script_call(const ScriptMemberSymbol& member,
         return;
     }
     model_.call_contracts_.insert_or_assign(
-        &call, ResolvedCallContract{member.parameters, member.required_arguments, member.is_vararg});
+        &call,
+        ResolvedCallContract{member.parameters, member.required_arguments, member.is_vararg});
     if (arguments.size() < member.required_arguments ||
         (!member.is_vararg && arguments.size() > member.parameters.size())) {
         diagnostics_.error(
@@ -547,8 +548,8 @@ void SemanticAnalyzer::validate_local_call(const ast::FunctionDeclaration& funct
     contract.is_vararg = function.rest_parameter.has_value();
     contract.parameters.reserve(function.parameters.size());
     for (const auto& parameter : function.parameters) {
-        contract.parameters.push_back(parameter.type ? type_from_name(*parameter.type, parameter.span)
-                                                     : variant_type);
+        contract.parameters.push_back(
+            parameter.type ? type_from_name(*parameter.type, parameter.span) : variant_type);
     }
     model_.call_contracts_.insert_or_assign(&call, contract);
     if (arguments.size() < required ||
@@ -1567,16 +1568,13 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             const bool external_member =
                 script_symbols_ &&
                 ((current_inner_class_ &&
-                  script_symbols_->member_is_external(*current_inner_class_,
-                                                      expression.value())) ||
+                  script_symbols_->member_is_external(*current_inner_class_, expression.value())) ||
                  (!current_inner_class_ && current_script_ &&
                   script_symbols_->member_is_external(*current_script_, expression.value())));
             const auto* external_base =
-                !external_member
-                    ? nullptr
-                : current_inner_class_
-                    ? script_symbols_->external_base_of(*current_inner_class_)
-                    : script_symbols_->external_base_of(*current_script_);
+                !external_member       ? nullptr
+                : current_inner_class_ ? script_symbols_->external_base_of(*current_inner_class_)
+                                       : script_symbols_->external_base_of(*current_script_);
             if (external_base)
                 model_.referenced_extension_abis_.insert(external_base->provider_abi);
             if (external_base && symbol->kind == SymbolKind::function) {
@@ -2352,7 +2350,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         result = member->type;
                         if (current_inner_class_) {
                             if (script_symbols_->member_is_external(*current_inner_class_,
-                                                                   callee.value())) {
+                                                                    callee.value())) {
                                 if (const auto* external =
                                         script_symbols_->external_base_of(*current_inner_class_)) {
                                     model_.referenced_extension_abis_.insert(
@@ -2362,10 +2360,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                         ApiResolution{
                                             ApiResolutionKind::dynamic_method, external->name, "",
                                             "", result,
-                                            static_cast<std::uint16_t>(
-                                                member->required_arguments),
-                                            static_cast<std::uint16_t>(
-                                                member->parameters.size()),
+                                            static_cast<std::uint16_t>(member->required_arguments),
+                                            static_cast<std::uint16_t>(member->parameters.size()),
                                             member->is_vararg, false});
                                 }
                                 break;
@@ -2377,9 +2373,8 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                 mark_coroutine_call(script_symbols_->may_dispatch_coroutine(
                                     *current_inner_class_, callee.value()));
                                 model_.api_resolutions_.insert_or_assign(
-                                    &callee,
-                                    ApiResolution{ApiResolutionKind::dynamic_method, "", "", "",
-                                                  result, 0, 0, true, false});
+                                    &callee, ApiResolution{ApiResolutionKind::dynamic_method, "",
+                                                           "", "", result, 0, 0, true, false});
                             }
                             break;
                         }
@@ -2656,10 +2651,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 const bool dynamic_dispatch =
                     !called_on_type && !called_on_super && !member->is_static && script_symbols_ &&
                     script_symbols_->requires_dynamic_dispatch(*inner, callee.value());
-                mark_coroutine_call(
-                    member->is_coroutine ||
-                    (dynamic_dispatch &&
-                     script_symbols_->may_dispatch_coroutine(*inner, callee.value())));
+                mark_coroutine_call(member->is_coroutine ||
+                                    (dynamic_dispatch && script_symbols_->may_dispatch_coroutine(
+                                                             *inner, callee.value())));
                 if (called_on_super) {
                     model_.api_resolutions_.insert_or_assign(
                         &callee,
@@ -2807,9 +2801,13 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 }
                 validate_script_call(*member, argument_types, expression, expression.span);
                 result = member->type;
+                const bool explicit_self_receiver =
+                    callee.operand(0)->kind() == ast::ExpressionKind::identifier &&
+                    callee.operand(0)->value() == "self";
                 const bool dynamic_dispatch =
                     !called_on_type && !called_on_super &&
-                    script_symbols_->requires_dynamic_dispatch(*script_owner, callee.value());
+                    ((script_owner->attached && !explicit_self_receiver) ||
+                     script_symbols_->requires_dynamic_dispatch(*script_owner, callee.value()));
                 mark_coroutine_call(member->is_coroutine ||
                                     (dynamic_dispatch && script_symbols_->may_dispatch_coroutine(
                                                              *script_owner, callee.value())));
@@ -4528,7 +4526,8 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
         } else if (script_symbols_) {
             const auto* external = script_symbols_->external_base_of(*current_inner_class_);
             const auto* inherited =
-                external ? script_symbols_->find_external_member(*external, function.name) : nullptr;
+                external ? script_symbols_->find_external_member(*external, function.name)
+                         : nullptr;
             if (inherited && inherited->kind == ScriptMemberKind::function)
                 inherited_script_method = inherited;
         }

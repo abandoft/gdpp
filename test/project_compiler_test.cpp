@@ -126,10 +126,8 @@ TEST_CASE("project compiler incrementally generates a unified native extension")
     REQUIRE_EQ(first.compiled_count, std::size_t{2});
     REQUIRE_EQ(first.cache_hit_count, std::size_t{0});
     REQUIRE(!std::filesystem::exists(options.output_directory / "CMakeLists.txt"));
-    REQUIRE(!std::filesystem::exists(options.output_directory /
-                                     "prune_stale_development.cmake"));
-    REQUIRE(!std::filesystem::exists(options.output_directory /
-                                     "patch_godot_cpp_class_db.cmake"));
+    REQUIRE(!std::filesystem::exists(options.output_directory / "prune_stale_development.cmake"));
+    REQUIRE(!std::filesystem::exists(options.output_directory / "patch_godot_cpp_class_db.cmake"));
     REQUIRE(std::filesystem::is_regular_file(options.output_directory / "register_types.cpp"));
     REQUIRE_EQ(first.native_library_directory, root / "addons/gdpp/binary");
     REQUIRE_EQ(first.build_id.size(), std::size_t{16});
@@ -449,8 +447,7 @@ TEST_CASE("project compiler includes source-less GDScript embedded in text resou
                std::string{"data/marker.tres::GDScript_marker"});
     const auto generated =
         read_text(options.output_directory / "generated" / result.scripts.front().header_file_name);
-    REQUIRE(generated.find("public gdpp::runtime::AttachedScriptBehavior") !=
-            std::string::npos);
+    REQUIRE(generated.find("public gdpp::runtime::AttachedScriptBehavior") != std::string::npos);
     REQUIRE(generated.find("res://data/marker.tres::GDScript_marker") != std::string::npos);
     const auto source =
         read_text(options.output_directory / "generated" / result.scripts.front().source_file_name);
@@ -986,8 +983,7 @@ TEST_CASE("project compiler resolves class and path inheritance in parent-first 
     REQUIRE(child_source.find("get_named(value, godot::StringName(\"base_value\"))") !=
             std::string::npos);
     REQUIRE(child_source.find("set_named(_gdpp_dynamic_root_") != std::string::npos);
-    REQUIRE(child_source.find("godot::StringName(\"base_value\")") !=
-            std::string::npos);
+    REQUIRE(child_source.find("godot::StringName(\"base_value\")") != std::string::npos);
     REQUIRE(child_source.find("is_attached_script_instance") != std::string::npos);
     REQUIRE(child_source.find("godot::String(\"res://base.gd\")") != std::string::npos);
     REQUIRE(child_source.find("Object::cast_to<" + base_class) == std::string::npos);
@@ -1340,16 +1336,15 @@ TEST_CASE("project compiler attaches scripts to third-party GDExtension instance
                "\"hash\": 305419896}]}],\n"
                "  \"targets\": []\n"
                "}\n");
-    write_text(root / "derived.gd",
-               "extends VendorBase\nclass_name BridgedDerived\n"
-               "class VendorWorker:\n"
-               "    extends VendorBase\n"
-               "    func answer() -> int:\n"
-               "        return super.answer() + 2\n"
-               "func answer() -> int:\n"
-               "    return super.answer() + 1\n"
-               "func make_worker() -> VendorWorker:\n"
-               "    return VendorWorker.new()\n");
+    write_text(root / "derived.gd", "extends VendorBase\nclass_name BridgedDerived\n"
+                                    "class VendorWorker:\n"
+                                    "    extends VendorBase\n"
+                                    "    func answer() -> int:\n"
+                                    "        return super.answer() + 2\n"
+                                    "func answer() -> int:\n"
+                                    "    return super.answer() + 1\n"
+                                    "func make_worker() -> VendorWorker:\n"
+                                    "    return VendorWorker.new()\n");
 
     const auto options = project_options(root);
     const auto result = gdpp::ProjectCompiler{}.compile(options);
@@ -1722,8 +1717,8 @@ TEST_CASE("project compiler hoists a script-local class used as the root base") 
     const auto header = read_text(options.output_directory / "generated/local_root_derived.gd.hpp");
     const auto source = read_text(options.output_directory / "generated/local_root_derived.gd.cpp");
     const auto& inner = result.scripts.front().inner_class_names.front();
-    REQUIRE(header.find("class " + inner +
-                        " : public gdpp::runtime::AttachedScriptBehavior") != std::string::npos);
+    REQUIRE(header.find("class " + inner + " : public gdpp::runtime::AttachedScriptBehavior") !=
+            std::string::npos);
     REQUIRE(header.find("class " + result.scripts.front().class_name + " : public " + inner) !=
             std::string::npos);
     REQUIRE(header.find("#include \"\"") == std::string::npos);
@@ -1930,17 +1925,15 @@ TEST_CASE("project compiler preserves cross-script call contracts through cache 
     const auto root = fixture_root("project-cross-script-call-contract");
     std::error_code error;
     std::filesystem::remove_all(root, error);
-    write_text(root / "parser.gd",
-               "extends RefCounted\n"
-               "class_name ProjectPacketParser\n"
-               "func parse(value: PackedByteArray) -> PackedByteArray:\n"
-               "    return value\n");
-    write_text(root / "consumer.gd",
-               "extends RefCounted\n"
-               "class_name ProjectPacketConsumer\n"
-               "var parser := ProjectPacketParser.new()\n"
-               "func parse(value: Variant) -> PackedByteArray:\n"
-               "    return parser.parse(value)\n");
+    write_text(root / "parser.gd", "extends RefCounted\n"
+                                   "class_name ProjectPacketParser\n"
+                                   "func parse(value: PackedByteArray) -> PackedByteArray:\n"
+                                   "    return value\n");
+    write_text(root / "consumer.gd", "extends RefCounted\n"
+                                     "class_name ProjectPacketConsumer\n"
+                                     "var parser := ProjectPacketParser.new()\n"
+                                     "func parse(value: Variant) -> PackedByteArray:\n"
+                                     "    return parser.parse(value)\n");
     const auto options = project_options(root);
     const gdpp::ProjectCompiler compiler;
 
@@ -1961,11 +1954,10 @@ TEST_CASE("project compiler preserves cross-script call contracts through cache 
     REQUIRE(initial_source.find("godot::StringName(\"parse\")") != std::string::npos);
     REQUIRE(initial_source.find("gdpp::runtime::to_variant(value)") != std::string::npos);
 
-    write_text(root / "parser.gd",
-               "extends RefCounted\n"
-               "class_name ProjectPacketParser\n"
-               "func parse(value: PackedInt32Array) -> PackedByteArray:\n"
-               "    return PackedByteArray()\n");
+    write_text(root / "parser.gd", "extends RefCounted\n"
+                                   "class_name ProjectPacketParser\n"
+                                   "func parse(value: PackedInt32Array) -> PackedByteArray:\n"
+                                   "    return PackedByteArray()\n");
     const auto changed = compiler.compile(options);
 
     REQUIRE(changed.success);
@@ -1978,8 +1970,7 @@ TEST_CASE("project compiler preserves cross-script call contracts through cache 
     REQUIRE(changed_consumer != changed.scripts.end());
     const auto changed_source =
         read_text(options.output_directory / "generated" / changed_consumer->source_file_name);
-    REQUIRE(changed_source.find("godot::StringName(\"parse\")") !=
-            std::string::npos);
+    REQUIRE(changed_source.find("godot::StringName(\"parse\")") != std::string::npos);
     REQUIRE(changed_source.find("gdpp::runtime::to_variant(value)") != std::string::npos);
 }
 
@@ -1987,10 +1978,9 @@ TEST_CASE("attached cross-script properties recover their semantic native value 
     const auto root = fixture_root("project-attached-cross-script-property-types");
     std::error_code error;
     std::filesystem::remove_all(root, error);
-    write_text(root / "record.gd",
-               "extends Node\n"
-               "class_name AttachedPropertyRecord\n"
-               "var values: Dictionary[Vector3i, int] = {}\n");
+    write_text(root / "record.gd", "extends Node\n"
+                                   "class_name AttachedPropertyRecord\n"
+                                   "var values: Dictionary[Vector3i, int] = {}\n");
     write_text(root / "consumer.gd",
                "extends Node\n"
                "class_name AttachedPropertyConsumer\n"
@@ -2011,10 +2001,9 @@ TEST_CASE("attached cross-script properties recover their semantic native value 
     const auto source =
         read_text(options.output_directory / "generated" / consumer->source_file_name);
     REQUIRE(source.find("gdpp::runtime::get_named(") != std::string::npos);
-    REQUIRE(source.find(
-                "strict_typed_storage<"
-                "godot::TypedDictionary<godot::Vector3i, int64_t>>"
-                "(gdpp::runtime::to_variant(") != std::string::npos);
+    REQUIRE(source.find("strict_typed_storage<"
+                        "godot::TypedDictionary<godot::Vector3i, int64_t>>"
+                        "(gdpp::runtime::to_variant(") != std::string::npos);
     REQUIRE(source.find(".has(") != std::string::npos);
 }
 
@@ -2022,23 +2011,22 @@ TEST_CASE("attached internal classes dispatch self locally and other instances t
     const auto root = fixture_root("project-attached-inner-dispatch");
     std::error_code error;
     std::filesystem::remove_all(root, error);
-    write_text(root / "records.gd",
-               "extends Node\n"
-               "class Record:\n"
-               "    var value: int\n"
-               "    func _init(initial: int) -> void:\n"
-               "        self.value = initial\n"
-               "    func increment() -> int:\n"
-               "        self.value += 1\n"
-               "        return self.value\n"
-               "func read(record: Record) -> int:\n"
-               "    return record.value\n"
-               "func write(record: Record, next: int) -> void:\n"
-               "    record.value = next\n"
-               "func invoke(record: Record) -> int:\n"
-               "    return record.increment()\n"
-               "func create(initial: int) -> Record:\n"
-               "    return Record.new(initial)\n");
+    write_text(root / "records.gd", "extends Node\n"
+                                    "class Record:\n"
+                                    "    var value: int\n"
+                                    "    func _init(initial: int) -> void:\n"
+                                    "        self.value = initial\n"
+                                    "    func increment() -> int:\n"
+                                    "        self.value += 1\n"
+                                    "        return self.value\n"
+                                    "func read(record: Record) -> int:\n"
+                                    "    return record.value\n"
+                                    "func write(record: Record, next: int) -> void:\n"
+                                    "    record.value = next\n"
+                                    "func invoke(record: Record) -> int:\n"
+                                    "    return record.increment()\n"
+                                    "func create(initial: int) -> Record:\n"
+                                    "    return Record.new(initial)\n");
     const auto options = project_options(root);
 
     const auto result = gdpp::ProjectCompiler{}.compile(options);
@@ -2053,6 +2041,35 @@ TEST_CASE("attached internal classes dispatch self locally and other instances t
     REQUIRE(source.find("gdpp::runtime::set_named(") != std::string::npos);
     REQUIRE(source.find("gdpp::runtime::call_dynamic(") != std::string::npos);
     REQUIRE(source.find("-> godot::Ref<godot::RefCounted>") != std::string::npos);
+}
+
+TEST_CASE("attached script self calls use native virtual dispatch without bypassing peer scripts") {
+    const auto root = fixture_root("project-attached-self-dispatch");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "worker.gd",
+               "extends Node\n"
+               "class_name AttachedSelfDispatch\n"
+               "func mix(value: int) -> int:\n"
+               "    return value * 3\n"
+               "func implicit_call(value: int) -> int:\n"
+               "    return mix(value)\n"
+               "func explicit_call(value: int) -> int:\n"
+               "    return self.mix(value)\n"
+               "func peer_call(peer: AttachedSelfDispatch, value: int) -> int:\n"
+               "    return peer.mix(value)\n");
+    const auto options = project_options(root);
+
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.scripts.size(), std::size_t{1});
+    const auto source =
+        read_text(options.output_directory / "generated" / result.scripts.front().source_file_name);
+    REQUIRE(source.find("this->mix(") != std::string::npos);
+    REQUIRE(source.find("gdpp::runtime::to_variant(this)") == std::string::npos);
+    REQUIRE(source.find("gdpp::runtime::to_variant(peer)") != std::string::npos);
+    REQUIRE(source.find("gdpp::runtime::to_variant(owner())") == std::string::npos);
 }
 
 TEST_CASE("project symbol signature changes invalidate dependent script caches") {
@@ -2478,10 +2495,8 @@ TEST_CASE("project compiler lowers cross-script constants enums and resource fac
     REQUIRE(base_header.find("static const int64_t& MASK();") != std::string::npos);
     const auto& base_class = native_class_for(result, "base.gd");
     REQUIRE(base_header.find("virtual void _init(godot::Variant _gdpp_argument_value = "
-                             "gdpp::runtime::default_argument())") !=
-            std::string::npos);
-    REQUIRE(base_header.find("public gdpp::runtime::AttachedScriptBehavior") !=
-            std::string::npos);
+                             "gdpp::runtime::default_argument())") != std::string::npos);
+    REQUIRE(base_header.find("public gdpp::runtime::AttachedScriptBehavior") != std::string::npos);
     const auto consumer_header =
         read_text(options.output_directory / "generated/shared_consumer.gd.hpp");
     REQUIRE(consumer_header.find("#include <gdpp/runtime/attached_script.hpp>") !=
@@ -2885,15 +2900,14 @@ TEST_CASE("project compiler emits source-free editor reflection on cache hits") 
     std::filesystem::remove_all(root, error);
     write_text(root / "base.gd", "extends Node\nclass_name ReflectionBase\n"
                                  "signal inherited_signal\n");
-    write_text(root / "child.gd",
-               "extends ReflectionBase\n"
-               "class_name ReflectionChild\n"
-               "@export var score: int = 7\n"
-               "var transient: String = \"ready\"\n"
-               "static var shared: int = 1\n"
-               "signal completed(value: int)\n"
-               "func execute(value: int = 3) -> String:\n"
-               "    return str(value)\n");
+    write_text(root / "child.gd", "extends ReflectionBase\n"
+                                  "class_name ReflectionChild\n"
+                                  "@export var score: int = 7\n"
+                                  "var transient: String = \"ready\"\n"
+                                  "static var shared: int = 1\n"
+                                  "signal completed(value: int)\n"
+                                  "func execute(value: int = 3) -> String:\n"
+                                  "    return str(value)\n");
     const auto options = project_options(root);
     const auto first = gdpp::ProjectCompiler{}.compile(options);
     const auto result = gdpp::ProjectCompiler{}.compile(options);

@@ -227,9 +227,8 @@ ScriptSymbolTable::inner_base_of(const ScriptInnerClassSymbol& owner) const noex
         canonical = find_inner_native(owner.native_class_name);
         script_owner = canonical ? owner_of(*canonical) : nullptr;
     }
-    return script_owner && canonical
-               ? find_inner(*script_owner, canonical->base_class_name)
-               : nullptr;
+    return script_owner && canonical ? find_inner(*script_owner, canonical->base_class_name)
+                                     : nullptr;
 }
 
 const ScriptMemberSymbol* ScriptSymbolTable::find_member(const ScriptClassSymbol& owner,
@@ -318,10 +317,9 @@ ScriptSymbolTable::find_inner_native(const std::string& name) const noexcept {
 const ScriptClassSymbol*
 ScriptSymbolTable::owner_of(const ScriptInnerClassSymbol& inner) const noexcept {
     for (const auto& owner : classes_) {
-        const auto found = std::find_if(owner.inner_classes.begin(), owner.inner_classes.end(),
-                                        [&](const ScriptInnerClassSymbol& candidate) {
-                                            return &candidate == &inner;
-                                        });
+        const auto found = std::find_if(
+            owner.inner_classes.begin(), owner.inner_classes.end(),
+            [&](const ScriptInnerClassSymbol& candidate) { return &candidate == &inner; });
         if (found != owner.inner_classes.end())
             return &owner;
     }
@@ -404,8 +402,6 @@ bool ScriptSymbolTable::requires_dynamic_dispatch(const ScriptClassSymbol& owner
     const auto* contract = find_member(owner, method);
     if (!contract || contract->kind != ScriptMemberKind::function || contract->is_static)
         return false;
-    if (owner.attached)
-        return true;
     const auto same_native_abi = [](const ScriptMemberSymbol& left,
                                     const ScriptMemberSymbol& right) {
         return left.type == right.type && left.parameters == right.parameters &&
@@ -439,9 +435,8 @@ bool ScriptSymbolTable::requires_dynamic_dispatch(const ScriptClassSymbol& owner
 
 bool ScriptSymbolTable::requires_dynamic_dispatch(const ScriptInnerClassSymbol& owner,
                                                   const std::string& method) const noexcept {
-    const auto* canonical = !owner.native_class_name.empty()
-                                ? find_inner_native(owner.native_class_name)
-                                : &owner;
+    const auto* canonical =
+        !owner.native_class_name.empty() ? find_inner_native(owner.native_class_name) : &owner;
     if (!canonical)
         canonical = &owner;
     const auto* contract = find_inner_member(*canonical, method);
@@ -455,9 +450,8 @@ bool ScriptSymbolTable::requires_dynamic_dispatch(const ScriptInnerClassSymbol& 
     };
     const auto same_inner = [](const ScriptInnerClassSymbol& left,
                                const ScriptInnerClassSymbol& right) {
-        return &left == &right ||
-               (!left.native_class_name.empty() &&
-                left.native_class_name == right.native_class_name);
+        return &left == &right || (!left.native_class_name.empty() &&
+                                   left.native_class_name == right.native_class_name);
     };
     for (const auto& script : classes_) {
         for (const auto& candidate : script.inner_classes) {
@@ -519,9 +513,8 @@ bool ScriptSymbolTable::may_dispatch_coroutine(const ScriptClassSymbol& owner,
 
 bool ScriptSymbolTable::may_dispatch_coroutine(const ScriptInnerClassSymbol& owner,
                                                const std::string& method) const noexcept {
-    const auto* canonical = !owner.native_class_name.empty()
-                                ? find_inner_native(owner.native_class_name)
-                                : &owner;
+    const auto* canonical =
+        !owner.native_class_name.empty() ? find_inner_native(owner.native_class_name) : &owner;
     if (!canonical)
         canonical = &owner;
     if (const auto* contract = find_inner_member(*canonical, method);
@@ -530,9 +523,8 @@ bool ScriptSymbolTable::may_dispatch_coroutine(const ScriptInnerClassSymbol& own
     }
     const auto same_inner = [](const ScriptInnerClassSymbol& left,
                                const ScriptInnerClassSymbol& right) {
-        return &left == &right ||
-               (!left.native_class_name.empty() &&
-                left.native_class_name == right.native_class_name);
+        return &left == &right || (!left.native_class_name.empty() &&
+                                   left.native_class_name == right.native_class_name);
     };
     for (const auto& script : classes_) {
         for (const auto& candidate : script.inner_classes) {

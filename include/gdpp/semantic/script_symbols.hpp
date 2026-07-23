@@ -164,9 +164,9 @@ class ScriptSymbolTable final {
                                 const std::string& base_global_name) const noexcept;
     [[nodiscard]] bool inherits(const ScriptClassSymbol& derived,
                                 const std::string& base_global_name) const noexcept;
-    // GDScript permits derived methods to change annotations and optional arguments. Such a
-    // hierarchy cannot use a direct C++ virtual call safely and must enter through Godot's
-    // dynamic method dispatcher when the receiver is typed as the base script.
+    // Compatible compiled overrides share a C++ virtual ABI, including attached behaviors.
+    // GDScript also permits derived methods to change annotations and optional arguments; only
+    // those incompatible hierarchies must enter through Godot's dynamic method dispatcher.
     [[nodiscard]] bool requires_dynamic_dispatch(const ScriptClassSymbol& owner,
                                                  const std::string& method) const noexcept;
     [[nodiscard]] bool requires_dynamic_dispatch(const ScriptInnerClassSymbol& owner,

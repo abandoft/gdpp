@@ -62,7 +62,7 @@ TEST_CASE("attached script symbols inherit external ClassDB contracts") {
     REQUIRE(symbols.find_member(*derived, "vendor_tick") != nullptr);
     REQUIRE(symbols.find_member(*derived, "stamina") != nullptr);
     REQUIRE(symbols.find_enum(*derived, "State") != nullptr);
-    REQUIRE(symbols.requires_dynamic_dispatch(*derived, "move_player"));
+    REQUIRE(!symbols.requires_dynamic_dispatch(*derived, "move_player"));
 
     const auto inherited = symbols.inherited_members(*derived);
     REQUIRE(std::any_of(inherited.begin(), inherited.end(),
@@ -128,13 +128,11 @@ TEST_CASE("script symbols resolve project-wide internal native identities") {
     gdpp::ScriptMemberSymbol value;
     value.name = "value";
     value.type = {gdpp::TypeKind::object, "GDPPNative_Messages__Message"};
-    value.parameters.push_back(
-        {gdpp::TypeKind::array, "Array[GDPPNative_Messages__Message]"});
+    value.parameters.push_back({gdpp::TypeKind::array, "Array[GDPPNative_Messages__Message]"});
     consumer.members.push_back(value);
     symbols.add(std::move(consumer));
 
-    symbols.update_class_identity("messages.gd", "GDPPNative_Messages_v2",
-                                  "messages_v2.gd.hpp");
+    symbols.update_class_identity("messages.gd", "GDPPNative_Messages_v2", "messages_v2.gd.hpp");
     REQUIRE(symbols.find_native_class("GDPPNative_Messages") == nullptr);
     REQUIRE(symbols.find_inner_native("GDPPNative_Messages__Message") == nullptr);
     REQUIRE(symbols.find_inner_native("GDPPNative_Messages_v2__Message") != nullptr);
