@@ -57,7 +57,7 @@ RUNTIME_FIELDS = {
 COMMON_FIELDS = {
     "distribution_binding": "template_release",
     "distribution_optimization": "Release",
-    "gdpp_version": "1.7.6",
+    "gdpp_version": "1.7.7",
     "cxx_standard": "17",
     "exceptions": "disabled",
     **RUNTIME_FIELDS,
@@ -90,7 +90,7 @@ def create_host_component(root: Path, host_name: str, godot_version: str) -> Pat
     addon = root / f"gdpp-host-{host_name}-godot-{godot_version}" / "addons/gdpp"
     for relative in package_release.STATIC_ADDON_FILES:
         write(addon / relative)
-    write(addon / "plugin.cfg", '[plugin]\nversion="1.7.6"\n')
+    write(addon / "plugin.cfg", '[plugin]\nversion="1.7.7"\n')
     write(addon / "gdpp.gdextension", '[configuration]\ncompatibility_minimum = "4.4"\n')
     write(addon / "binary" / host.compiler_library, f"compiler-{host_name}")
     write(addon / "binary" / host.fallback_library, f"fallback-{host_name}")
@@ -216,7 +216,7 @@ class CompleteReleasePackagingTest(unittest.TestCase):
         stage, name, version = package_complete_release.stage_complete_package(
             components, self.temporary / "release", godot_version
         )
-        self.assertEqual(version, "1.7.6")
+        self.assertEqual(version, "1.7.7")
         return stage, name
 
     def test_each_sdk_version_has_one_install_ready_complete_package(self) -> None:
