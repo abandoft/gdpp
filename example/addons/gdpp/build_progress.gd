@@ -1,18 +1,46 @@
 @tool
-extends CanvasLayer
+extends Window
 
 const PANEL_SIZE := Vector2(480.0, 136.0)
+const WINDOW_MARGIN := Vector2(6.0, 6.0)
 const PANEL_COLOR := Color(0.075, 0.086, 0.11, 0.98)
 const TRACK_COLOR := Color(0.18, 0.2, 0.24, 1.0)
 const FILL_COLOR := Color(0.24, 0.58, 0.96, 1.0)
-const FILL_COLUMN_COUNT := 424
+const PHASE_ORDER := [
+    "scan",
+    "parse",
+    "analyze",
+    "translate",
+    "generate",
+    "compile",
+    "link",
+]
+const STAGE_TEXT := {
+    "prepare": "Preparing AOT export",
+    "development": "Validating the editor-native bridge",
+    "debug": "Building the debug export",
+    "release": "Building the release export",
+}
+const PHASE_TEXT := {
+    "scan": "Scanning project sources",
+    "parse": "Parsing GDScript files",
+    "analyze": "Analyzing project semantics",
+    "translate": "Precompiling project scripts",
+    "generate": "Writing native build files",
+    "compile": "Compiling project sources",
+    "link": "Linking the native library",
+    "complete": "AOT build complete",
+}
 
 var _surface: Control
-var _fill_columns: Array[ColorRect] = []
-var _phase_labels: Dictionary = {}
-var _profile_labels: Dictionary = {}
+var _fill: ColorRect
+var _track: ColorRect
+var _stage_label: Label
+var _phase_label: Label
+var _item_counter: Label
+var _stages := PackedStringArray()
+var _active_stage := ""
 var _active_phase := ""
-var _active_profile := ""
 var _displayed_progress := 0.0
 
 
@@ -20,127 +48,136 @@ func _ready() -> void:
     if DisplayServer.get_name().to_lower() == "headless":
         return
 
-    layer = 127
+    name = "GDPPNativeBuildProgress"
+    title = "GDPP Native Build"
+    unresizable = true
+    borderless = true
+    transient = true
+    transient_to_focused = true
+    exclusive = true
+    visible = false
+    close_requested.connect(_keep_open_during_build)
+
     var editor_scale := EditorInterface.get_editor_scale()
     var panel_size := PANEL_SIZE * editor_scale
+    var window_margin := WINDOW_MARGIN * editor_scale
+    var window_size := Vector2i(ceil(panel_size.x + window_margin.x * 2.0), ceil(
+        panel_size.y + window_margin.y * 2.0
+    ))
+    size = window_size
+    min_size = window_size
 
     _surface = Control.new()
-    _surface.name = "GDPPNativeBuildProgress"
-    _surface.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    _surface.mouse_filter = Control.MOUSE_FILTER_STOP
     _surface.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-    _surface.modulate = Color(1.0, 1.0, 1.0, 0.0)
     add_child(_surface)
 
     var shadow := ColorRect.new()
+    shadow.position = Vector2(0.0, 5.0) * editor_scale
+    shadow.size = Vector2(window_size)
     shadow.color = Color(0.0, 0.0, 0.0, 0.34)
-    _place_centered(shadow, panel_size + Vector2(12.0, 12.0) * editor_scale)
-    shadow.position += Vector2(0.0, 5.0) * editor_scale
     _surface.add_child(shadow)
 
     var panel := ColorRect.new()
+    panel.position = window_margin
+    panel.size = panel_size
     panel.color = PANEL_COLOR
-    _place_centered(panel, panel_size)
     _surface.add_child(panel)
 
-    var title := _make_label(
+    var title_label := _make_label(
         "GDPP Native Build",
         Vector2(28.0, 16.0) * editor_scale,
         Vector2(424.0, 28.0) * editor_scale,
         int(round(18.0 * editor_scale))
     )
-    panel.add_child(title)
+    panel.add_child(title_label)
 
-    for profile in ["prepare", "development", "debug", "release"]:
-        var profile_text: String = {
-            "prepare": "Preparing binary-only export",
-            "development": "Validating the editor-native bridge",
-            "debug": "Building the debug export library",
-            "release": "Building the release export library",
-        }[profile]
-        var profile_label := _make_label(
-            profile_text,
-            Vector2(28.0, 43.0) * editor_scale,
-            Vector2(424.0, 22.0) * editor_scale,
-            int(round(13.0 * editor_scale))
-        )
-        profile_label.modulate = Color(0.72, 0.76, 0.83, 0.0)
-        panel.add_child(profile_label)
-        _profile_labels[profile] = profile_label
+    _stage_label = _make_label(
+        STAGE_TEXT["prepare"],
+        Vector2(28.0, 43.0) * editor_scale,
+        Vector2(424.0, 22.0) * editor_scale,
+        int(round(13.0 * editor_scale))
+    )
+    _stage_label.modulate = Color(0.72, 0.76, 0.83, 1.0)
+    panel.add_child(_stage_label)
 
-    for phase in ["scan", "parse", "analyze", "translate", "generate", "compile", "link", "complete"]:
-        var phase_text: String = {
-            "scan": "Scanning project sources",
-            "parse": "Parsing GDScript files",
-            "analyze": "Analyzing project semantics",
-            "translate": "Translating GDScript to C++",
-            "generate": "Writing native build files",
-            "compile": "Compiling C++ translation units",
-            "link": "Linking the native library",
-            "complete": "Native build complete",
-        }[phase]
-        var phase_label := _make_label(
-            phase_text,
-            Vector2(28.0, 67.0) * editor_scale,
-            Vector2(424.0, 22.0) * editor_scale,
-            int(round(13.0 * editor_scale))
-        )
-        phase_label.modulate = Color(0.94, 0.95, 0.98, 0.0)
-        panel.add_child(phase_label)
-        _phase_labels[phase] = phase_label
+    _phase_label = _make_label(
+        PHASE_TEXT["scan"],
+        Vector2(28.0, 67.0) * editor_scale,
+        Vector2(340.0, 22.0) * editor_scale,
+        int(round(13.0 * editor_scale))
+    )
+    _phase_label.modulate = Color(0.94, 0.95, 0.98, 1.0)
+    panel.add_child(_phase_label)
 
-    var track := ColorRect.new()
-    track.position = Vector2(28.0, 101.0) * editor_scale
-    track.size = Vector2(424.0, 12.0) * editor_scale
-    track.color = TRACK_COLOR
-    track.clip_contents = true
-    panel.add_child(track)
+    _item_counter = _make_label(
+        "",
+        Vector2(368.0, 67.0) * editor_scale,
+        Vector2(84.0, 22.0) * editor_scale,
+        int(round(12.0 * editor_scale))
+    )
+    _item_counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+    _item_counter.modulate = Color(0.72, 0.76, 0.83, 1.0)
+    panel.add_child(_item_counter)
 
-    var column_width := track.size.x / float(FILL_COLUMN_COUNT)
-    for index in range(FILL_COLUMN_COUNT):
-        var column := ColorRect.new()
-        column.position = Vector2(float(index) * column_width, 0.0)
-        column.size = Vector2(column_width + 0.5, track.size.y)
-        column.color = FILL_COLOR
-        column.modulate = Color(1.0, 1.0, 1.0, 0.0)
-        track.add_child(column)
-        _fill_columns.push_back(column)
+    _track = ColorRect.new()
+    _track.position = Vector2(28.0, 101.0) * editor_scale
+    _track.size = Vector2(424.0, 12.0) * editor_scale
+    _track.color = TRACK_COLOR
+    _track.clip_contents = true
+    panel.add_child(_track)
+
+    _fill = ColorRect.new()
+    _fill.position = Vector2.ZERO
+    _fill.size = Vector2(0.0, _track.size.y)
+    _fill.color = FILL_COLOR
+    _track.add_child(_fill)
 
 
 func is_available() -> bool:
-    return _surface != null and _fill_columns.size() == FILL_COLUMN_COUNT
-
-
-func begin() -> void:
-    if not is_available():
-        return
-    _displayed_progress = 0.0
-    _set_profile("prepare")
-    _set_phase("scan")
-    _set_progress(0.0)
-    _surface.modulate = Color.WHITE
-    _redraw_now()
-
-
-func set_translation_profile(profile: String) -> void:
-    if not is_available():
-        return
-    _displayed_progress = 0.0
-    _set_profile(profile)
-    _set_phase("scan")
-    _set_progress(0.0)
-    _redraw_now()
-
-
-func update(profile: String, phase: String, completed: int, total: int) -> void:
-    if not is_available():
-        return
-    _set_profile(profile)
-    var known_phase := phase if _phase_labels.has(phase) else "compile"
-    _set_phase(known_phase)
-    var phase_progress := (
-        1.0 if total <= 0 else clampf(float(completed) / float(total), 0.0, 1.0)
+    return (
+        _surface != null
+        and _fill != null
+        and _stage_label != null
+        and _phase_label != null
     )
-    _set_progress(_overall_progress(known_phase, phase_progress))
+
+
+func begin(stages: PackedStringArray) -> void:
+    if not is_available():
+        return
+    _stages = _normalized_stages(stages)
+    _active_stage = ""
+    _active_phase = ""
+    _displayed_progress = 0.0
+    _set_stage("prepare")
+    _set_phase("scan")
+    _set_item_counter(0, 0)
+    _set_progress(0.0)
+    popup_centered(size)
+    _redraw_now()
+
+
+func set_active_stage(stage: String) -> void:
+    if not is_available():
+        return
+    _set_stage(stage)
+    _set_phase("scan")
+    _set_item_counter(0, 0)
+    _set_progress(calculate_hierarchical_progress(_stages, stage, "scan", 0, 1))
+    _redraw_now()
+
+
+func update(stage: String, phase: String, completed: int, total: int) -> void:
+    if not is_available():
+        return
+    _set_stage(stage)
+    var known_phase := phase if PHASE_TEXT.has(phase) else "compile"
+    _set_phase(known_phase)
+    _set_item_counter(completed, total)
+    _set_progress(
+        calculate_hierarchical_progress(_stages, stage, known_phase, completed, total)
+    )
     _redraw_now()
 
 
@@ -148,66 +185,80 @@ func finish() -> void:
     if not is_available():
         return
     _set_phase("complete")
+    _set_item_counter(0, 0)
     _set_progress(1.0)
     _redraw_now()
-    _surface.modulate = Color(1.0, 1.0, 1.0, 0.0)
+    hide()
     _redraw_now()
+
+
+static func calculate_hierarchical_progress(
+    stages: PackedStringArray,
+    stage: String,
+    phase: String,
+    completed: int,
+    total: int
+) -> float:
+    var stage_count := maxi(stages.size(), 1)
+    var stage_index := stages.find(stage)
+    if stage_index < 0:
+        stage_index = 0
+    if phase == "complete":
+        return clampf(float(stage_index + 1) / float(stage_count), 0.0, 1.0)
+
+    var phase_index := PHASE_ORDER.find(phase)
+    if phase_index < 0:
+        phase_index = PHASE_ORDER.find("compile")
+    var item_progress := (
+        1.0 if total <= 0 else clampf(float(completed) / float(total), 0.0, 1.0)
+    )
+    var stage_progress := (
+        float(phase_index) + item_progress
+    ) / float(PHASE_ORDER.size())
+    return clampf(
+        (float(stage_index) + stage_progress) / float(stage_count),
+        0.0,
+        1.0
+    )
+
+
+func _normalized_stages(stages: PackedStringArray) -> PackedStringArray:
+    var normalized := PackedStringArray()
+    for stage in stages:
+        if STAGE_TEXT.has(stage) and stage != "prepare" and not normalized.has(stage):
+            normalized.push_back(stage)
+    if normalized.is_empty():
+        normalized.push_back("development")
+    return normalized
+
+
+func _set_stage(stage: String) -> void:
+    var known_stage := stage if STAGE_TEXT.has(stage) else "prepare"
+    if known_stage == _active_stage:
+        return
+    _stage_label.text = STAGE_TEXT[known_stage]
+    _active_stage = known_stage
 
 
 func _set_phase(phase: String) -> void:
-    if phase == _active_phase:
+    var known_phase := phase if PHASE_TEXT.has(phase) else "compile"
+    if known_phase == _active_phase:
         return
-    if _phase_labels.has(_active_phase):
-        _phase_labels[_active_phase].modulate = Color(0.94, 0.95, 0.98, 0.0)
-    _phase_labels[phase].modulate = Color(0.94, 0.95, 0.98, 1.0)
-    _active_phase = phase
+    _phase_label.text = PHASE_TEXT[known_phase]
+    _active_phase = known_phase
 
 
-func _set_profile(profile: String) -> void:
-    if profile == _active_profile:
-        return
-    if not _profile_labels.has(profile):
-        profile = "prepare"
-    if _profile_labels.has(_active_profile):
-        _profile_labels[_active_profile].modulate = Color(0.72, 0.76, 0.83, 0.0)
-    _profile_labels[profile].modulate = Color(0.72, 0.76, 0.83, 1.0)
-    _active_profile = profile
+func _set_item_counter(completed: int, total: int) -> void:
+    _item_counter.text = (
+        "%d / %d" % [clampi(completed, 0, total), total]
+        if total > 1
+        else ""
+    )
 
 
 func _set_progress(progress: float) -> void:
     _displayed_progress = maxf(_displayed_progress, clampf(progress, 0.0, 1.0))
-    var visible_columns := int(floor(_displayed_progress * float(FILL_COLUMN_COUNT)))
-    for index in range(FILL_COLUMN_COUNT):
-        var alpha := 1.0 if index < visible_columns else 0.0
-        _fill_columns[index].modulate = Color(1.0, 1.0, 1.0, alpha)
-
-
-func _overall_progress(phase: String, phase_progress: float) -> float:
-    var phase_range := Vector2(0.58, 0.92)
-    match phase:
-        "scan":
-            phase_range = Vector2(0.0, 0.04)
-        "parse":
-            phase_range = Vector2(0.04, 0.16)
-        "analyze":
-            phase_range = Vector2(0.16, 0.36)
-        "translate":
-            phase_range = Vector2(0.36, 0.54)
-        "generate":
-            phase_range = Vector2(0.54, 0.58)
-        "compile":
-            phase_range = Vector2(0.58, 0.92)
-        "link":
-            phase_range = Vector2(0.92, 0.99)
-        "complete":
-            return 1.0
-    return lerpf(phase_range.x, phase_range.y, phase_progress)
-
-
-func _place_centered(control: Control, control_size: Vector2) -> void:
-    control.set_anchors_preset(Control.PRESET_CENTER)
-    control.position = control_size * -0.5
-    control.size = control_size
+    _fill.size = Vector2(_track.size.x * _displayed_progress, _track.size.y)
 
 
 func _make_label(text: String, position: Vector2, size: Vector2, font_size: int) -> Label:
@@ -218,6 +269,10 @@ func _make_label(text: String, position: Vector2, size: Vector2, font_size: int)
     label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
     label.add_theme_font_size_override("font_size", font_size)
     return label
+
+
+func _keep_open_during_build() -> void:
+    pass
 
 
 func _redraw_now() -> void:
