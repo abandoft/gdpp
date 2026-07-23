@@ -1857,25 +1857,20 @@ CodeGenerator::emit_bound_parameter_defaults(const std::vector<ir::Parameter>& p
     return result;
 }
 
-std::string CodeGenerator::vararg_callback_name(const ir::Function& function) {
-    return "_gdpp_vararg_call_" + sanitize_identifier(function.name);
+std::string CodeGenerator::method_callback_name(const ir::Function& function) {
+    return "_gdpp_variant_call_" + sanitize_identifier(function.name);
 }
 
-std::string CodeGenerator::emit_vararg_callback_declaration(const ir::Function& function) const {
-    if (!function.rest_parameter)
-        return {};
-    return "    static void " + vararg_callback_name(function) +
+std::string CodeGenerator::emit_method_callback_declaration(const ir::Function& function) const {
+    return "    static void " + method_callback_name(function) +
            "(void*, GDExtensionClassInstancePtr, const GDExtensionConstVariantPtr*, "
            "GDExtensionInt, GDExtensionVariantPtr, GDExtensionCallError*);\n";
 }
 
-std::string CodeGenerator::emit_vararg_callback_definition(
+std::string CodeGenerator::emit_method_callback_definition(
     const ir::Function& function, const std::string_view native_class,
     const std::string_view native_method, const std::string_view native_return_type) const {
-    if (!function.rest_parameter)
-        return {};
-
-    const auto callback = vararg_callback_name(function);
+    const auto callback = method_callback_name(function);
     const auto fixed_count = function.parameters.size();
     const auto required = static_cast<std::size_t>(
         std::count_if(function.parameters.begin(), function.parameters.end(),
@@ -1894,6 +1889,13 @@ std::string CodeGenerator::emit_vararg_callback_definition(
            << "        r_error->expected = " << required << ";\n"
            << "        " << fail_return << "\n"
            << "    }\n";
+    if (!function.rest_parameter) {
+        result << "    if (p_argument_count > " << fixed_count << ") {\n"
+               << "        r_error->error = GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS;\n"
+               << "        r_error->expected = " << fixed_count << ";\n"
+               << "        " << fail_return << "\n"
+               << "    }\n";
+    }
     if (!function.is_static) {
         result << "    if (!p_instance) {\n"
                << "        r_error->error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;\n"
@@ -1926,13 +1928,15 @@ std::string CodeGenerator::emit_vararg_callback_definition(
         }
     }
     const auto rest_name = "_gdpp_rest_arguments";
-    result << "    godot::Array " << rest_name << ";\n"
-           << "    " << rest_name << ".resize(p_argument_count > " << fixed_count
-           << " ? p_argument_count - " << fixed_count << " : 0);\n"
-           << "    for (GDExtensionInt index = " << fixed_count
-           << "; index < p_argument_count; ++index)\n"
-           << "        " << rest_name << "[index - " << fixed_count
-           << "] = *reinterpret_cast<const godot::Variant*>(p_args[index]);\n";
+    if (function.rest_parameter) {
+        result << "    godot::Array " << rest_name << ";\n"
+               << "    " << rest_name << ".resize(p_argument_count > " << fixed_count
+               << " ? p_argument_count - " << fixed_count << " : 0);\n"
+               << "    for (GDExtensionInt index = " << fixed_count
+               << "; index < p_argument_count; ++index)\n"
+               << "        " << rest_name << "[index - " << fixed_count
+               << "] = *reinterpret_cast<const godot::Variant*>(p_args[index]);\n";
+    }
     if (native_return_type != "void")
         result << "    godot::Variant result_value(";
     result << "    ";
@@ -1946,9 +1950,12 @@ std::string CodeGenerator::emit_vararg_callback_definition(
             result << ", ";
         result << "_gdpp_positional_" << index;
     }
-    if (fixed_count != 0)
-        result << ", ";
-    result << rest_name << ')';
+    if (function.rest_parameter) {
+        if (fixed_count != 0)
+            result << ", ";
+        result << rest_name;
+    }
+    result << ')';
     if (native_return_type != "void")
         result << ')';
     result << ";\n";
@@ -1961,11 +1968,9 @@ std::string CodeGenerator::emit_vararg_callback_definition(
 }
 
 std::string
-CodeGenerator::emit_vararg_registration(const ir::Function& function,
+CodeGenerator::emit_method_registration(const ir::Function& function,
                                         const std::string_view native_class,
                                         const std::string_view native_return_type) const {
-    if (!function.rest_parameter)
-        return {};
     std::ostringstream result;
     result << "    {\n"
            << "        godot::MethodInfo method(" << native_property_info(function.return_type, "")
@@ -1981,9 +1986,10 @@ CodeGenerator::emit_vararg_registration(const ir::Function& function,
                       "gdpp::runtime::default_argument());\n";
         }
     }
-    result << "        gdpp::runtime::bind_vararg_method(" << native_class
+    result << "        gdpp::runtime::bind_"
+           << (function.rest_parameter ? "vararg_method(" : "variant_method(") << native_class
            << "::get_class_static(), method, &" << native_class
-           << "::" << vararg_callback_name(function) << ", "
+           << "::" << method_callback_name(function) << ", "
            << (native_return_type == "void" ? "false" : "true") << ");\n"
            << "    }\n";
     return result.str();
@@ -5331,9 +5337,9 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
     }
     header << "\nprotected:\n    static void _bind_methods();\n";
     for (const auto& function : declaration.functions) {
-        if (function.rest_parameter && function.name != "_init" &&
-            function.name != "_static_init" && !engine_virtual_for(function)) {
-            header << emit_vararg_callback_declaration(function);
+        if (function.name != "_init" && function.name != "_static_init" &&
+            !engine_virtual_for(function)) {
+            header << emit_method_callback_declaration(function);
         }
     }
     bool fields = false;
@@ -5845,19 +5851,8 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         if (function.name == "_init" || function.name == "_static_init" ||
             (!function.is_static && engine_virtual_for(function)))
             continue;
-        if (function.rest_parameter) {
-            source << emit_vararg_registration(function, native_name,
-                                               function_return_type(function));
-            continue;
-        }
-        source << "    godot::ClassDB::bind_" << (function.is_static ? "static_" : "") << "method(";
-        if (function.is_static)
-            source << "get_class_static(), ";
-        source << "godot::D_METHOD(" << godot_text_argument(function.name);
-        for (const auto& parameter : function.parameters)
-            source << ", " << godot_text_argument(parameter.name);
-        source << "), &" << native_name << "::" << function_native_name(function)
-               << emit_bound_parameter_defaults(function.parameters) << ");\n";
+        source << emit_method_registration(function, native_name,
+                                           function_return_type(function));
     }
     for (const auto& field : declaration.fields) {
         if (field.is_constant || field.is_static)
@@ -6019,11 +6014,11 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         current_coroutine_state_.clear();
     }
     for (const auto& function : declaration.functions) {
-        if (!function.rest_parameter || function.name == "_init" ||
-            function.name == "_static_init" || engine_virtual_for(function)) {
+        if (function.name == "_init" || function.name == "_static_init" ||
+            engine_virtual_for(function)) {
             continue;
         }
-        source << emit_vararg_callback_definition(
+        source << emit_method_callback_definition(
             function, native_name, function_native_name(function), function_return_type(function));
     }
     local_function_parameters_ = previous_function_parameters;
@@ -6566,13 +6561,13 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     header << "protected:\n"
            << "    static void _bind_methods();\n\n";
     for (const auto& function : module.functions) {
-        if (function.rest_parameter && function.name != "_static_init" &&
-            (attached_script || function.name != "_init") && !virtual_method_for(function)) {
-            header << emit_vararg_callback_declaration(function);
+        if (function.name != "_static_init" && (attached_script || function.name != "_init") &&
+            !virtual_method_for(function)) {
+            header << emit_method_callback_declaration(function);
         }
     }
     if (std::any_of(module.functions.begin(), module.functions.end(), [&](const auto& function) {
-            return function.rest_parameter && function.name != "_static_init" &&
+            return function.name != "_static_init" &&
                    (attached_script || function.name != "_init") && !virtual_method_for(function);
         })) {
         header << '\n';
@@ -7155,20 +7150,8 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         if ((!attached_script && function.name == "_init") || function.name == "_static_init" ||
             (!function.is_static && virtual_method_for(function)))
             continue;
-        if (function.rest_parameter) {
-            source << emit_vararg_registration(function, unit.class_name,
-                                               function_return_type(function));
-            continue;
-        }
-        source << "    godot::ClassDB::bind_" << (function.is_static ? "static_" : "") << "method(";
-        if (function.is_static)
-            source << "get_class_static(), ";
-        source << "godot::D_METHOD(" << godot_text_argument(function.name);
-        for (const auto& parameter : function.parameters) {
-            source << ", " << godot_text_argument(parameter.name);
-        }
-        source << "), &" << unit.class_name << "::" << function_native_name(function)
-               << emit_bound_parameter_defaults(function.parameters) << ");\n";
+        source << emit_method_registration(function, unit.class_name,
+                                           function_return_type(function));
     }
     for (const auto& signal : module.signals) {
         source << "    ADD_SIGNAL(godot::MethodInfo(" << godot_text_argument(signal.name);
@@ -7485,11 +7468,11 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         current_coroutine_state_.clear();
     }
     for (const auto& function : module.functions) {
-        if (!function.rest_parameter || function.name == "_static_init" ||
-            (!attached_script && function.name == "_init") || virtual_method_for(function)) {
+        if (function.name == "_static_init" || (!attached_script && function.name == "_init") ||
+            virtual_method_for(function)) {
             continue;
         }
-        source << emit_vararg_callback_definition(function, unit.class_name,
+        source << emit_method_callback_definition(function, unit.class_name,
                                                   function_native_name(function),
                                                   function_return_type(function));
     }

@@ -993,8 +993,9 @@ TEST_CASE("project compiler resolves class and path inheritance in parent-first 
     REQUIRE(result.scripts[1].class_name.find("GDPPNative_ProjectMiddle_") == 0);
     REQUIRE(result.scripts[2].class_name.find("GDPPNative_ProjectChild_") == 0);
     const auto base_source = read_text(options.output_directory / "generated/project_base.gd.cpp");
-    REQUIRE(base_source.find(
-                "bind_static_method(get_class_static(), godot::D_METHOD(\"static_answer\"") !=
+    REQUIRE(base_source.find("godot::StringName(\"static_answer\")") != std::string::npos);
+    REQUIRE(base_source.find("gdpp::runtime::bind_variant_method(") != std::string::npos);
+    REQUIRE(base_source.find("method.flags |= GDEXTENSION_METHOD_FLAG_STATIC") !=
             std::string::npos);
     const auto child_source =
         read_text(options.output_directory / "generated/project_child.gd.cpp");
@@ -2126,8 +2127,9 @@ TEST_CASE("project compiler isolates coroutine overrides behind dynamic script d
     const auto header = read_text(options.output_directory / "generated" / child->header_file_name);
     const auto source = read_text(options.output_directory / "generated" / child->source_file_name);
     REQUIRE(header.find("godot::Variant _gdpp_native_override_answer()") != std::string::npos);
-    REQUIRE(source.find("godot::D_METHOD(\"answer\"), &" + child->class_name +
-                        "::_gdpp_native_override_answer") != std::string::npos);
+    REQUIRE(source.find("godot::StringName(\"answer\")") != std::string::npos);
+    REQUIRE(source.find("&" + child->class_name + "::_gdpp_variant_call_answer") !=
+            std::string::npos);
     REQUIRE(source.find("_gdpp_native_override_answer()") != std::string::npos);
     REQUIRE(source.find("gdpp::runtime::call_dynamic(") != std::string::npos);
 }

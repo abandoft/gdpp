@@ -63,8 +63,8 @@ TEST_CASE("compiler lowers instance and static rest methods through the vararg A
     REQUIRE(
         result.unit.header.find("godot::Variant _gdpp_argument_optional, godot::Array values") !=
         std::string::npos);
-    REQUIRE(result.unit.header.find("_gdpp_vararg_call_collect") != std::string::npos);
-    REQUIRE(result.unit.header.find("_gdpp_vararg_call_join") != std::string::npos);
+    REQUIRE(result.unit.header.find("_gdpp_variant_call_collect") != std::string::npos);
+    REQUIRE(result.unit.header.find("_gdpp_variant_call_join") != std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::bind_vararg_method(") != std::string::npos);
     REQUIRE(result.unit.source.find("method.flags |= GDEXTENSION_METHOD_FLAG_STATIC") !=
             std::string::npos);
@@ -753,7 +753,8 @@ TEST_CASE("compiler preserves instance defaults and explicit null through native
             std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::is_default_argument(_gdpp_argument_pool) ? "
                                     "godot::Variant(fallback)") != std::string::npos);
-    REQUIRE(result.unit.source.find("DEFVAL(gdpp::runtime::default_argument())") !=
+    REQUIRE(result.unit.source.find(
+                "method.default_arguments.push_back(gdpp::runtime::default_argument())") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("DEFVAL(godot::Variant())") == std::string::npos);
     REQUIRE(result.unit.source.find("? static_cast<godot::Control*>(nullptr) : "
@@ -2309,7 +2310,8 @@ TEST_CASE("compiler emits pure virtual C++ for abstract method contracts") {
     REQUIRE(root.unit.header.find("virtual godot::String execute(int64_t value) = 0;") !=
             std::string::npos);
     REQUIRE(root.unit.source.find("GDPPNative_WorkContract::execute(") == std::string::npos);
-    REQUIRE(root.unit.source.find("&GDPPNative_WorkContract::execute") != std::string::npos);
+    REQUIRE(root.unit.source.find("&GDPPNative_WorkContract::_gdpp_variant_call_execute") !=
+            std::string::npos);
 
     REQUIRE(inner.success);
     REQUIRE_EQ(inner.unit.abstract_inner_class_names.size(), std::size_t{1});
@@ -2570,7 +2572,9 @@ TEST_CASE("compiler infers native Godot virtual signatures and escapes C++ keywo
     REQUIRE(result.unit.source.find("D_METHOD(\"_ready\"") == std::string::npos);
     REQUIRE(result.unit.source.find("D_METHOD(\"_process\"") == std::string::npos);
     REQUIRE(result.unit.source.find("D_METHOD(\"_input\"") == std::string::npos);
-    REQUIRE(result.unit.source.find("D_METHOD(\"throw\"") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::StringName(\"throw\")") != std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_variant_call__gdpp_id_7468726f77") !=
+            std::string::npos);
 }
 
 TEST_CASE("compiler adapts flexible GDScript virtual signatures to the exact engine ABI") {

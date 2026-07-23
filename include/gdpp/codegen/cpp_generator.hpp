@@ -82,13 +82,13 @@ class CodeGenerator final {
                                         std::size_t indent) const;
     [[nodiscard]] std::string
     emit_bound_parameter_defaults(const std::vector<ir::Parameter>& parameters) const;
-    [[nodiscard]] static std::string vararg_callback_name(const ir::Function& function);
-    [[nodiscard]] std::string emit_vararg_callback_declaration(const ir::Function& function) const;
+    [[nodiscard]] static std::string method_callback_name(const ir::Function& function);
+    [[nodiscard]] std::string emit_method_callback_declaration(const ir::Function& function) const;
     [[nodiscard]] std::string
-    emit_vararg_callback_definition(const ir::Function& function, std::string_view native_class,
+    emit_method_callback_definition(const ir::Function& function, std::string_view native_class,
                                     std::string_view native_method,
                                     std::string_view native_return_type) const;
-    [[nodiscard]] std::string emit_vararg_registration(const ir::Function& function,
+    [[nodiscard]] std::string emit_method_registration(const ir::Function& function,
                                                        std::string_view native_class,
                                                        std::string_view native_return_type) const;
     [[nodiscard]] std::string emit_api_argument(std::string_view api_type,
