@@ -17,6 +17,12 @@ namespace gdpp::ir {
 
 struct LambdaExpression;
 
+struct CallContract {
+    std::vector<Type> parameters;
+    std::size_t required_arguments{0};
+    bool is_vararg{false};
+};
+
 enum class ExpressionKind {
     literal,
     identifier,
@@ -93,6 +99,7 @@ struct Expression {
     bool coroutine_call{false};
     std::int64_t indexed_argument{-1};
     IntrinsicKind intrinsic{IntrinsicKind::none};
+    std::optional<CallContract> call_contract;
     std::vector<std::unique_ptr<Expression>> operands;
     std::unique_ptr<LambdaExpression> lambda;
 };

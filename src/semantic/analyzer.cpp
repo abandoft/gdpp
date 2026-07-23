@@ -396,6 +396,12 @@ SemanticModel::api_resolution_of(const ast::Expression& expression) const noexce
     return found == api_resolutions_.end() ? nullptr : &found->second;
 }
 
+const ResolvedCallContract*
+SemanticModel::call_contract_of(const ast::Expression& expression) const noexcept {
+    const auto found = call_contracts_.find(&expression);
+    return found == call_contracts_.end() ? nullptr : &found->second;
+}
+
 void SemanticAnalyzer::declare(Symbol symbol) {
     auto& scope = scopes_.back();
     const auto existing = scope.find(symbol.name);
@@ -506,6 +512,8 @@ void SemanticAnalyzer::validate_script_call(const ScriptMemberSymbol& member,
         diagnostics_.error("GDS4053", "script member '" + member.name + "' is not callable", span);
         return;
     }
+    model_.call_contracts_.insert_or_assign(
+        &call, ResolvedCallContract{member.parameters, member.required_arguments, member.is_vararg});
     if (arguments.size() < member.required_arguments ||
         (!member.is_vararg && arguments.size() > member.parameters.size())) {
         diagnostics_.error(
@@ -534,6 +542,15 @@ void SemanticAnalyzer::validate_local_call(const ast::FunctionDeclaration& funct
     const auto required = static_cast<std::size_t>(
         std::count_if(function.parameters.begin(), function.parameters.end(),
                       [](const auto& parameter) { return !parameter.default_value; }));
+    ResolvedCallContract contract;
+    contract.required_arguments = required;
+    contract.is_vararg = function.rest_parameter.has_value();
+    contract.parameters.reserve(function.parameters.size());
+    for (const auto& parameter : function.parameters) {
+        contract.parameters.push_back(parameter.type ? type_from_name(*parameter.type, parameter.span)
+                                                     : variant_type);
+    }
+    model_.call_contracts_.insert_or_assign(&call, contract);
     if (arguments.size() < required ||
         (!function.rest_parameter && arguments.size() > function.parameters.size())) {
         diagnostics_.error(
@@ -548,9 +565,7 @@ void SemanticAnalyzer::validate_local_call(const ast::FunctionDeclaration& funct
     }
     const auto checked = std::min(arguments.size(), function.parameters.size());
     for (std::size_t index = 0; index < checked; ++index) {
-        const auto& parameter = function.parameters[index];
-        const auto target =
-            parameter.type ? type_from_name(*parameter.type, parameter.span) : variant_type;
+        const auto target = contract.parameters[index];
         require_expression_assignable(
             target, *call.operand(index + 1), arguments[index], call.operand(index + 1)->span,
             "argument " + std::to_string(index + 1) + " of '" + function.name + "'");

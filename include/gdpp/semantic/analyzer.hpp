@@ -122,6 +122,12 @@ struct ApiResolution {
     bool read_only{false};
 };
 
+struct ResolvedCallContract {
+    std::vector<Type> parameters;
+    std::size_t required_arguments{0};
+    bool is_vararg{false};
+};
+
 class SemanticModel final {
   public:
     [[nodiscard]] Type type_of(const ast::Expression& expression) const;
@@ -149,6 +155,8 @@ class SemanticModel final {
     [[nodiscard]] const Symbol* symbol_of(const ast::Expression& expression) const noexcept;
     [[nodiscard]] const ApiResolution*
     api_resolution_of(const ast::Expression& expression) const noexcept;
+    [[nodiscard]] const ResolvedCallContract*
+    call_contract_of(const ast::Expression& expression) const noexcept;
     [[nodiscard]] const std::unordered_set<std::string>& referenced_script_paths() const noexcept {
         return referenced_script_paths_;
     }
@@ -180,6 +188,7 @@ class SemanticModel final {
     std::unordered_map<const ast::Expression*, std::int64_t> constant_integer_values_;
     std::unordered_map<const ast::Expression*, Symbol> referenced_symbols_;
     std::unordered_map<const ast::Expression*, ApiResolution> api_resolutions_;
+    std::unordered_map<const ast::Expression*, ResolvedCallContract> call_contracts_;
     std::unordered_set<std::string> referenced_script_paths_;
     std::unordered_set<std::string> referenced_extension_abis_;
 };

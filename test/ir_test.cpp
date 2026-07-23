@@ -132,6 +132,38 @@ TEST_CASE("typed IR owns function and lambda rest parameters") {
                         [](const auto& diagnostic) { return diagnostic.code == "GDS5043"; }));
 }
 
+TEST_CASE("typed IR owns resolved script call contracts") {
+    gdpp::DiagnosticBag diagnostics;
+    auto module = lower_source(
+        "func consume(value: PackedByteArray, optional: int = 1, ...extras: Array) -> void:\n"
+        "    value.append(optional)\n"
+        "func forward(value) -> void:\n"
+        "    consume(value, 2, \"tail\")\n",
+        diagnostics, gdpp::GodotVersion::v4_6);
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(module.functions.size(), std::size_t{2});
+    auto& call = *module.functions.at(1).body.front().expression;
+    REQUIRE_EQ(call.kind, gdpp::ir::ExpressionKind::call);
+    REQUIRE(call.call_contract.has_value());
+    REQUIRE_EQ(call.call_contract->parameters.size(), std::size_t{2});
+    REQUIRE_EQ(call.call_contract->parameters.front().kind, gdpp::TypeKind::builtin);
+    REQUIRE_EQ(call.call_contract->parameters.front().name, std::string{"PackedByteArray"});
+    REQUIRE_EQ(call.call_contract->parameters.at(1).kind, gdpp::TypeKind::integer);
+    REQUIRE_EQ(call.call_contract->required_arguments, std::size_t{1});
+    REQUIRE(call.call_contract->is_vararg);
+
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+
+    call.call_contract->required_arguments = 3;
+    gdpp::DiagnosticBag invalid_diagnostics;
+    gdpp::IrVerifier invalid_verifier{invalid_diagnostics};
+    REQUIRE(!invalid_verifier.verify(module));
+    REQUIRE(std::any_of(invalid_diagnostics.items().begin(), invalid_diagnostics.items().end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS5047"; }));
+}
+
 TEST_CASE("typed IR preserves shared container ownership through parameters") {
     gdpp::DiagnosticBag diagnostics;
     auto module = lower_source(

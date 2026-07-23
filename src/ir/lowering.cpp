@@ -423,6 +423,13 @@ ir::ExpressionPtr IrLowerer::lower_expression(const ast::Expression& expression)
     lowered->span = expression.span;
     lowered->value = expression.value();
     lowered->coroutine_call = semantic_.is_coroutine_call(expression);
+    if (const auto* contract = semantic_.call_contract_of(expression)) {
+        lowered->call_contract = ir::CallContract{
+            contract->parameters,
+            contract->required_arguments,
+            contract->is_vararg,
+        };
+    }
     if (const auto* resolution = semantic_.api_resolution_of(expression)) {
         if (resolution->kind == ApiResolutionKind::method)
             lowered->resolution = ir::ResolutionKind::godot_method;
@@ -949,6 +956,26 @@ bool IrVerifier::verify_expression(const ir::Expression& expression) {
         expression.literal_kind == ir::LiteralKind::none) {
         diagnostics_.error("GDS5003", "literal IR is missing its literal type", expression.span);
         valid = false;
+    }
+    if (expression.call_contract) {
+        if (expression.kind != ir::ExpressionKind::call) {
+            diagnostics_.error("GDS5046", "call contract is attached to non-call IR",
+                               expression.span);
+            valid = false;
+        }
+        if (expression.call_contract->required_arguments >
+            expression.call_contract->parameters.size()) {
+            diagnostics_.error("GDS5047", "call contract requires more arguments than it declares",
+                               expression.span);
+            valid = false;
+        }
+        for (const auto& parameter : expression.call_contract->parameters) {
+            if (parameter.kind == TypeKind::unknown || parameter.kind == TypeKind::void_type) {
+                diagnostics_.error("GDS5048", "call contract contains an invalid parameter type",
+                                   expression.span);
+                valid = false;
+            }
+        }
     }
     for (const auto& operand : expression.operands) {
         if (!operand || !verify_expression(*operand))
