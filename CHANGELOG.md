@@ -10,6 +10,7 @@
 - Generate declaration-local export reflection directly from the compiler's project semantic graph, including inherited script identity, stored-property usage, method arguments, signals, and cache hits; export no longer loads every customer `.gd`, runs static initialization, or retains cyclic GDScript resources.
 - Serialize only the source SceneState/Resource fields explicitly copied into each metadata-only ScriptInstance, leaving untouched defaults to the target C++ behavior constructor and preventing empty typed containers or `nil` values from overriding AOT defaults.
 - Route cross-script fields, methods, Autoloads, `is`/`as`, internal classes, RefCounted objects, and explicit `self` through one attached-script identity and dispatch contract; preserve direct static type access without converting C++ class names into Variants.
+- Dispatch ABI-compatible attached-script `self` calls through the generated C++ virtual hierarchy, while retaining ScriptLanguage dynamic dispatch for peer objects and ABI-changing overrides; the enforced GDScript/AOT runtime matrix now measures the optimized path without weakening its regression threshold.
 - Preserve semantic value types when attached or dynamic property reads cross the Variant boundary, including typed dictionaries and cross-script accessors.
 - Ship one optimized `template_release` godot-cpp archive per customer target SDK and use it for both Debug and Release exports; keep the compiler's editor binding private to the prebuilt plugin instead of distributing a second customer static library.
 - Replace the 16 per-version and complete archives with exactly three cross-version desktop packages: `gdpp-mac.zip`, `gdpp-linux.zip`, and `gdpp-win.zip`. Each package carries its own compiler/fallback and host Release SDKs for Godot 4.4–4.7; all three include Android and Web Release SDKs, while only macOS includes iOS.
@@ -30,6 +31,7 @@
 - Reduce the `GDPP AOT Build` overlay to a title and current-task row, and append a live per-file counter while compiling project sources.
 - Submit progress geometry and changing task text directly to the rendering server, synchronizing each forced presentation so Windows updates both without requiring window movement.
 - Add real threaded-build, main-thread progress-dispatch, JSON Dictionary runtime, headless progress-model, packaging, delivery, AddressSanitizer, ThreadSanitizer, and UndefinedBehaviorSanitizer gates for responsive editor behavior, hierarchical allocation, exact UI text, native memory/thread safety, and the single-fill implementation.
+- Isolate build-specific compiler descriptors under Godot's non-scanned `.godot` metadata directory and purge the retired add-on-local descriptor family during configuration, preventing duplicate ClassDB registration and broken Android scene conversion in reused build trees.
 
 ## 1.7.6
 
