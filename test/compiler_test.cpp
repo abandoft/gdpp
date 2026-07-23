@@ -363,6 +363,43 @@ TEST_CASE("compiler converts Variant storage at typed PackedArray call boundarie
     }
 }
 
+TEST_CASE("compiler applies internal call contracts to every native storage family") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "variant_internal_calls.gd",
+        "extends RefCounted\n"
+        "class Sink:\n"
+        "    func array(value: Array[String]) -> int: return value.size()\n"
+        "    func dictionary(value: Dictionary[String, int]) -> int: return value.size()\n"
+        "    func object(value: Node) -> String: return value.name\n"
+        "    func string(value: String) -> int: return value.length()\n"
+        "    func vector(value: Vector3) -> float: return value.x\n"
+        "func forward(array_value: Variant, dictionary_value: Variant,\n"
+        "        object_value: Variant, string_value: Variant, vector_value: Variant) -> void:\n"
+        "    var sink := Sink.new()\n"
+        "    sink.array(array_value)\n"
+        "    sink.dictionary(dictionary_value)\n"
+        "    sink.object(object_value)\n"
+        "    sink.string(string_value)\n"
+        "    sink.vector(vector_value)\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::strict_typed_storage<godot::TypedArray<godot::String>>("
+                "godot::Variant(_gdpp_call_argument_") != std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::strict_typed_storage<godot::TypedDictionary<godot::String, "
+                "int64_t>>(godot::Variant(_gdpp_call_argument_") != std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "godot::Object::cast_to<godot::Node>((_gdpp_call_argument_") != std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "static_cast<godot::String>(godot::Variant(_gdpp_call_argument_") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "static_cast<godot::Vector3>(godot::Variant(_gdpp_call_argument_") !=
+            std::string::npos);
+}
+
 TEST_CASE("semantic analysis validates typed container arguments eagerly") {
     const gdpp::Compiler compiler;
     const auto legal = compiler.compile("legal_containers.gd",
