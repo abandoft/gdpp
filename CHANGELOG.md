@@ -8,6 +8,7 @@
 - Bind public script methods through the Variant ABI so godot-cpp ptrcalls cannot trigger copy-on-write separation at GDExtension boundaries; route subscripts, iteration, method calls, and engine API conversions through the same shared-storage contract.
 - Advance the packaged SDK to schema 10 and runtime ABI 9, validating the new reference-semantics runtime throughout desktop, Android, iOS, and Web manifests.
 - Add GDScript/AOT differential coverage for every `PackedArray` type, reflected public method and property aliases, dynamic Signal/Callable boundaries, and byte-exact binary serialization under a real native Godot runtime.
+- Coordinate compiler PDB writes during parallel MSVC SDK builds so large godot-cpp targets cannot fail nondeterministically on database contention; customer exports remain serialized per translation unit.
 - Reduce the `GDPP AOT Build` overlay to a title and current-task row, and append a live per-file counter while compiling project sources.
 - Submit progress geometry and changing task text directly to the rendering server, synchronizing each forced presentation so Windows updates both without requiring window movement.
 - Add real threaded-build, main-thread progress-dispatch, JSON Dictionary runtime, headless progress-model, packaging, and delivery contracts for responsive editor behavior, hierarchical allocation, exact UI text, and the single-fill implementation.
