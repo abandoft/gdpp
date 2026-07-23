@@ -2437,6 +2437,9 @@ TEST_CASE("compiler covers strict and explicit Godot conversion families end to 
     REQUIRE(valid.unit.source.find(
                 "gdpp::runtime::explicit_variant_cast<int64_t>(godot::Variant(parse_source), "
                 "godot::Variant::INT)") != std::string::npos);
+    REQUIRE(valid.unit.source.find(
+                "gdpp::runtime::packed_array_storage<godot::PackedInt64Array>"
+                "(godot::Variant(values))") != std::string::npos);
     REQUIRE(!invalid.success);
     REQUIRE_EQ(std::count_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
                              [](const auto& diagnostic) { return diagnostic.code == "GDS4075"; }),

@@ -1733,6 +1733,10 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
         }
         return cpp_type(target) + "(godot::Variant(" + value + "))";
     }
+    if (target.is_packed_array()) {
+        return "gdpp::runtime::packed_array_storage<godot::" + target.name +
+               ">(godot::Variant(" + value + "))";
+    }
     if (target.kind == TypeKind::object && source.kind == TypeKind::object &&
         target.name != source.name) {
         auto source_object = value;

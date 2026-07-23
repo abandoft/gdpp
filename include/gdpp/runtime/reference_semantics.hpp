@@ -77,6 +77,20 @@ template <typename PackedArray> class SharedPackedArray final {
     godot::Variant value_;
 };
 
+template <typename PackedArray>
+[[nodiscard]] SharedPackedArray<PackedArray>
+packed_array_storage(const godot::Variant& value) {
+    const auto expected = static_cast<godot::Variant::Type>(
+        godot::internal::VariantInternalType<PackedArray>::type);
+    if (value.get_type() == expected)
+        return SharedPackedArray<PackedArray>(value);
+    if (!godot::Variant::can_convert_strict(value.get_type(), expected)) {
+        ERR_PRINT("GDPP: packed-array conversion received an incompatible Variant.");
+        return {};
+    }
+    return SharedPackedArray<PackedArray>(static_cast<PackedArray>(value));
+}
+
 } // namespace gdpp::runtime
 
 // Generated methods use SharedPackedArray internally, but their reflected ABI remains the exact
