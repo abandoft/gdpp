@@ -17,7 +17,7 @@
 - Make Visual Studio multi-config builds select Release SDKs explicitly, record the actual editor optimization, place plugin DLLs directly in the install-ready `binary` directory, and retain per-config release linking and Windows long-path coverage.
 - Reduce the `GDPP AOT Build` overlay to a title and current-task row, and append a live per-file counter while compiling project sources.
 - Submit progress geometry and changing task text directly to the rendering server, synchronizing each forced presentation so Windows updates both without requiring window movement.
-- Add real threaded-build, main-thread progress-dispatch, JSON Dictionary runtime, headless progress-model, packaging, delivery, AddressSanitizer, and UndefinedBehaviorSanitizer gates for responsive editor behavior, hierarchical allocation, exact UI text, native memory safety, and the single-fill implementation.
+- Add real threaded-build, main-thread progress-dispatch, JSON Dictionary runtime, headless progress-model, packaging, delivery, AddressSanitizer, ThreadSanitizer, and UndefinedBehaviorSanitizer gates for responsive editor behavior, hierarchical allocation, exact UI text, native memory/thread safety, and the single-fill implementation.
 
 ## 1.7.6
 
