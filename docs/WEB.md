@@ -91,9 +91,9 @@ addons/gdpp/build/project/native-direct/
 ```
 
 `build-configuration.txt` 同时记录原生构建修订、Godot API、平台、架构、profile、Emscripten
-路径和线程模式。任何一项变化都会使旧对象失效。Web 不支持 `development` profile：编辑器内
-场景转换始终先构建并加载桌面宿主的 development 库，分发阶段才交叉构建 Web debug/release
-模块，因此编辑器不会尝试加载 Wasm。
+路径和线程模式。任何一项变化都会使旧对象失效。导出期反射使用 compiler 提供的 metadata-only
+脚本描述，不先构建或加载桌面宿主项目库；一次 Web 导出只交叉编译当前线程模式和
+debug/release profile 的一个 Wasm 模块，编辑器不会尝试加载 Wasm。
 
 项目编译和 target pack 都启用源路径映射。Release Wasm 不应出现客户工程或构建机的绝对路径；
 SDK manifest 的 `source_paths mapped` 是强制契约，旧 target pack 会被安全拒绝。
@@ -136,7 +136,7 @@ Binaryen 全 feature 验证。`nothreads`/`threads` Release 文件分别为 1,01
 不含 shared 内存。target pack 分别为 87.99 MiB 和 90.57 MiB，其静态库及项目
 Wasm 都通过构建机/客户绝对路径泄漏审计。
 静态库时间戳变化的增量验收仅生成 1 条重链命令，不再重编译 12 个单元。
-Web debug 使用 `-O0 -g2 -sASSERTIONS=1`：保留函数名和断言，但不携带不可控的
-Emscripten 系统库 DWARF 绝对路径。
+Web Debug 与 Release 都使用 `-O3`、section GC 和裁剪后的 `template_release` 绑定；Debug
+仅额外保留 GDPP 脚本断言，不携带系统库 DWARF 绝对路径。
 该轮没有本地 Godot Web 导出模板和可自动化浏览器，因此不能把 CI 门禁“已实现”写成“已在
 本机浏览器通过”；流水线首次运行结果应补入平台实测报告。
