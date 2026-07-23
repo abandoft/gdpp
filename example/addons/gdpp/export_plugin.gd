@@ -1,6 +1,7 @@
 @tool
 extends EditorExportPlugin
 
+const NATIVE_BUILD_JOB := preload("res://addons/gdpp/native_build_job.gd")
 const OUTPUT_DIRECTORY := "res://addons/gdpp/build/project"
 const BINARY_DIRECTORY := "res://addons/gdpp/binary"
 const COMPILER_DESCRIPTOR := "res://addons/gdpp/gdpp.gdextension"
@@ -541,20 +542,20 @@ func _prepare_export_impl(features: PackedStringArray, is_debug: bool) -> bool:
     var development_progress := Callable()
     if _build_progress != null and _build_progress.is_available():
         development_progress = Callable(self, "_on_native_build_progress")
-    var development_result: Dictionary = _compiler.compile_project(
-        "res://",
-        OUTPUT_DIRECTORY,
-        sdk_root,
-        cpp_compiler,
-        target_version,
-        "development",
-        _compiler.get_host_platform(),
-        _compiler.get_host_architecture(),
-        "",
-        development_progress
-    )
-    if not _execute_build(development_result, "development"):
+    var development_outcome := _run_native_build({
+        "project_root": "res://",
+        "output_directory": OUTPUT_DIRECTORY,
+        "sdk_root": sdk_root,
+        "compiler_executable": cpp_compiler,
+        "target_version": target_version,
+        "build_profile": "development",
+        "target_platform": _compiler.get_host_platform(),
+        "target_architecture": _compiler.get_host_architecture(),
+        "target_variant": "",
+    }, development_progress)
+    if not _accept_build_outcome(development_outcome, "development"):
         return false
+    var development_result: Dictionary = development_outcome.get("plan", {})
     var development_library := str(development_result.get("output_library", ""))
     if development_library.is_empty() or not _native_artifact_exists(development_library):
         _fail_export("native development library was not produced: %s" % development_library)
@@ -586,20 +587,20 @@ func _prepare_export_impl(features: PackedStringArray, is_debug: bool) -> bool:
     var distribution_progress := Callable()
     if _build_progress != null and _build_progress.is_available():
         distribution_progress = Callable(self, "_on_native_build_progress")
-    var distribution_result: Dictionary = _compiler.compile_project(
-        "res://",
-        OUTPUT_DIRECTORY,
-        sdk_root,
-        distribution_compiler,
-        target_version,
-        _build_profile,
-        _target_platform,
-        _target_architecture,
-        _target_variant,
-        distribution_progress
-    )
-    if not _execute_build(distribution_result, _build_profile):
+    var distribution_outcome := _run_native_build({
+        "project_root": "res://",
+        "output_directory": OUTPUT_DIRECTORY,
+        "sdk_root": sdk_root,
+        "compiler_executable": distribution_compiler,
+        "target_version": target_version,
+        "build_profile": _build_profile,
+        "target_platform": _target_platform,
+        "target_architecture": _target_architecture,
+        "target_variant": _target_variant,
+    }, distribution_progress)
+    if not _accept_build_outcome(distribution_outcome, _build_profile):
         return false
+    var distribution_result: Dictionary = distribution_outcome.get("plan", {})
 
     _script_classes = distribution_result.get("script_classes", {})
     _attached_script_bases = distribution_result.get("attached_script_bases", {})
@@ -650,12 +651,22 @@ func _prepare_export_impl(features: PackedStringArray, is_debug: bool) -> bool:
     return true
 
 
-func _execute_build(result: Dictionary, label: String) -> bool:
-    _active_build_label = label
-    var progress_callback := Callable()
+func _run_native_build(request: Dictionary, progress_callback: Callable) -> Dictionary:
+    var job := NATIVE_BUILD_JOB.new()
+    var frame_callback := Callable()
     if _build_progress != null and _build_progress.is_available():
-        progress_callback = Callable(self, "_on_native_build_progress")
-    var execution: Dictionary = _compiler.execute_project_build(result, progress_callback)
+        frame_callback = Callable(_build_progress, "refresh")
+    return job.run(_compiler, request, progress_callback, frame_callback)
+
+
+func _accept_build_outcome(outcome: Dictionary, label: String) -> bool:
+    _active_build_label = label
+    var plan: Dictionary = outcome.get("plan", {})
+    if not plan.get("success", false):
+        for diagnostic in plan.get("diagnostics", []):
+            _fail_export("%s build: %s" % [label, diagnostic])
+        return false
+    var execution: Dictionary = outcome.get("execution", {})
     if not execution.get("success", false):
         for diagnostic in execution.get("diagnostics", []):
             _fail_export("%s build: %s" % [label, diagnostic])
