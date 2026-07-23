@@ -10,10 +10,10 @@ on:
         type: boolean
         default: false
       release_version:
-        description: Release version without a v prefix (for example, 1.7.0)
+        description: Release version without a v prefix (for example, 1.7.7)
         required: true
         type: string
-        default: 1.7.0
+        default: 1.7.7
 
 permissions:
   contents: read
@@ -105,15 +105,13 @@ jobs:
     uses: ./.github/workflows/ios.yml
 
   host-components:
-    name: Host / ${{ matrix.host }} / Godot ${{ matrix.godot }} SDK
+    name: Host / ${{ matrix.host }} / Godot 4.4-4.7 SDKs
     needs: [quality-gate, core-gate, native-gate, godot-gate, android-gate, web-gate, ios-gate]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
-        godot: [4.4, 4.5, 4.6, 4.7]
-        host: [mac-arm64, linux-x64, windows-x64]
         include:
           - host: mac-arm64
             os: macos-15
@@ -139,14 +137,14 @@ jobs:
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
-      - name: Configure one-version commercial host component
+      - name: Configure the cross-version commercial host component
         shell: bash
         run: |
           set -euo pipefail
           arguments=(
             --preset release
             "-DGDPP_GODOT_API_VERSION=$GDPP_COMPILER_GODOT_API"
-            "-DGDPP_PACKAGE_GODOT_VERSIONS=${{ matrix.godot }}"
+            "-DGDPP_PACKAGE_GODOT_VERSIONS=4.4;4.5;4.6;4.7"
           )
           if [[ "${{ matrix.host }}" == mac-arm64 ]]; then
             test "$(uname -m)" = arm64
@@ -155,30 +153,31 @@ jobs:
             arguments+=("-DCMAKE_CXX_COMPILER=cl.exe")
           fi
           cmake "${arguments[@]}"
-      - name: Build compiler and selected host SDK
+      - name: Build compiler and all host SDKs
         run: cmake --build --preset release --parallel
       - name: Run release tests
         run: ctest --preset release
-      - name: Validate host SDK and compiler ABI contract
+      - name: Validate all host SDK and compiler ABI contracts
         shell: bash
         run: |
           set -euo pipefail
           package=example/addons/gdpp
-          sdk="$package/sdk/${{ matrix.godot }}"
-          grep -q '^api ${{ matrix.godot }}$' "$sdk/sdk.manifest"
-          grep -q '^platform ${{ matrix.sdk_platform }}$' "$sdk/sdk.manifest"
-          grep -q '^arch ${{ matrix.sdk_arch }}$' "$sdk/sdk.manifest"
-          grep -q '^profiles debug,release$' "$sdk/sdk.manifest"
-          grep -q '^distribution_binding template_release$' "$sdk/sdk.manifest"
-          grep -q '^distribution_optimization Release$' "$sdk/sdk.manifest"
-          grep -q '^platform_minimum ${{ matrix.platform_minimum }}$' "$sdk/sdk.manifest"
           version="$(sed -n 's/^version="\([^"]*\)"$/\1/p' "$package/plugin.cfg")"
           test -n "$version"
-          grep -q "^gdpp_version $version$" "$sdk/sdk.manifest"
-          test "$(find "$package/sdk" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
-          test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*editor*' | wc -l)" -eq 0
-          test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_debug*' | wc -l)" -eq 0
-          test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_release*' | wc -l)" -eq 1
+          test "$(find "$package/sdk" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 4
+          for godot in 4.4 4.5 4.6 4.7; do
+            sdk="$package/sdk/$godot"
+            grep -q "^api $godot$" "$sdk/sdk.manifest"
+            grep -q '^platform ${{ matrix.sdk_platform }}$' "$sdk/sdk.manifest"
+            grep -q '^arch ${{ matrix.sdk_arch }}$' "$sdk/sdk.manifest"
+            grep -q '^profiles debug,release$' "$sdk/sdk.manifest"
+            grep -q '^distribution_binding template_release$' "$sdk/sdk.manifest"
+            grep -q '^distribution_optimization Release$' "$sdk/sdk.manifest"
+            grep -q '^platform_minimum ${{ matrix.platform_minimum }}$' "$sdk/sdk.manifest"
+            grep -q "^gdpp_version $version$" "$sdk/sdk.manifest"
+            test "$(find "$sdk/lib" -maxdepth 1 -type f | wc -l)" -eq 1
+            test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_release*' | wc -l)" -eq 1
+          done
           grep -q '^compatibility_minimum = "4.4"$' "$package/gdpp.gdextension"
       - name: Validate macOS arm64 and 11.0 minimum
         if: runner.os == 'macOS'
@@ -212,8 +211,7 @@ jobs:
             echo "Linux package requires GLIBC_$maximum_glibc, newer than GLIBC_2.35."
             exit 1
           fi
-          echo "Maximum required GLIBC version: $maximum_glibc"
-      - name: Remove project products and stage host component
+      - name: Remove project products and stage the host component
         shell: bash
         run: |
           set -euo pipefail
@@ -226,250 +224,97 @@ jobs:
           test ! -e "$destination/build"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: gdpp-host-${{ matrix.host }}-godot-${{ matrix.godot }}
+          name: gdpp-host-${{ matrix.host }}
           path: build/host-component
           if-no-files-found: error
           retention-days: 7
 
-  android-components:
-    name: Target / Android arm64 / Godot ${{ matrix.godot }}
-    needs: [quality-gate, core-gate, native-gate, godot-gate, android-gate, web-gate, ios-gate]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        godot: [4.4, 4.5, 4.6, 4.7]
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          submodules: recursive
-      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
-      - name: Install pinned Android NDK
-        run: sdkmanager "ndk;28.1.13356709"
-      - name: Build Android 9 arm64 target component
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --preset dev \
-            -DGDPP_ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/28.1.13356709" \
-            -DGDPP_ANDROID_SDK_VERSIONS=${{ matrix.godot }} \
-            -DGDPP_ANDROID_ARCHITECTURES=arm64
-          cmake --build --preset dev --target gdpp_android_sdk --parallel
-          sdk="example/addons/gdpp/sdk/${{ matrix.godot }}/android/arm64"
-          grep -q '^platform_minimum Android_9$' "$sdk/sdk.manifest"
-          grep -q '^android_api_level 28$' "$sdk/sdk.manifest"
-          destination="build/android-component/addons/gdpp/sdk/${{ matrix.godot }}/android"
-          mkdir -p "$destination"
-          cp -R "$sdk" "$destination/"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: gdpp-target-android-arm64-godot-${{ matrix.godot }}
-          path: build/android-component
-          if-no-files-found: error
-          retention-days: 7
-
-  ios-components:
-    name: Target / iOS arm64 / Godot ${{ matrix.godot }}
-    needs: [quality-gate, core-gate, native-gate, godot-gate, android-gate, web-gate, ios-gate]
-    runs-on: macos-15
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        godot: [4.4, 4.5, 4.6, 4.7]
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          submodules: recursive
-      - name: Build iOS 16 device and Universal Simulator target component
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(uname -m)" = arm64
-          cmake --preset dev -DGDPP_IOS_SDK_VERSIONS=${{ matrix.godot }}
-          cmake --build --preset dev --target gdpp_ios_sdk --parallel
-          sdk="example/addons/gdpp/sdk/${{ matrix.godot }}/ios/arm64"
-          grep -q '^platform_minimum iOS_16.0$' "$sdk/sdk.manifest"
-          grep -q '^ios_deployment_target 16.0$' "$sdk/sdk.manifest"
-          grep -q '^ios_slices device-arm64,simulator-arm64,simulator-x86_64$' \
-            "$sdk/sdk.manifest"
-          destination="build/ios-component/addons/gdpp/sdk/${{ matrix.godot }}/ios"
-          mkdir -p "$destination"
-          cp -R "$sdk" "$destination/"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: gdpp-target-ios-arm64-godot-${{ matrix.godot }}
-          path: build/ios-component
-          if-no-files-found: error
-          retention-days: 7
-
   packages:
-    name: ZIP / ${{ matrix.host }} / Godot ${{ matrix.godot }}
-    needs: [host-components, android-components, ios-components]
+    name: ZIP / ${{ matrix.package_host }} / Godot 4.4-4.7
+    needs: [host-components, android-gate, web-gate, ios-gate]
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        godot: [4.4, 4.5, 4.6, 4.7]
-        host: [mac-arm64, linux-x64, windows-x64]
+        include:
+          - package_host: mac
+            component_host: mac-arm64
+            archive: gdpp-mac.zip
+          - package_host: linux
+            component_host: linux-x64
+            archive: gdpp-linux.zip
+          - package_host: win
+            component_host: windows-x64
+            archive: gdpp-win.zip
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: gdpp-host-${{ matrix.host }}-godot-${{ matrix.godot }}
-          path: build/components/host
+          name: gdpp-host-${{ matrix.component_host }}
+          path: build/components/gdpp-host-${{ matrix.component_host }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: gdpp-target-android-arm64-godot-${{ matrix.godot }}
-          path: build/components/android
+          pattern: gdpp-android-arm64-godot-*
+          path: build/components
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: matrix.host == 'mac-arm64'
         with:
-          name: gdpp-target-ios-arm64-godot-${{ matrix.godot }}
-          path: build/components/ios
-      - name: Merge exact-version mobile target components
+          pattern: gdpp-web-godot-*
+          path: build/components
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: matrix.package_host == 'mac'
+        with:
+          pattern: gdpp-ios-godot-*
+          path: build/components
+      - name: Assemble the cross-version desktop plugin ZIP
         shell: bash
         run: |
           set -euo pipefail
-          addon=build/components/host/addons/gdpp
-          sdk="$addon/sdk/${{ matrix.godot }}"
-          cp -R \
-            "build/components/android/addons/gdpp/sdk/${{ matrix.godot }}/android" \
-            "$sdk/"
-          if [[ "${{ matrix.host }}" == mac-arm64 ]]; then
-            cp -R \
-              "build/components/ios/addons/gdpp/sdk/${{ matrix.godot }}/ios" \
-              "$sdk/"
-          fi
-      - name: Assemble and audit deterministic plugin ZIP
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/package_release.py \
-            --addon build/components/host/addons/gdpp \
+          python3 tools/package_platform_release.py \
+            --components build/components \
             --output build/release \
-            --host ${{ matrix.host }} \
-            --godot-version ${{ matrix.godot }}
-          archive="build/release/gdpp-${{ matrix.godot }}-${{ matrix.host }}.zip"
+            --host ${{ matrix.package_host }}
+      - name: Audit the platform and SDK matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="build/release/${{ matrix.archive }}"
           test -f "$archive"
           unzip -Z1 "$archive" > build/archive-contents.txt
-          grep -q '^addons/gdpp/build_progress.gd$' build/archive-contents.txt
-          grep -q '^addons/gdpp/native_build_job.gd$' build/archive-contents.txt
-          if grep -q 'template_debug' build/archive-contents.txt; then
-            echo 'Release ZIP contains a forbidden template_debug binding.'
-            exit 1
-          fi
-          test "$(grep -Ec '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/sdk\.manifest$' \
-            build/archive-contents.txt)" -eq 1
-          grep -q '^addons/gdpp/sdk/${{ matrix.godot }}/android/arm64/sdk.manifest$' \
-            build/archive-contents.txt
-          if [[ "${{ matrix.host }}" == mac-arm64 ]]; then
-            grep -q '^addons/gdpp/sdk/${{ matrix.godot }}/ios/arm64/sdk.manifest$' \
-              build/archive-contents.txt
-          elif grep -q '/ios/' build/archive-contents.txt; then
-            echo 'A non-macOS package contains the iOS target component.'
-            exit 1
-          fi
-          if grep -Eq '/web/|/build/|gdpp_project|\.DS_Store$|/\._' build/archive-contents.txt; then
-            echo 'Release ZIP contains a forbidden target or generated product.'
-            exit 1
-          fi
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: gdpp-release-${{ matrix.host }}-godot-${{ matrix.godot }}
-          path: build/release/*.zip
-          if-no-files-found: error
-          retention-days: 14
-
-  complete-packages:
-    name: ZIP / Complete / Godot ${{ matrix.godot }}
-    needs: [host-components, android-components, ios-components, web-gate]
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        godot: [4.4, 4.5, 4.6, 4.7]
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          pattern: gdpp-host-*-godot-${{ matrix.godot }}
-          path: build/complete-components
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: gdpp-target-android-arm64-godot-${{ matrix.godot }}
-          path: build/complete-components/gdpp-target-android-arm64-godot-${{ matrix.godot }}
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: gdpp-target-ios-arm64-godot-${{ matrix.godot }}
-          path: build/complete-components/gdpp-target-ios-arm64-godot-${{ matrix.godot }}
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          pattern: gdpp-web-godot-${{ matrix.godot }}-*
-          path: build/complete-components
-      - name: Assemble the install-ready complete plugin ZIP
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/package_complete_release.py \
-            --components build/complete-components \
-            --output build/release \
-            --godot-version ${{ matrix.godot }}
-      - name: Audit all desktop and export target components
-        shell: bash
-        run: |
-          set -euo pipefail
-          archive="build/release/gdpp-${{ matrix.godot }}.zip"
-          test -f "$archive"
-          unzip -Z1 "$archive" > build/complete-archive-contents.txt
-          contents=build/complete-archive-contents.txt
+          contents=build/archive-contents.txt
           grep -q '^addons/gdpp/build_progress.gd$' "$contents"
           grep -q '^addons/gdpp/native_build_job.gd$' "$contents"
           grep -q '^addons/gdpp/PACKAGE_MANIFEST.txt$' "$contents"
-          for binary in \
-            libgdpp_compiler.macos.arm64.dylib \
-            libgdpp_fallback.macos.arm64.dylib \
-            libgdpp_compiler.linux.x86_64.so \
-            libgdpp_fallback.linux.x86_64.so \
-            gdpp_compiler.windows.x86_64.dll \
-            gdpp_fallback.windows.x86_64.dll; do
-            grep -q "^addons/gdpp/binary/$binary$" "$contents"
+          test "$(grep -Ec '^addons/gdpp/binary/[^/]+$' "$contents")" -eq 2
+          for godot in 4.4 4.5 4.6 4.7; do
+            grep -q "^addons/gdpp/sdk/$godot/sdk.manifest$" "$contents"
+            grep -q "^addons/gdpp/sdk/$godot/android/arm64/sdk.manifest$" "$contents"
+            grep -q "^addons/gdpp/sdk/$godot/web/wasm32/nothreads/sdk.manifest$" "$contents"
+            grep -q "^addons/gdpp/sdk/$godot/web/wasm32/threads/sdk.manifest$" "$contents"
+            if [[ "${{ matrix.package_host }}" == mac ]]; then
+              grep -q "^addons/gdpp/sdk/$godot/ios/arm64/sdk.manifest$" "$contents"
+            elif grep -q "^addons/gdpp/sdk/$godot/ios/" "$contents"; then
+              echo 'A non-macOS package contains an iOS SDK.'
+              exit 1
+            fi
           done
-          test "$(grep -Ec '^addons/gdpp/binary/[^/]+$' "$contents")" -eq 6
-          for host_sdk in macos/arm64 linux/x86_64 windows/x86_64; do
-            grep -q \
-              "^addons/gdpp/sdk/${{ matrix.godot }}/$host_sdk/sdk.manifest$" \
-              "$contents"
-          done
-          for target_sdk in \
-            android/arm64 \
-            ios/arm64 \
-            web/wasm32/nothreads \
-            web/wasm32/threads; do
-            grep -q \
-              "^addons/gdpp/sdk/${{ matrix.godot }}/$target_sdk/sdk.manifest$" \
-              "$contents"
-          done
-          test "$(grep -Ec '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/.*/sdk\.manifest$' \
-            "$contents")" -eq 7
-          if grep -q "^addons/gdpp/sdk/${{ matrix.godot }}/sdk.manifest$" "$contents"; then
-            echo 'Complete package contains an ambiguous root host SDK manifest.'
+          test "$(grep -Eo '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/' "$contents" \
+            | sort -u | wc -l)" -eq 4
+          if grep -Eq \
+              'template_debug|\.editor\.|\.zip$|/build/|gdpp_project|\.DS_Store$|/\._' \
+              "$contents"; then
+            echo 'Release ZIP contains a forbidden binding or generated product.'
             exit 1
           fi
-          test "$(grep -Eo '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/' "$contents" \
-            | sort -u | wc -l)" -eq 1
-          if grep -Eq 'template_debug|\.zip$|/build/|gdpp_project|\.DS_Store$|/\._' \
+          if grep -Eq '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/(macos|linux|windows)/' \
               "$contents"; then
-            echo 'Complete package contains a forbidden nested or generated product.'
+            echo 'Release ZIP contains another desktop host SDK.'
             exit 1
           fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: gdpp-release-complete-godot-${{ matrix.godot }}
-          path: build/release/gdpp-${{ matrix.godot }}.zip
+          name: gdpp-release-${{ matrix.package_host }}
+          path: build/release/${{ matrix.archive }}
           if-no-files-found: error
           retention-days: 14
 
@@ -485,10 +330,7 @@ jobs:
       - web-gate
       - ios-gate
       - host-components
-      - android-components
-      - ios-components
       - packages
-      - complete-packages
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -503,19 +345,15 @@ jobs:
           WEB: ${{ needs.web-gate.result }}
           IOS: ${{ needs.ios-gate.result }}
           HOST_COMPONENTS: ${{ needs.host-components.result }}
-          ANDROID_COMPONENTS: ${{ needs.android-components.result }}
-          IOS_COMPONENTS: ${{ needs.ios-components.result }}
           PACKAGES: ${{ needs.packages.result }}
-          COMPLETE_PACKAGES: ${{ needs.complete-packages.result }}
         run: |
           set -euo pipefail
           for result in \
             "$QUALITY" "$CORE" "$NATIVE" "$GODOT" "$ANDROID" "$WEB" "$IOS" \
-            "$HOST_COMPONENTS" "$ANDROID_COMPONENTS" "$IOS_COMPONENTS" "$PACKAGES" \
-            "$COMPLETE_PACKAGES"; do
+            "$HOST_COMPONENTS" "$PACKAGES"; do
             test "$result" = success
           done
-          printf '### Complete delivery gate passed\n\nAll tests and 16 packages passed.\n' \
+          printf '### Complete delivery gate passed\n\nAll tests and 3 packages passed.\n' \
             >> "$GITHUB_STEP_SUMMARY"
 
   publish:
@@ -535,7 +373,7 @@ jobs:
           pattern: gdpp-release-*
           path: build/release
           merge-multiple: true
-      - name: Validate unprefixed version and 16-archive matrix
+      - name: Validate the unprefixed version and three-archive matrix
         shell: bash
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -559,13 +397,10 @@ jobs:
             echo "Release $RELEASE_VERSION appeared while the release was running."
             exit 1
           fi
-          for godot in 4.4 4.5 4.6 4.7; do
-            test -f "build/release/gdpp-$godot.zip"
-            for host in mac-arm64 linux-x64 windows-x64; do
-              test -f "build/release/gdpp-$godot-$host.zip"
-            done
+          for archive in gdpp-mac.zip gdpp-linux.zip gdpp-win.zip; do
+            test -f "build/release/$archive"
           done
-          test "$(find build/release -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 16
+          test "$(find build/release -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 3
       - name: Read release notes from CHANGELOG.md
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}
@@ -576,7 +411,7 @@ jobs:
           --output build/release-notes.md
       - name: Create checksums
         working-directory: build/release
-        run: LC_ALL=C sha256sum -- *.zip > SHA256SUMS
+        run: LC_ALL=C sha256sum -- gdpp-linux.zip gdpp-mac.zip gdpp-win.zip > SHA256SUMS
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ inputs.release_version }}
@@ -585,7 +420,9 @@ jobs:
           generate_release_notes: false
           fail_on_unmatched_files: true
           files: |
-            build/release/*.zip
+            build/release/gdpp-mac.zip
+            build/release/gdpp-linux.zip
+            build/release/gdpp-win.zip
             build/release/SHA256SUMS
       - name: Verify the published release contract
         shell: bash
@@ -600,20 +437,14 @@ jobs:
           test "$(jq -r '.draft' <<< "$release")" = false
           test "$(jq -r '.prerelease' <<< "$release")" = false
           test "$(jq '[.assets[] | select(.state == "uploaded" and .size > 0)] | length' \
-            <<< "$release")" -eq 17
-          test "$(jq '.assets | length' <<< "$release")" -eq 17
+            <<< "$release")" -eq 4
+          test "$(jq '.assets | length' <<< "$release")" -eq 4
           test "$(jq '[.assets[] | select(.name | endswith(".zip"))] | length' \
-            <<< "$release")" -eq 16
-          for godot in 4.4 4.5 4.6 4.7; do
-            test "$(jq --arg name "gdpp-$godot.zip" \
+            <<< "$release")" -eq 3
+          for name in gdpp-mac.zip gdpp-linux.zip gdpp-win.zip SHA256SUMS; do
+            test "$(jq --arg name "$name" \
               '[.assets[] | select(.name == $name)] | length' <<< "$release")" -eq 1
-            for host in mac-arm64 linux-x64 windows-x64; do
-              test "$(jq --arg name "gdpp-$godot-$host.zip" \
-                '[.assets[] | select(.name == $name)] | length' <<< "$release")" -eq 1
-            done
           done
-          test "$(jq '[.assets[] | select(.name == "SHA256SUMS")] | length' \
-            <<< "$release")" -eq 1
           test "$(git ls-remote origin "refs/tags/$RELEASE_VERSION" | awk '{print $1}')" \
             = "$GITHUB_SHA"
           printf 'Published %s: %s\n' "$RELEASE_VERSION" \
