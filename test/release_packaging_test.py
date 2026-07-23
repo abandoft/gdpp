@@ -22,6 +22,7 @@ sys.path.insert(0, str(SOURCE_ROOT / "tools"))
 import extract_changelog  # noqa: E402
 import package_platform_release  # noqa: E402
 import package_release  # noqa: E402
+import stage_host_component  # noqa: E402
 
 
 RUNTIME_CONTENT = {
@@ -348,8 +349,31 @@ class ReleasePackagingTest(unittest.TestCase):
         workflow = (SOURCE_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         for archive in ("gdpp-mac.zip", "gdpp-linux.zip", "gdpp-win.zip"):
             self.assertIn(archive, workflow)
+        self.assertIn("python3 tools/stage_host_component.py", workflow)
+        self.assertIn("--host '${{ matrix.host }}'", workflow)
         self.assertNotIn("complete-packages:", workflow)
         self.assertNotIn("16-archive matrix", workflow)
+
+    def test_host_staging_excludes_msvc_import_products(self) -> None:
+        source = create_host_component(self.temporary / "source", "windows-x64")
+        write(source / "binary/gdpp_compiler.windows.x86_64.lib")
+        write(source / "binary/gdpp_compiler.windows.x86_64.exp")
+        write(source / "binary/gdpp_fallback.windows.x86_64.lib")
+        write(source / "binary/gdpp_fallback.windows.x86_64.exp")
+        destination = self.temporary / "staged/addons/gdpp"
+
+        stage_host_component.stage_host_component(
+            source, destination, "windows-x64"
+        )
+
+        self.assertEqual(
+            {path.name for path in (destination / "binary").iterdir()},
+            {
+                "gdpp_compiler.windows.x86_64.dll",
+                "gdpp_fallback.windows.x86_64.dll",
+            },
+        )
+        self.assertFalse((destination / "build").exists())
 
     def test_changelog_uses_unprefixed_exact_version_section(self) -> None:
         content = "## 1.1.0\n\n- New\n\n## 1.0.0\n\n- Initial release\n"
