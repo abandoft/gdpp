@@ -6,6 +6,7 @@
 #include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/variant_internal.hpp>
 
+#include <cstddef>
 #include <type_traits>
 #include <utility>
 
@@ -60,8 +61,12 @@ template <typename PackedArray> class SharedPackedArray final {
     [[nodiscard]] godot::Variant& variant() noexcept { return value_; }
     [[nodiscard]] const godot::Variant& variant() const noexcept { return value_; }
 
-    operator PackedArray&() noexcept { return native(); }
-    operator const PackedArray&() const noexcept { return native(); }
+    // Native PackedArray views are deliberately explicit. Keeping both this view and the Variant
+    // view implicit makes `Variant(shared)` ambiguous on MSVC because both converting
+    // constructors are equally viable. Generated Godot API calls use packed_native_argument()
+    // below whenever the engine ABI requires the native PackedArray type.
+    explicit operator PackedArray&() noexcept { return native(); }
+    explicit operator const PackedArray&() const noexcept { return native(); }
     // godot-cpp's MethodBind return path assigns native results into Variant and therefore
     // requires this implicit view. Generated explicit Variant construction never relies on
     // overload resolution: it routes through to_variant() below.
@@ -89,6 +94,8 @@ struct IsSharedPackedArray<SharedPackedArray<PackedArray>> : std::true_type {};
 // Every generated native-to-Variant boundary routes through one overload-independent adapter.
 // This avoids compiler-specific constructor selection while retaining the exact Variant storage
 // that gives PackedArrays their GDScript shared-reference identity.
+[[nodiscard]] inline godot::Variant to_variant(std::nullptr_t) { return {}; }
+
 template <typename Value>
 [[nodiscard]] godot::Variant to_variant(Value&& value) {
     using Stored = std::remove_cv_t<std::remove_reference_t<Value>>;
@@ -96,6 +103,17 @@ template <typename Value>
         return value.variant();
     else
         return godot::Variant(std::forward<Value>(value));
+}
+
+// Keep SharedPackedArray's native conversion explicit without imposing copies on Godot API calls.
+// Raw godot-cpp PackedArrays pass through unchanged, so this adapter is also safe for temporary
+// results returned directly by another engine method.
+template <typename Value> [[nodiscard]] decltype(auto) packed_native_argument(Value&& value) {
+    using Stored = std::remove_cv_t<std::remove_reference_t<Value>>;
+    if constexpr (IsSharedPackedArray<Stored>::value)
+        return std::forward<Value>(value).native();
+    else
+        return std::forward<Value>(value);
 }
 
 template <typename PackedArray>
