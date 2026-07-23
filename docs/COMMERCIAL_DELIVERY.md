@@ -2,171 +2,136 @@
 
 ## 发行物
 
-正式 Release 固定生成 12 个 ZIP：`mac-arm64`、`linux-x64`、`windows-x64` 三种宿主分别与
-Godot 4.4、4.5、4.6、4.7 四个目标 SDK 组合。compiler 插件本体始终使用 Godot 4.4 ABI 构建，
-ZIP 中只保留所选目标版本的一套 SDK；不会因为目标 SDK 是 4.7 就把插件最低加载版本提高到
-4.7。发行物包含 compiler 插件、编辑器/导出脚本、预生成头文件、原生绑定静态库、空回退
-运行时、运行时源码、许可证、SDK 清单和机器可读的包清单，不包含用户脚本或游戏项目二进制。
+每个公开 ZIP 都是可直接复制到 Godot 项目的完整 `addons/gdpp`，不是多个插件压缩包的嵌套。
+发行工作流提供两类归档：
 
-三个宿主包都包含同 Godot 版本的 Android arm64 target pack，因此 Windows、Linux 和 macOS
-编辑器均可交叉导出 Android；`mac-arm64` 包额外包含 iOS arm64 真机和 Universal Simulator
-target pack。iOS 构建仍要求 Xcode，只能从 macOS 宿主执行。Web target pack 由 Web 专用流程
-独立交付，不混入这 12 个标准移动导出包。
+- 单宿主包：`gdpp-<Godot版本>-<宿主>.zip`，宿主为 `mac-arm64`、`linux-x64` 或
+  `windows-x64`；
+- 完整包：`gdpp-4.4.zip` 至 `gdpp-4.7.zip`，按一个 Godot SDK 版本组合三个桌面 compiler
+  动态库、三个桌面目标 SDK 和移动/Web target pack。
 
-| ZIP 宿主 | 宿主二进制编译基线 | 随包移动 target pack 编译基线 |
+compiler 插件固定使用最低 Godot 4.4 GDExtension ABI，同一前端支持 4.4～4.7 目标 API。目标
+SDK 版本决定客户项目库的 Godot ABI，不会改变 compiler 的最低加载版本。
+
+| 目标 | 交付架构 | 原生基线 |
 |---|---|---|
-| `windows-x64` | Windows 10 | Android arm64，Android 9 / API 28 |
-| `linux-x64` | Ubuntu 22.04 / glibc 2.35 | Android arm64，Android 9 / API 28 |
-| `mac-arm64` | macOS 11.0 | Android arm64，Android 9 / API 28；iOS arm64，iOS 16 |
+| Windows | x86_64 | Windows 10、MSVC 19.x、静态 CRT |
+| macOS | arm64 / Universal 2 | macOS 11.0 |
+| Linux | x86_64 | Ubuntu 22.04 / glibc 2.35 |
+| Android | arm64-v8a | Android 9 / API 28、`c++_shared` |
+| iOS | device arm64、Simulator arm64/x86_64 | iOS 16.0 |
+| Web | wasm32 threads / nothreads | Emscripten target pack |
 
-这些版本只描述 GDPP 预编译原生组件的 ABI 下限。自动导出测试不在项目预设中再次设置系统最低
-版本，而是使用对应 Godot 官方导出模板的默认配置，避免把插件构建基线误写成客户游戏的导出策略。
+完整包中的同一相对路径必须在各宿主组件间逐字节一致；平台二进制与 SDK 放入明确的
+platform/architecture 目录后再组合。打包器拒绝静态文件冲突、混合版本、嵌套 ZIP、build
+目录、客户项目库、AppleDouble/`.DS_Store` 和其他本地生成物。
 
-`binary/` 同时是本机最终动态库输出目录。制作插件发行包前，受保护的清理脚本会删除
-`addons/gdpp/build/` 和 `binary/gdpp_project.*`，保留 compiler 与 fallback。fallback 是开发期
-单描述符导出事务和显式普通 GDScript 预设使用的空运行时；成功 AOT 游戏导出不会携带它。启用源码
-剥离的商业预设默认是 fail-closed：AOT 任一步失败都会阻断交付，而不是自动改成交付源码。
+## 单绑定 SDK
 
-编译器插件自身不进入游戏。用户项目的 development、debug 与 release 动态库由目标项目本地
-生成，最终游戏只携带对应 debug/release 项目原生库和运行时描述符，不携带 GDPP 编译服务、SDK
-或生成 C++。
+compiler 动态库和客户目标 SDK 是两个隔离的 ABI 域：
 
-编辑态插件目录只有 `gdpp.gdextension` 一个物理 GDExtension 描述符。导出事务临时用目标
-项目库或 fallback 内容替换它参与 Godot 扫描，成品中的同一
-`addons/gdpp/gdpp.gdextension` 路径则写入项目运行描述符，最后恢复编辑态文件。该模型消除
-“两个描述符同时扫描、同一项目库重复装包”的歧义，也避免 Godot 用物理扫描路径过滤扩展注册表
-时丢失虚拟描述符；异常退出由 `.godot` 下的事务备份在下次启动恢复。
+- compiler 在 GDPP 发布构建中链接 godot-cpp `editor`，发行物只保留链接完成的动态库；
+- 客户 SDK 每个平台/架构/线程模式只携带一份 godot-cpp `template_release` 静态库。
 
-第三方 GDExtension 原生父类采用附着式 AOT。客户现有 GDScript、场景、资源、Autoload 与供应商
-插件均无需修改：供应商动态库继续拥有真实 Node/Resource，GDPP 项目库通过
-`ScriptLanguageExtension`/`ScriptExtension`/`ScriptInstance` 附着生成行为。供应商描述符和动态库
-原样进入游戏并先于项目运行时加载；macOS Universal 2 描述符只在验证双切片后为导出扫描临时
-规范化，成品保留原始字节，导出结束后恢复源工程文件。
+客户包不携带 `editor` 或 `template_debug` 静态库。Debug/Release 游戏导出都链接唯一
+`template_release`，Debug 的脚本断言和诊断由 GDPP 编译定义保留。这样不会因 profile 增加
+几百 MiB 重复绑定，也不会在一次导出中把客户翻译单元编译两遍。
 
-Release 项目库和 compiler/fallback 正式库执行死代码删除、局部符号裁剪和入口白名单。ELF
-使用 version script 与 `--exclude-libs`，Mach-O 使用 exported-symbol list，Windows 依赖
-明确 `dllexport`；发布审计必须确认项目库只公开 `gdpp_project_library_init`。
+SDK schema 11 和 runtime ABI 10 是强制契约。包清单记录版本、宿主、目标、最低系统与内容摘要；
+SDK 清单进一步记录 C++17、异常模型、工具链/CRT、目标 profile、唯一分发绑定、移动/Web ABI
+字段和所有 runtime 文件摘要。任一字段缺失或不一致都在客户编译前失败。
 
-每个公共插件包只携带一个目标版本 SDK。例如 `gdpp-4.5-windows-x64.zip` 只包含
-Windows compiler/fallback、Windows 4.5 宿主 SDK 和 Android 4.5 arm64 target pack，避免把
-其他 Godot 版本或 iOS/Web SDK 一并交付。macOS 对应包在相同内容上增加 iOS 4.5 arm64 target
-pack。ZIP 解压根固定为 `addons/gdpp`，可直接覆盖到 Godot 项目根目录。
+## 导出期职责
 
-## Windows 4.5 客户交付基线
+普通编辑、运行和导入完全沿用项目原有 `.gd`。只有启用 AOT 的导出触发项目编译，而且一次导出
+只构建用户选择的一个目标：
 
-2026-07-14 已使用 Windows 11 x86_64、官方 Godot 4.5.2 和 MSVC 对 Dungeon Rush 商业项目
-完成实机交付门禁：
+```text
+Debug export   -> 一次 frontend/codegen -> 一次 Debug 目标编译/链接
+Release export -> 一次 frontend/codegen -> 一次 Release 目标编译/链接
+```
 
-- [x] 客户插件只保留 Windows x86_64 compiler、fallback、Godot 4.5 SDK、插件脚本、描述符和
-  许可证，不保留 `addons/gdpp/build/` 或 `binary/gdpp_project.*` 临时项目库。
-- [x] 普通 Godot 进程能够自动发现 Visual Studio/Build Tools 并初始化 `vcvars`，客户不需要
-  从 Developer Command Prompt 启动，也不需要另装 CMake、Ninja、Python 或 godot-cpp。
-- [x] 客户侧保留的 4.5 SDK 约 303 MiB，其中主要体积来自 development/release 两份
-  godot-cpp 静态库；它们只参与本地链接，不进入导出的游戏。
-- [x] Dungeon Rush 共 197 个外部及内嵌脚本单元生成 development/release 项目库；最新 Release
-  游戏只增加一个 4,206,592 B（约 4.01 MiB）的 `gdpp_project.release.windows.x86_64.dll`。
-- [x] 最终 AOT PCK 共 1953 个项目文件，`.gd`/`.gdc`、compiler、SDK、生成 C++、对象文件和 fallback
-  泄漏数为 0。
-- [x] Release 成品先越过黑屏和工作室启动画面，再对非 UI 背景区域执行 0.8 秒连续帧采样，
-  主菜单滚动动效差值为 11.80；两轮菜单/关卡交互中的设置、移动、翻滚、攻击、背包、暂停冻结、
-  暂停内设置、恢复、退出到菜单和再次开始均正常，窗口响应及运行错误门禁通过。
-- [x] Windows 音频会话存在且未静音；菜单音乐峰值约 0.142，关卡内背包 UI 音效峰值约
-  0.418，不是只检查音频文件是否进入 PCK。
-- [x] 动态属性/下标赋值对值类型副本执行完整反向回写；除主菜单滚动背景外，同一修复覆盖激光
-  与碰撞体缩放、角色/武器翻转、商店 UI 缩放、背包符文和道具状态等商业项目路径，并有独立
-  Godot 运行回归验证对象属性、脚本成员/局部 Variant、深层 Transform3D 和 Array/Dictionary
-  容器路径，而非只检查生成文本。
-- [x] 建立同机 ori/aot Release 对照：最新 AOT PCK 为 64,131,952 B，比 ori 增加 182,212 B；
-  已确认增长来自原生场景属性序列化，不是脚本或构建物泄漏。
-- [x] 复制场景存储属性时识别 Godot 动态 `metadata/<key>`，任何其他缺失原生属性都会在修改
-  场景树之前原子失败，不再静默丢数据。
-- [x] 针对 Godot 4.5 场景定制缓存未把 configuration hash 正确混入缓存目录的问题，将转换修订
-  和项目构建 ID 同时写入插件名称；修复编译器/导出器后不会复用失败导出留下的旧 `.scn`。
-- [x] 最新完整审计加载 1953 个包内文件和 331 个场景/资源，违规数为 0，完整导出目录恰好
-  一个 GDPP 项目动态库。
-- [x] 运行 1800 帧后由 scene 级 terminator 逆序清空成员 `preload()`、`const preload` 缓存和
-  脚本静态存储；强制退出日志中的 Resource、RID、脚本及 Rendering/Physics Server 生命周期
-  错误均为 0。
-- [x] development 库使用内容哈希避免覆盖已加载映像；旧扩展成功卸载且新扩展加载完成后自动
-  回收历史 development 动态库，避免长期开发把 `binary/` 变成无上限缓存。
-- [x] macOS Universal 2 将导出扫描契约和运行契约分离：Godot 以 `universal` 目标扫描时临时
-  使用唯一的通用库条目，最终包内再由 `arm64` 与 `x86_64` 两个运行 feature 指向同一个双切片
-  compiler/fallback 或项目库。正式导出包仍只携带一个目标项目动态库，连续导出不会出现
-  GDExtension 架构选择警告，临时描述符由事务恢复。
+不存在客户 development/editor 项目库。客户源码、GDPP runtime 和注册单元都只进入当前目标的一组
+对象；所有命令按翻译单元串行执行。构建线程不占用 Godot 主循环，主线程只处理 UI、ClassDB
+快照和导出事务。
 
-完整体积、导出耗时、启动、FPS、CPU 和内存数据见[体积与性能基线](PERFORMANCE.md)。当前结果
-不支持“AOT 必然减小 PCK”或“任意游戏显著提高 FPS”的宣传。
+成功游戏只携带当前 `gdpp_project.<debug|release>.<platform>.<arch>` 及同路径运行描述符。
+compiler、fallback、SDK、静态库、生成 C++、对象缓存和客户 `.gd` 均不得进入包。
 
-Godot 4.5 AOT 完整导出曾在退出时延迟销毁整棵继承场景并产生 `changed` 信号错误。GDPP 现已
-在扩展仍注册时后序释放仅供导出的临时场景；清空场景转换缓存后的完整重导出确认编辑器和
-控制台日志中的 `ERROR`、`SCRIPT ERROR`、`WARNING` 均为 0。
+## 零改动第三方 GDExtension
 
-最终交付采用三重门禁：导出前用 Godot `--import` 验证插件和项目脚本可解析；导出时要求退出码
-为 0、出现 `GDPP_AOT_SUMMARY` 且日志无 `ERROR`、`SCRIPT ERROR` 或未解释 `WARNING`；导出后在
-独立空项目中加载 PCK 全部场景/资源，并审计完整目录只含一个项目原生库。任何一项失败都不能
-发布。主动卸载仍被转换缓存引用的开发扩展可能破坏 Godot 4.5 的对象
-生命周期，因此 GDPP 不在导出结束时强制卸载；转换缓存以构建 ID 和转换修订校验，失配时自动
-重建，不能用日志白名单掩盖缓存或扩展生命周期错误。
+所有兼容 GDScript 统一使用 Attached AOT。Godot 内置对象或第三方 GDExtension 对象继续拥有
+真实 Node/Resource 身份；生成行为由 `ScriptLanguageExtension`、`ScriptExtension` 与
+`ScriptInstance` 附着。客户不修改脚本、场景、资源、Autoload，也不修改供应商插件。
 
-Godot 4.5.2 macOS 在全新 `.godot` 缓存下直接执行 headless `--import` 时，实测可能在退出阶段
-把延迟的 GDExtension 文档生成留到 `Main::cleanup`，并崩在 `EditorHelp`；空项目不触发，同一
-扩展项目完成一次正常编辑器迭代后也不再触发。CI 因此先执行有界的
-`--headless --editor --quit-after 120` 冷缓存预热，再执行独立 `--import` 门禁。预热命令必须正常
-退出并完成首次扫描；其职责是建立缓存，不是发布判定。正式 `--import` 必须退出码为 0 且没有
-资源、脚本或扩展错误，不能把第一次崩溃后重试成功当作正常流程。
+compiler 在主线程捕获第三方 ClassDB 契约，并从项目语义图生成、安装 metadata-only 脚本描述；
+不加载客户 `.gd` 来反射，也不执行其静态初始化。每个临时实例只序列化原 SceneState/Resource
+明确保存的字段，未覆盖默认值由目标行为构造器负责。后台构建只消费不可变快照。项目库不继承
+供应商 C++ 类、不读取供应商头文件、不链接供应商库；外部 `super` 使用精确 MethodBind
+compatibility hash。
 
-同一问题也适用于项目导入资源。Dungeon Rush 在删除 `.godot` 后直接导出时，Godot 4.5.2 会先
-报告自定义字体的 imported 文件不存在，稍后完成导入、返回 0 并生成可完整加载的 PCK。GDPP
-不会把这个“最终似乎可用”的包视为合格成品：客户自动化必须依次执行冷缓存预热、独立
-`--import` 零错误预检和正式导出零错误门禁，不能从全新缓存直接跳到导出。
+供应商描述符和动态库原样进入成品。macOS Universal 2 描述符只在验证双切片后为导出扫描临时
+归一化，包内恢复供应商原始字节。项目运行时不依赖 provider 与 GDPP 描述符在 extension registry
+中的偶然顺序，缺失 provider 时确定性失败。
 
-Godot 某些版本在导出插件主动阻断后仍可能返回进程退出码 0，因此三重门禁中的三个信号必须
-同时判定，不能把“退出码为 0”单独视为成功。`GDPP_AOT_SUMMARY` 在真正重建和 Godot 复用场景
-转换缓存时都会输出，并用 `cache` 字段区分两者。
+## 描述符与事务
 
-## 支持承诺
+编辑态只有 `addons/gdpp/gdpp.gdextension` 一个物理描述符。导出器按事务执行：
 
-- 最低 Godot：官方标准精度 4.4。
-- 支持 API：同一 compiler 插件支持 4.4、4.5、4.6 和 4.7，项目库按目标版本选择独立 SDK。
-- 自定义 API/double precision：需要独立 SDK，不属于通用发行包。
-- 桌面用户依赖：目标平台完整 C++ 工具链，而不只是孤立的编译器可执行文件。
-- 交叉平台用户依赖：相应 sysroot、SDK 和交叉编译器。
-- 系统基线：Windows 10、macOS 11.0（arm64）、Ubuntu 22.04/glibc 2.35、Android 9/API 28、iOS 16.0；
-  Web 不声明固定浏览器版本下限，改由 Wasm/GDExtension 能力门禁约束。
+1. 备份 compiler 描述符、extension registry、供应商扫描描述符和 Autoload 设置；
+2. 写入当前目标的临时扫描描述符；
+3. 转换场景、资源和 Autoload；
+4. 向成品同一路径写入项目运行描述符；
+5. 在成功、失败或下次插件启动恢复所有源工程文件。
 
-## ABI 与供应链
+该模型避免两个 GDPP 描述符被重复扫描或同一项目库被重复打包。fallback 只用于显式普通
+GDScript 导出或失败扫描保护；成功 AOT 包中不得存在。
 
-godot-cpp 是 C++ 静态库，发行包必须与用户侧编译器 ABI 兼容。每个版本 SDK 清单记录 API、平台、架构、
-可用 profile、编译器族和版本；当前代码强制校验 API、平台、架构与
-development/debug/release profile，编译器
-ABI 精确匹配和友好迁移诊断仍需继续完善。发布 CI 必须使用固定 runner/toolchain、固定子模块
-提交，并为归档生成哈希。
+## 符号、体积与源码保护
 
-SDK 内部仍会看到 godot-cpp 上游定义的 `editor` 和 `template_release` 静态库名；它们只是 ABI
-适配细节。GDPP 公开 API、日志、缓存目录和项目动态库文件名只使用
-`development`、`debug`、`release`。
+compiler、fallback 与项目库分别只公开唯一的 GDExtension C 入口。ELF 使用 version script 和
+`--exclude-libs`，Mach-O 使用 exported-symbol list，Windows 使用明确导出；Debug 与 Release
+项目目标都启用优化、section 级死代码删除和本地符号裁剪。
 
-后续商业发布门禁包括：
+归档门禁至少验证：
 
-- Windows Authenticode、macOS 签名与公证钩子；
-- SPDX/CycloneDX SBOM 和依赖许可证集合；
-- 可验证来源证明、归档 SHA-256 和构建日志；
-- 符号分离、崩溃符号服务器输入和版本化诊断包；
-- API/ABI 兼容检查与至少一个旧 Godot 小版本回归。
+- 每个客户 SDK 目录恰好一个 `template_release`，没有 editor/template_debug；
+- 插件包没有 `addons/gdpp/build` 或 `gdpp_project.*`；
+- 成功游戏目录和 PCK 恰好一个匹配目标的项目库；
+- PCK 中 `.gd`/`.gdc`、compiler、fallback、SDK、静态库、生成 C++ 和对象文件泄漏数为零；
+- 项目库公开符号只有 `gdpp_project_library_init`；
+- 导出日志有完成摘要且没有未解释的错误或警告；
+- 导出程序能在没有编辑器和 SDK 的环境独立启动并通过行为 oracle。
 
-## 安全声明
+原生编译提高脚本逆向成本，但不承诺客户端逻辑不可逆。文案不得把“无脚本文本”描述成加密或
+绝对防护。
 
-仅在所有目标原生库构建成功、内部原生类可实例化、场景/资源脚本实例原子替换成功且目标文件
-通过校验后，导出插件才删除已编译的 `.gd`。GDExtension addon 内的 GDScript 不享有目录级
-例外，必须和其他脚本一样成功 AOT；缺少第三方静态类型信息或使用未支持语法时严格导出失败，
-不能静默保留供应商脚本。`gdpp/strip_gdscript_sources=true` 且默认
-`gdpp/allow_source_fallback=false` 时，失败会注入阻断错误、跳过客户文件并使正式导出不可用；
-不会以“可运行”为理由暗中交付源码。确需兼容回退的客户必须显式打开该选项，或使用关闭源码
-剥离的独立预设。Node 派生脚本 Autoload 会转为原生场景，不能安全替换的引用按同一策略处理。
+## 失败关闭与恢复
 
-导出插件自身如果语法损坏，Godot 可能只给出警告后继续普通脚本导出，因此源码保护不能仅依赖
-插件内逻辑。发布 CI 已加入插件解析预检、严格失败故障注入、导出日志检查与 PCK/目录黑盒审计；
-客户交付脚本也必须执行同样门禁。
+商业预设默认：
 
-原生编译能阻止直接解包读取脚本文本，并显著提高逆向成本，但不能承诺客户端逻辑不可逆。
-商业文案、错误提示和文档必须保持这一边界。
+```text
+gdpp/strip_gdscript_sources=true
+gdpp/allow_source_fallback=false
+```
+
+编译、链接、ClassDB/第三方契约、资源转换、描述符、产物唯一性或源码审计任一步失败，导出器
+都注入缺失目标库并阻断打包，不能因为 Godot 某些版本返回进程码 0 就视为成功。发布判定同时
+要求正确退出码、完成摘要、零错误日志和导出后黑盒审计。
+
+客户确需普通 GDScript 交付时必须显式开启 source fallback，或使用独立的非剥离预设。两者是
+产品选择，不是 AOT 失败后的静默降级。
+
+## 发布门禁
+
+正式发布流水线必须覆盖：
+
+- C++ 单元、架构规则、sanitizer、真实生成 C++17 编译；
+- 官方 Godot 4.4～4.7 plugin load、Debug/Release 导出、运行和 PCK 审计；
+- 独立第三方 GDExtension 的两种加载顺序、Attached 继承和无源码运行；
+- Windows x86_64 MSVC、macOS、Linux 的真实目标构建；
+- Android APK、iOS Xcode/XCFramework 与 Web threads/nothreads 的目标格式审计；
+- 单宿主与完整包的确定性重组、SHA-256 和 schema/runtime ABI 一致性。
+
+Release 标签前不得用历史客户项目名称代替产品级回归说明。客户项目可以作为内部认证语料，
+但 changelog 只记录修复的通用能力、边界和验证结果。

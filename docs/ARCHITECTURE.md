@@ -106,8 +106,9 @@ godot-cpp 构造重载在 MSVC、Clang 和 GCC 间产生不同选择，并保证
   命名枚举、匿名枚举值、Autoload、资源路径与继承关系，为语义分析、C++ 类型选择和跨翻译单元
   头文件依赖提供同一事实来源；不同目录的同名脚本不会复用原生身份。
 - `NativeBuilder`：生成 AppleClang/Clang/GCC/MSVC 编译与链接命令，验证 SDK 平台和架构，
-  API 与 development/debug/release profile，并按 profile 隔离、复用仍然有效的对象文件；
-  构建策略修订和编译器绝对路径进入缓存配置签名。iOS 后端以四级阶段图构建真机 arm64、
+  API 与 debug/release profile，始终链接 SDK 唯一的 `template_release` 绑定，并按目标
+  profile 隔离、复用仍然有效的对象文件；构建策略修订和编译器绝对路径进入缓存配置签名。
+  iOS 后端以四级阶段图构建真机 arm64、
   模拟器 arm64/x86_64，合并 Universal Simulator dylib 后生成动态 XCFramework，并在完整成功后
   事务式替换客户产物。
 - `GDPPCompiler::execute_project_build`：Godot 侧原生构建事务入口，统一执行计划、检查链接退出码、
@@ -208,11 +209,13 @@ GDPP 自身使用 CMake、Python 和 godot-cpp 生成器，以保证开发构建
 分别构建，不能混用。macOS universal SDK 的静态库同时包含 arm64 与 x86_64，直接构建命令也
 显式传递两组 `-arch`，不会把单架构库伪装成 universal。
 
-公开构建 profile 是强类型的 `development`、`debug`、`release`。只有 ABI 适配层把它们映射
-到 godot-cpp 上游 target；文件名、SDK manifest、Godot 编译服务参数和对象缓存目录不得暴露
-`template_*`。目标 profile 同时决定优化契约：`debug` 绑定固定使用 Debug，`release` 绑定固定
-使用 Release，不能继承 GDPP compiler 插件本身的父构建类型。这样 Debug 编译器也不会把
-未优化的 godot-cpp 库链接进客户 Release 游戏。
+客户项目公开 profile 只有强类型的 `debug` 与 `release`。二者都映射到 godot-cpp 上游
+`template_release` target；差异仅由 GDPP 的脚本调试语义定义表达。客户 SDK 不包含 editor 或
+template_debug 绑定。
+
+godot-cpp 的 `editor` target 只用于构建 compiler 插件自身。该静态库停留在 GDPP 构建树，
+发行包只携带已经链接完成的 compiler 动态库。普通编辑和运行继续使用客户原有 `.gd`，不存在
+需要客户构建或加载的 development 项目动态库。
 
 ## 不变量
 
@@ -243,13 +246,12 @@ GDPP 自身使用 CMake、Python 和 godot-cpp 生成器，以保证开发构建
   放大为大型项目上的编译器内存耗尽。
 - GDPP 自身的全量发行构建一次只调度一个完整 godot-cpp SDK 变体，变体内部继续并行；不能将
   Godot 版本数、profile 数和主机构建并行度相乘后同时争用内存、进程句柄与 Ninja 数据库。
-- SDK 的 debug/release godot-cpp 静态库必须分别来自 Debug/Release 原生构建；CTest 直接审计
-  每个版本的独立 CMake 缓存，父构建类型不得污染目标 profile。
+- 每个客户 SDK 的平台/架构/线程模式必须恰好包含一份 Release 优化的
+  `template_release` godot-cpp 静态库；editor/template_debug 或第二份候选绑定均为打包错误。
 - 所有项目中间产物位于 `res://addons/gdpp/build/`。
 - 项目最终动态库位于 `res://addons/gdpp/binary/`，与中间对象和转译源码分离。
-- 项目动态库使用内容构建 ID 命名，变化构建不会覆盖仍被编辑器加载的旧库；成功链接后只清理
-  同平台、同架构、同 profile 且符合精确 16 位构建 ID 命名的陈旧 development 库，未知文件、
-  符号链接、debug/release 和其他目标一律保留。
+- 普通编辑器会话不加载客户项目动态库；只有导出目标使用稳定的 debug/release 文件名，因此
+  不需要 development 内容寻址库或热重载清理协议。
 - 项目脚本父类必须先于子类生成和注册；缓存重写会同步更新父子原生类的构建 ID。
 - 每个翻译单元只记录语义阶段实际引用的脚本和第三方扩展契约；依赖脚本公开 ABI 或所引用桥接
   契约改变时不能复用旧语义结果，无关脚本变化不能扩大失效范围。
@@ -263,7 +265,7 @@ GDPP 自身使用 CMake、Python 和 godot-cpp 生成器，以保证开发构建
   Rendering/Physics Server 的 C++ 静态析构顺序。
 - `_init` 签名同时驱动语义参数检查和 C++ 构造生成；必需参数脚本仍保留 ClassDB 所需默认构造，
   仅显式 `.new(args)` 执行带参数初始化。
-- `assert` 只在 development/debug profile 生成可执行检查；release 在预处理阶段连同条件和
+- `assert` 只在 debug profile 生成可执行检查；release 在预处理阶段连同条件和
   消息求值一起移除，失败诊断保留原始 GDScript 路径与行号。
 - 用户 `class_name` 与 ClassDB 原生名分离；项目内部类保留 `Outer.Nested` 形式的限定源身份，并
   扁平化为 `GDPPNative_<ClassName>_<BuildId>__Outer__Nested` 原生名，避免同名嵌套类碰撞或遮蔽
@@ -288,6 +290,9 @@ GDPP 自身使用 CMake、Python 和 godot-cpp 生成器，以保证开发构建
   同一个 Universal 2 动态库。
 - 场景替换必须先准备整棵替换计划再修改节点树；普通存储属性缺失、metadata 复制失败或连接
   恢复失败均不得提交部分转换结果。
+- 导出期脚本 metadata 必须由编译器语义图产生，禁止为反射全量加载客户 `.gd` 或执行静态
+  初始化。metadata-only ScriptInstance 的存储属性列表按实例收敛到原 SceneState/Resource
+  实际保存的字段；未覆盖字段由目标行为构造器初始化，不能序列化为 `nil` 或空容器。
 - 导出器只遍历 SceneState 和 Resource 属性列表声明的序列化存储值；内嵌 Resource、
   Array/Dictionary、共享/循环引用和内嵌 PackedScene 递归转换时必须保留图身份，不能调用
   与序列化无关的用户 getter 或遍历运行时对象图。
