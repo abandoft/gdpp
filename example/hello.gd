@@ -339,6 +339,20 @@ func dynamic_key_increment(
     return target[key]
 
 
+func dynamic_named_read(target: Variant) -> Variant:
+    return target.uuid
+
+
+func dynamic_named_write(target: Variant, value: Variant) -> Variant:
+    target.uuid = value
+    return target.uuid
+
+
+func dynamic_named_nested_increment(target: Variant, increment: int) -> Variant:
+    target.profile.score += increment
+    return target.profile.score
+
+
 func dynamic_component_write(target: Variant) -> Vector2:
     target.position.y -= 3.0
     return target.position

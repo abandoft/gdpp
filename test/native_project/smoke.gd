@@ -1149,6 +1149,9 @@ func _run() -> void:
     exported.set("internal_counter", 9)
     var update_callable := Callable(exported, &"update_score")
     var nested_records := [{"tint": Color(0.2, 0.3, 0.4, 1.0)}]
+    var json_payload: Variant = JSON.parse_string(
+        "{\"uuid\":\"login-token\",\"user_id\":42,\"profile\":{\"score\":7}}"
+    )
     var dynamic_results := [
         ["method call", exported.call("dynamic_call", exported, 27), 27],
         ["property read after call", exported.call("dynamic_read", exported), 27],
@@ -1169,6 +1172,17 @@ func _run() -> void:
             "compound key write",
             exported.call("dynamic_key_increment", {"score": 30}, "score", 5),
             35,
+        ],
+        ["JSON Dictionary named read", exported.call("dynamic_named_read", json_payload), "login-token"],
+        [
+            "JSON Dictionary named write",
+            exported.call("dynamic_named_write", json_payload, "updated-token"),
+            "updated-token",
+        ],
+        [
+            "nested JSON Dictionary named compound write",
+            exported.call("dynamic_named_nested_increment", json_payload, 5),
+            12,
         ],
         [
             "nested Node2D position component write",
