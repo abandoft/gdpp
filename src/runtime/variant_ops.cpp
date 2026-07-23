@@ -806,6 +806,14 @@ godot::Variant call_dynamic_impl(godot::Variant& target, const godot::StringName
 }
 
 godot::Variant get_named(const godot::Variant& target, const godot::StringName& name) {
+    // GDScript defines `dictionary.identifier` as keyed Dictionary access, including
+    // dictionaries returned through Variant boundaries such as JSON.parse() and HTTP APIs.
+    // Variant::get_named() only covers built-in/object properties and rejects Dictionary,
+    // so route this case through Dictionary::get() explicitly.
+    if (target.get_type() == godot::Variant::DICTIONARY) {
+        const auto dictionary = static_cast<godot::Dictionary>(target);
+        return dictionary.get(godot::Variant(name), godot::Variant{});
+    }
     bool valid = false;
     auto result = target.get_named(name, valid);
     if (!valid) {
@@ -816,6 +824,11 @@ godot::Variant get_named(const godot::Variant& target, const godot::StringName& 
 }
 
 void set_named(godot::Variant& target, const godot::StringName& name, const godot::Variant& value) {
+    if (target.get_type() == godot::Variant::DICTIONARY) {
+        auto dictionary = static_cast<godot::Dictionary>(target);
+        dictionary[godot::Variant(name)] = value;
+        return;
+    }
     bool valid = false;
     target.set_named(name, value, valid);
     if (!valid)
