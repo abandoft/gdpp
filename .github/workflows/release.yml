@@ -219,9 +219,12 @@ jobs:
             -DGDPP_ADDON_DIRECTORY="$GITHUB_WORKSPACE/example/addons/gdpp" \
             -P cmake/CleanAddonBuild.cmake
           destination=build/host-component/addons/gdpp
-          cmake -E make_directory "$destination"
-          cmake -E copy_directory example/addons/gdpp "$destination"
+          python3 tools/stage_host_component.py \
+            --source example/addons/gdpp \
+            --destination "$destination" \
+            --host '${{ matrix.host }}'
           test ! -e "$destination/build"
+          test "$(find "$destination/binary" -maxdepth 1 -type f | wc -l)" -eq 2
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gdpp-host-${{ matrix.host }}
