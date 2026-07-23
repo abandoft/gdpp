@@ -1,3 +1,11 @@
+## 1.7.6
+
+- Present native compilation progress in an exclusive transient window bound to the currently focused export dialog, keeping it visible above Godot's modal export interface on every desktop host.
+- Replace the column-based overlay and per-profile resets with one continuous progress bar that remains monotonic across the complete AOT operation.
+- Divide the bar equally across development and distribution builds, then equally across scan, parse, analysis, script precompilation, native-file generation, project compilation, and linking; per-file callbacks subdivide each applicable phase.
+- Show live file counters without exposing backend translation terminology, and use concise AOT, Debug, and Release build labels throughout the window.
+- Add headless progress-model coverage and delivery contracts for top-level window ownership, hierarchical allocation, exact UI text, and the single-fill implementation.
+
 ## 1.7.5
 
 - Correct Windows MSVC environment bootstrapping so the raw `cmd.exe /c` payload reaches `vcvars64.bat` and `cl.exe` without C-runtime quote escaping corrupting the nested command.
