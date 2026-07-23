@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gdpp/runtime/reference_semantics.hpp"
+
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/variant/array.hpp>
