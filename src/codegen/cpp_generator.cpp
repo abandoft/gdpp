@@ -1131,6 +1131,9 @@ std::string CodeGenerator::cpp_type(const Type& type) const {
         }
         return "godot::Variant";
     case TypeKind::builtin:
+        if (type.is_packed_array()) {
+            return "gdpp::runtime::SharedPackedArray<godot::" + type.name + ">";
+        }
         return "godot::" + type.name;
     case TypeKind::object:
         if (!api_.find_class(type.name)) {
@@ -1224,7 +1227,10 @@ std::string CodeGenerator::api_native_type(std::string_view api_type,
         native_meta == "uint32" || native_meta == "uint64") {
         return std::string{native_meta} + "_t";
     }
-    return cpp_type(type_from_godot_api(api_type));
+    const auto type = type_from_godot_api(api_type);
+    if (type.is_packed_array())
+        return "godot::" + type.name;
+    return cpp_type(type);
 }
 
 std::string CodeGenerator::virtual_parameter_type(const GodotMethodRecord& method,

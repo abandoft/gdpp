@@ -289,6 +289,25 @@ TEST_CASE("compiler defers packed array typed storage failures to the runtime bo
             std::string::npos);
 }
 
+TEST_CASE("compiler stores packed arrays with GDScript shared identity") {
+    const gdpp::Compiler compiler;
+    const auto result =
+        compiler.compile("packed_reference.gd",
+                         "extends RefCounted\n"
+                         "var bytes: PackedByteArray = PackedByteArray([1])\n"
+                         "func forward(values: PackedByteArray) -> PackedByteArray:\n"
+                         "    var alias: PackedByteArray = values\n"
+                         "    return alias\n");
+
+    REQUIRE(result.success);
+    const std::string storage =
+        "gdpp::runtime::SharedPackedArray<godot::PackedByteArray>";
+    REQUIRE(result.unit.header.find(storage + " bytes") != std::string::npos);
+    REQUIRE(result.unit.header.find(storage + " forward(" + storage + " values)") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find(storage + " alias = values") != std::string::npos);
+}
+
 TEST_CASE("semantic analysis validates typed container arguments eagerly") {
     const gdpp::Compiler compiler;
     const auto legal = compiler.compile("legal_containers.gd",
@@ -1949,7 +1968,9 @@ TEST_CASE("compiler iterates packed arrays with their Godot element types") {
                          "    return result\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.source.find("godot::PackedStringArray arguments") != std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "gdpp::runtime::SharedPackedArray<godot::PackedStringArray> arguments") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find("godot::String argument =") != std::string::npos);
     REQUIRE(result.unit.source.find("_gdpp_packed_iterable_") != std::string::npos);
     REQUIRE(result.unit.source.find(".size();") != std::string::npos);
