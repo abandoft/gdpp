@@ -1,7 +1,7 @@
 @tool
 extends CanvasLayer
 
-const PANEL_SIZE := Vector2(480.0, 136.0)
+const PANEL_SIZE := Vector2(480.0, 112.0)
 const WINDOW_MARGIN := Vector2(6.0, 6.0)
 const PANEL_COLOR := Color(0.075, 0.086, 0.11, 0.98)
 const TRACK_COLOR := Color(0.18, 0.2, 0.24, 1.0)
@@ -15,11 +15,10 @@ const PHASE_ORDER := [
     "compile",
     "link",
 ]
-const STAGE_TEXT := {
-    "prepare": "Preparing AOT export",
-    "development": "Validating the editor-native bridge",
-    "debug": "Building the debug export",
-    "release": "Building the release export",
+const KNOWN_STAGES := {
+    "development": true,
+    "debug": true,
+    "release": true,
 }
 const PHASE_TEXT := {
     "scan": "Scanning project sources",
@@ -63,15 +62,60 @@ class ImmediateProgressFill:
     func _fill_rect() -> Rect2:
         return Rect2(Vector2.ZERO, Vector2(size.x * _fraction, size.y))
 
+
+class ImmediateTaskLabel:
+    extends Control
+
+    var _text := ""
+    var _font: Font
+    var _font_size := 13
+    var _color := Color.WHITE
+
+    func configure(extent: Vector2, font: Font, font_size: int, color: Color) -> void:
+        size = extent
+        _font = font
+        _font_size = font_size
+        _color = color
+        set_text_immediate("")
+
+    func set_text_immediate(text: String) -> void:
+        if text == _text:
+            return
+        _text = text
+        queue_redraw()
+        _submit_draw_commands()
+
+    func _draw() -> void:
+        _draw_text()
+
+    func _submit_draw_commands() -> void:
+        RenderingServer.canvas_item_clear(get_canvas_item())
+        _draw_text()
+
+    func _draw_text() -> void:
+        if _font == null or _text.is_empty():
+            return
+        var baseline := (
+            _font.get_ascent(_font_size)
+            + (size.y - _font.get_height(_font_size)) * 0.5
+        )
+        _font.draw_string(
+            get_canvas_item(),
+            Vector2(0.0, baseline),
+            _text,
+            HORIZONTAL_ALIGNMENT_LEFT,
+            size.x,
+            _font_size,
+            _color
+        )
+
+
 var _surface: Control
 var _panel_group: Control
 var _track: ColorRect
 var _fill: ImmediateProgressFill
-var _stage_labels: Dictionary = {}
-var _phase_labels: Dictionary = {}
+var _task_label: ImmediateTaskLabel
 var _stages := PackedStringArray()
-var _active_stage := ""
-var _active_phase := ""
 var _target_progress := 0.0
 var _displayed_progress := 0.0
 
@@ -110,37 +154,25 @@ func _ready() -> void:
     _panel_group.add_child(panel)
 
     var title_label := _make_label(
-        "GDPP Native Build",
+        "GDPP AOT Build",
         Vector2(28.0, 16.0) * editor_scale,
         Vector2(424.0, 28.0) * editor_scale,
         int(round(18.0 * editor_scale))
     )
     panel.add_child(title_label)
 
-    for stage in STAGE_TEXT:
-        var stage_label := _make_label(
-            STAGE_TEXT[stage],
-            Vector2(28.0, 43.0) * editor_scale,
-            Vector2(424.0, 22.0) * editor_scale,
-            int(round(13.0 * editor_scale))
-        )
-        stage_label.modulate = Color(0.72, 0.76, 0.83, 0.0)
-        panel.add_child(stage_label)
-        _stage_labels[stage] = stage_label
-
-    for phase in PHASE_TEXT:
-        var phase_label := _make_label(
-            PHASE_TEXT[phase],
-            Vector2(28.0, 67.0) * editor_scale,
-            Vector2(424.0, 22.0) * editor_scale,
-            int(round(13.0 * editor_scale))
-        )
-        phase_label.modulate = Color(0.94, 0.95, 0.98, 0.0)
-        panel.add_child(phase_label)
-        _phase_labels[phase] = phase_label
+    _task_label = ImmediateTaskLabel.new()
+    _task_label.position = Vector2(28.0, 47.0) * editor_scale
+    panel.add_child(_task_label)
+    _task_label.configure(
+        Vector2(424.0, 22.0) * editor_scale,
+        title_label.get_theme_font("font"),
+        int(round(13.0 * editor_scale)),
+        Color(0.94, 0.95, 0.98, 1.0)
+    )
 
     _track = ColorRect.new()
-    _track.position = Vector2(28.0, 101.0) * editor_scale
+    _track.position = Vector2(28.0, 78.0) * editor_scale
     _track.size = Vector2(424.0, 12.0) * editor_scale
     _track.color = TRACK_COLOR
     _track.clip_contents = true
@@ -160,8 +192,7 @@ func is_available() -> bool:
         and _panel_group != null
         and _track != null
         and _fill != null
-        and _stage_labels.size() == STAGE_TEXT.size()
-        and _phase_labels.size() == PHASE_TEXT.size()
+        and _task_label != null
     )
 
 
@@ -169,11 +200,8 @@ func begin(stages: PackedStringArray) -> void:
     if not is_available():
         return
     _stages = _normalized_stages(stages)
-    _active_stage = ""
-    _active_phase = ""
     _target_progress = 0.0
     _displayed_progress = 0.0
-    _set_stage("prepare")
     _set_phase("scan")
     _set_progress(0.0)
     refresh(true)
@@ -185,7 +213,6 @@ func begin(stages: PackedStringArray) -> void:
 func set_active_stage(stage: String) -> void:
     if not is_available():
         return
-    _set_stage(stage)
     _set_phase("scan")
     _set_progress(calculate_hierarchical_progress(_stages, stage, "scan", 0, 1))
     _redraw_now()
@@ -194,9 +221,8 @@ func set_active_stage(stage: String) -> void:
 func update(stage: String, phase: String, completed: int, total: int) -> void:
     if not is_available():
         return
-    _set_stage(stage)
     var known_phase := phase if PHASE_TEXT.has(phase) else "compile"
-    _set_phase(known_phase)
+    _set_phase(known_phase, completed, total)
     _set_progress(
         calculate_hierarchical_progress(_stages, stage, known_phase, completed, total)
     )
@@ -245,34 +271,27 @@ static func calculate_hierarchical_progress(
     )
 
 
+static func format_task_text(phase: String, completed: int, total: int) -> String:
+    var known_phase := phase if PHASE_TEXT.has(phase) else "compile"
+    var text: String = PHASE_TEXT[known_phase]
+    if known_phase == "compile" and total > 0:
+        text += " %d/%d" % [clampi(completed, 0, total), total]
+    return text
+
+
 func _normalized_stages(stages: PackedStringArray) -> PackedStringArray:
     var normalized := PackedStringArray()
     for stage in stages:
-        if STAGE_TEXT.has(stage) and stage != "prepare" and not normalized.has(stage):
+        if KNOWN_STAGES.has(stage) and not normalized.has(stage):
             normalized.push_back(stage)
     if normalized.is_empty():
         normalized.push_back("development")
     return normalized
 
 
-func _set_stage(stage: String) -> void:
-    var known_stage := stage if _stage_labels.has(stage) else "prepare"
-    if known_stage == _active_stage:
-        return
-    if _stage_labels.has(_active_stage):
-        _stage_labels[_active_stage].modulate = Color(0.72, 0.76, 0.83, 0.0)
-    _stage_labels[known_stage].modulate = Color(0.72, 0.76, 0.83, 1.0)
-    _active_stage = known_stage
-
-
-func _set_phase(phase: String) -> void:
-    var known_phase := phase if _phase_labels.has(phase) else "compile"
-    if known_phase == _active_phase:
-        return
-    if _phase_labels.has(_active_phase):
-        _phase_labels[_active_phase].modulate = Color(0.94, 0.95, 0.98, 0.0)
-    _phase_labels[known_phase].modulate = Color(0.94, 0.95, 0.98, 1.0)
-    _active_phase = known_phase
+func _set_phase(phase: String, completed := 0, total := 0) -> void:
+    var known_phase := phase if PHASE_TEXT.has(phase) else "compile"
+    _task_label.set_text_immediate(format_task_text(known_phase, completed, total))
 
 
 func _set_progress(progress: float) -> void:

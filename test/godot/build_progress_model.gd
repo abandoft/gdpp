@@ -91,5 +91,26 @@ func _run() -> void:
         quit(1)
         return
 
+    var compile_text := BUILD_PROGRESS.format_task_text("compile", 3, 32)
+    if compile_text != "Compiling project sources 3/32":
+        push_error("GDPP compile task counter mismatch: %s" % compile_text)
+        quit(1)
+        return
+    if BUILD_PROGRESS.format_task_text("parse", 3, 32) != "Parsing GDScript files":
+        push_error("GDPP non-compile task unexpectedly displayed a file counter")
+        quit(1)
+        return
+
+    var immediate_label := BUILD_PROGRESS.ImmediateTaskLabel.new()
+    get_root().add_child(immediate_label)
+    immediate_label.configure(
+        Vector2(424.0, 22.0),
+        ThemeDB.fallback_font,
+        ThemeDB.fallback_font_size,
+        Color.WHITE
+    )
+    immediate_label.set_text_immediate(compile_text)
+    immediate_label.queue_free()
+
     print("GDPP_BUILD_PROGRESS_MODEL_OK")
     quit(0)
