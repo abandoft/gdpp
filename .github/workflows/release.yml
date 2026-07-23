@@ -357,6 +357,7 @@ jobs:
           test -f "$archive"
           unzip -Z1 "$archive" > build/archive-contents.txt
           grep -q '^addons/gdpp/build_progress.gd$' build/archive-contents.txt
+          grep -q '^addons/gdpp/native_build_job.gd$' build/archive-contents.txt
           if grep -q 'template_debug' build/archive-contents.txt; then
             echo 'Release ZIP contains a forbidden template_debug binding.'
             exit 1
@@ -427,6 +428,7 @@ jobs:
           unzip -Z1 "$archive" > build/complete-archive-contents.txt
           contents=build/complete-archive-contents.txt
           grep -q '^addons/gdpp/build_progress.gd$' "$contents"
+          grep -q '^addons/gdpp/native_build_job.gd$' "$contents"
           grep -q '^addons/gdpp/PACKAGE_MANIFEST.txt$' "$contents"
           for binary in \
             libgdpp_compiler.macos.arm64.dylib \
