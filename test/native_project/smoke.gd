@@ -226,6 +226,13 @@ func _run() -> void:
         )
         quit(1)
         return
+    if (
+        not native_serializer.call("variant_surface_roundtrip", native_packet)
+        or not script_serializer.call("variant_surface_roundtrip", script_packet)
+    ):
+        push_error("PackedArray Variant surface roundtrip failed")
+        quit(1)
+        return
     var native_boundary_packet: PackedByteArray = native_serializer.call(
         "variant_boundary_packet"
     )

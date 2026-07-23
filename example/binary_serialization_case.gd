@@ -59,3 +59,18 @@ func variant_boundary_packet() -> PackedByteArray:
     var parser := PacketParser.new(dynamic_suffix)
     parser.parse_from_bytes(dynamic_body)
     return parser.parse_variant(dynamic_body)
+
+
+func variant_surface_roundtrip(bytes: PackedByteArray) -> bool:
+    var values: Array = [bytes]
+    var lookup: Dictionary = {&"bytes": bytes}
+    print_verbose("GDPP packed Variant boundary: ", bytes)
+    return values[0] == lookup[&"bytes"]
+
+
+func native_packed_argument(peer: StreamPeer, bytes: PackedByteArray) -> Error:
+    return peer.put_data(bytes)
+
+
+func native_vararg_argument(node: Node, bytes: PackedByteArray) -> Variant:
+    return node.call(&"receive_bytes", bytes)
