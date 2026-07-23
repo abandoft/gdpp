@@ -1,8 +1,6 @@
 @tool
 extends EditorPlugin
 
-const NATIVE_BUILD_JOB := preload("res://addons/gdpp/native_build_job.gd")
-const OUTPUT_DIRECTORY := "res://addons/gdpp/build/project"
 const COMPILER_SETTING := "gdpp/build/cpp_compiler"
 const SDK_SETTING := "gdpp/build/sdk_root"
 const ANDROID_NDK_SETTING := "gdpp/build/android_ndk_root"
@@ -16,7 +14,6 @@ const COMPILER_DESCRIPTOR_BACKUP := "res://.godot/gdpp_compiler_descriptor.expor
 var _compiler: Object
 var _export_plugin: EditorExportPlugin
 var _build_progress: CanvasLayer
-var _building := false
 
 
 func _enter_tree() -> void:
@@ -54,7 +51,6 @@ func _enter_tree() -> void:
     _export_plugin = preload("res://addons/gdpp/export_plugin.gd").new()
     _export_plugin.configure(_compiler, _build_progress)
     add_export_plugin(_export_plugin)
-    add_tool_menu_item("Build GDPP Native Library", _compile_project)
 
 
 func _recover_interrupted_export() -> void:
@@ -84,7 +80,6 @@ func _restore_export_file(path: String, backup_path: String) -> bool:
 
 
 func _exit_tree() -> void:
-    remove_tool_menu_item("Build GDPP Native Library")
     if _export_plugin != null:
         remove_export_plugin(_export_plugin)
         _export_plugin = null
@@ -154,82 +149,3 @@ func _default_android_ndk_root() -> String:
 func _detected_target_version() -> String:
     var engine := Engine.get_version_info()
     return "%d.%d" % [int(engine.get("major", 0)), int(engine.get("minor", 0))]
-
-
-func _compile_project() -> void:
-    if _building:
-        push_warning("GDPP: a native build is already running")
-        return
-    _building = true
-    var target_version := str(ProjectSettings.get_setting(TARGET_VERSION_SETTING, "4.4"))
-    var progress_callback := Callable()
-    if _build_progress != null and _build_progress.is_available():
-        _build_progress.begin(PackedStringArray(["development"]))
-        _build_progress.set_active_stage("development")
-        progress_callback = Callable(self, "_on_manual_build_progress")
-    print("GDPP: analyzing project scripts for Godot %s..." % target_version)
-    var job := NATIVE_BUILD_JOB.new()
-    var frame_callback := Callable()
-    if _build_progress != null and _build_progress.is_available():
-        frame_callback = Callable(_build_progress, "refresh")
-    var outcome: Dictionary = job.run(_compiler, {
-        "project_root": "res://",
-        "output_directory": OUTPUT_DIRECTORY,
-        "sdk_root": ProjectSettings.get_setting(SDK_SETTING),
-        "compiler_executable": ProjectSettings.get_setting(COMPILER_SETTING),
-        "target_version": target_version,
-        "build_profile": "development",
-        "target_platform": _compiler.get_host_platform(),
-        "target_architecture": _compiler.get_host_architecture(),
-        "target_variant": "",
-    }, progress_callback, frame_callback)
-    var result: Dictionary = outcome.get("plan", {})
-    if not result.get("success", false):
-        for diagnostic in result.get("diagnostics", []):
-            push_error(diagnostic)
-        _finish_manual_build_progress()
-        _building = false
-        return
-
-    print(
-        "GDPP: %d compiled, %d cached, %d removed" % [
-            result.compiled_count,
-            result.cache_hit_count,
-            result.removed_count,
-        ]
-    )
-    if not _accept_project_build(outcome.get("execution", {})):
-        _finish_manual_build_progress()
-        _building = false
-        return
-
-    EditorInterface.get_resource_filesystem().scan()
-    if result.get("native_up_to_date", false):
-        print("GDPP: native project library is up to date")
-    else:
-        print("GDPP: native project library built successfully")
-    _finish_manual_build_progress()
-    _building = false
-
-
-func _accept_project_build(execution: Dictionary) -> bool:
-    if not execution.get("success", false):
-        for diagnostic in execution.get("diagnostics", []):
-            push_error("GDPP: %s" % diagnostic)
-        return false
-    for diagnostic in execution.get("diagnostics", []):
-        push_warning("GDPP: %s" % diagnostic)
-    var removed := int(execution.get("removed_count", 0))
-    if removed > 0:
-        print("GDPP: removed %d stale development project libraries" % removed)
-    return true
-
-
-func _on_manual_build_progress(phase: String, completed: int, total: int) -> void:
-    if _build_progress != null:
-        _build_progress.update("development", phase, completed, total)
-
-
-func _finish_manual_build_progress() -> void:
-    if _build_progress != null and _build_progress.is_available():
-        _build_progress.finish()

@@ -16,7 +16,6 @@ const PHASE_ORDER := [
     "link",
 ]
 const KNOWN_STAGES := {
-    "development": true,
     "debug": true,
     "release": true,
 }
@@ -285,7 +284,7 @@ func _normalized_stages(stages: PackedStringArray) -> PackedStringArray:
         if KNOWN_STAGES.has(stage) and not normalized.has(stage):
             normalized.push_back(stage)
     if normalized.is_empty():
-        normalized.push_back("development")
+        normalized.push_back("release")
     return normalized
 
 

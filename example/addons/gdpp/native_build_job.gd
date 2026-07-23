@@ -58,7 +58,7 @@ func _worker_entry(compiler: Object, request: Dictionary) -> Dictionary:
         str(request.get("sdk_root", "")),
         str(request.get("compiler_executable", "")),
         str(request.get("target_version", "4.4")),
-        str(request.get("build_profile", "development")),
+        str(request.get("build_profile", "release")),
         str(request.get("target_platform", "")),
         str(request.get("target_architecture", "")),
         str(request.get("target_variant", "")),
