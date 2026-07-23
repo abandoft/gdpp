@@ -716,6 +716,9 @@ if(GDPP_BUILD_TESTS)
                 "${GDPP_ADDON_DIRECTORY}/build_progress.gd"
                 "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/build_progress.gd"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${GDPP_ADDON_DIRECTORY}/native_build_job.gd"
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/native_build_job.gd"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "$<TARGET_FILE:gdpp_godot_plugin>"
                 "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/binary/$<TARGET_FILE_NAME:gdpp_godot_plugin>"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
