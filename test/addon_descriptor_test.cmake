@@ -161,7 +161,10 @@ foreach(required_build_progress_contract IN ITEMS
         "static func calculate_hierarchical_progress("
         "float(stage_index) + stage_progress"
         "float(phase_index) + item_progress"
-        "_fill.scale = Vector2(maxf(_displayed_progress, 0.00001), 1.0)"
+        "_fill.size = Vector2("
+        "_fill_extent.x * _displayed_progress"
+        "_fill.queue_redraw()"
+        "_track.queue_redraw()"
         "get_last_exclusive_window()"
         "DisplayServer.window_get_active_popup()"
         "reparent(host_window, false)"
@@ -182,7 +185,9 @@ foreach(forbidden_build_progress_contract IN ITEMS
         "FILL_COLUMN_COUNT"
         "_fill_columns"
         "set_translation_profile"
-        "_fill.size = Vector2(_track.size.x * _displayed_progress")
+        "_fill.scale = Vector2("
+        "_fill.modulate ="
+        "set_deferred(\"size\"")
     string(FIND "${build_progress}" "${forbidden_build_progress_contract}"
         forbidden_build_progress_offset)
     if(NOT forbidden_build_progress_offset EQUAL -1)

@@ -34,7 +34,9 @@ const PHASE_TEXT := {
 
 var _surface: Control
 var _panel_group: Control
+var _track: ColorRect
 var _fill: ColorRect
+var _fill_extent := Vector2.ZERO
 var _stage_labels: Dictionary = {}
 var _phase_labels: Dictionary = {}
 var _stages := PackedStringArray()
@@ -107,21 +109,20 @@ func _ready() -> void:
         panel.add_child(phase_label)
         _phase_labels[phase] = phase_label
 
-    var track := ColorRect.new()
-    track.position = Vector2(28.0, 101.0) * editor_scale
-    track.size = Vector2(424.0, 12.0) * editor_scale
-    track.color = TRACK_COLOR
-    track.clip_contents = true
-    panel.add_child(track)
+    _track = ColorRect.new()
+    _track.position = Vector2(28.0, 101.0) * editor_scale
+    _track.size = Vector2(424.0, 12.0) * editor_scale
+    _track.color = TRACK_COLOR
+    _track.clip_contents = true
+    panel.add_child(_track)
 
     _fill = ColorRect.new()
     _fill.position = Vector2.ZERO
-    _fill.size = track.size
-    _fill.pivot_offset = Vector2.ZERO
-    _fill.scale = Vector2(0.00001, 1.0)
-    _fill.modulate = Color(1.0, 1.0, 1.0, 0.0)
+    _fill_extent = _track.size
+    _fill.size = Vector2(0.0, _fill_extent.y)
+    _fill.visible = false
     _fill.color = FILL_COLOR
-    track.add_child(_fill)
+    _track.add_child(_fill)
 
     _center_on_window(EditorInterface.get_base_control().get_window())
 
@@ -130,6 +131,7 @@ func is_available() -> bool:
     return (
         _surface != null
         and _panel_group != null
+        and _track != null
         and _fill != null
         and _stage_labels.size() == STAGE_TEXT.size()
         and _phase_labels.size() == PHASE_TEXT.size()
@@ -262,12 +264,17 @@ func refresh(snap_to_target := false) -> void:
                 _target_progress,
                 _displayed_progress + maxf(0.0015, remaining * 0.16)
             )
-    _fill.scale = Vector2(maxf(_displayed_progress, 0.00001), 1.0)
-    _fill.modulate = (
-        Color.WHITE
-        if _displayed_progress > 0.0
-        else Color(1.0, 1.0, 1.0, 0.0)
+    _fill.size = Vector2(
+        _fill_extent.x * _displayed_progress,
+        _fill_extent.y
     )
+    _fill.visible = _displayed_progress > 0.0
+    # Updating the real rectangle, rather than only its CanvasItem transform,
+    # invalidates the clipped track on Windows even while the export callback
+    # owns the editor loop. Explicitly queue both draw items before force_draw()
+    # so DWM receives every interpolated width without requiring window damage.
+    _fill.queue_redraw()
+    _track.queue_redraw()
     _redraw_now()
 
 
