@@ -192,6 +192,7 @@ class ReleasePackagingTest(unittest.TestCase):
                     self.assertNotIn("addons/gdpp/LICENSE", names)
                     self.assertNotIn("addons/gdpp/THIRD_PARTY_NOTICES.md", names)
                     self.assertIn("addons/gdpp/build_progress.gd", names)
+                    self.assertIn("addons/gdpp/native_build_job.gd", names)
         self.assertEqual(len(archives), 12)
 
     def test_zip_is_reproducible(self) -> None:

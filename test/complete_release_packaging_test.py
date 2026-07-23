@@ -265,6 +265,7 @@ class CompleteReleasePackagingTest(unittest.TestCase):
         self.assertFalse(any(path.endswith(".zip") for path in names))
         self.assertFalse(any("template_debug" in path for path in names))
         self.assertIn("addons/gdpp/build_progress.gd", names)
+        self.assertIn("addons/gdpp/native_build_job.gd", names)
         shutil.rmtree(stage)
 
         components = self.temporary / "components"
