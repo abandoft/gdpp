@@ -108,24 +108,6 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
     string(REPLACE "." "_" GDPP_SDK_SUFFIX "${GDPP_SDK_VERSION}")
     set(GDPP_SDK_DEPENDENCY_VARIABLE "GDPP_SDK_BINDING_TARGETS_${GDPP_SDK_SUFFIX}")
     set(${GDPP_SDK_DEPENDENCY_VARIABLE})
-    if(GDPP_SDK_VERSION STREQUAL GDPP_GODOT_API_VERSION)
-        set(GDPP_SDK_EDITOR_BUILD_${GDPP_SDK_SUFFIX}
-            "${CMAKE_BINARY_DIR}/third/godot-cpp")
-    else()
-        set(GDPP_EDITOR_TARGET "gdpp_godot_cpp_${GDPP_SDK_SUFFIX}_editor")
-        gdpp_add_sdk_binding(
-            "${GDPP_EDITOR_TARGET}"
-            "${GDPP_SDK_VERSION}"
-            editor
-            "GDPP_SDK_EDITOR_BUILD_${GDPP_SDK_SUFFIX}"
-        )
-        list(APPEND GDPP_SDK_BINDING_TARGETS "${GDPP_EDITOR_TARGET}")
-        list(APPEND ${GDPP_SDK_DEPENDENCY_VARIABLE} "${GDPP_EDITOR_TARGET}")
-    endif()
-    if(GDPP_SDK_VERSION STREQUAL GDPP_GODOT_API_VERSION)
-        list(APPEND ${GDPP_SDK_DEPENDENCY_VARIABLE} godot-cpp)
-    endif()
-
     set(GDPP_RELEASE_TARGET "gdpp_godot_cpp_${GDPP_SDK_SUFFIX}_release")
     gdpp_add_sdk_binding(
         "${GDPP_RELEASE_TARGET}"
@@ -443,23 +425,16 @@ if(GDPP_PLATFORM STREQUAL "windows")
 else()
     set(GDPP_SDK_MSVC_RUNTIME "not_applicable")
 endif()
-if(CMAKE_CONFIGURATION_TYPES)
-    set(GDPP_EDITOR_OPTIMIZATION "$<CONFIG>")
-elseif(CMAKE_BUILD_TYPE)
-    set(GDPP_EDITOR_OPTIMIZATION "${CMAKE_BUILD_TYPE}")
-else()
-    set(GDPP_EDITOR_OPTIMIZATION Debug)
-endif()
 foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
     string(REPLACE "." "_" GDPP_SDK_SUFFIX "${GDPP_SDK_VERSION}")
     set(GDPP_SDK_DIRECTORY "${GDPP_PACKAGED_SDK}/${GDPP_SDK_VERSION}")
     set(GDPP_PACKAGED_SDK_${GDPP_SDK_SUFFIX} "${GDPP_SDK_DIRECTORY}")
     set(GDPP_SDK_MANIFEST
-        "${CMAKE_BINARY_DIR}/generated/gdpp/${GDPP_EDITOR_OPTIMIZATION}/sdk-${GDPP_SDK_VERSION}.manifest")
+        "${CMAKE_BINARY_DIR}/generated/gdpp/sdk-${GDPP_SDK_VERSION}.manifest")
     file(GENERATE
         OUTPUT "${GDPP_SDK_MANIFEST}"
         CONTENT
-            "GDPP_SDK ${GDPP_NATIVE_SDK_SCHEMA}\napi ${GDPP_SDK_VERSION}\nplatform ${GDPP_PLATFORM}\narch ${GDPP_ARCH}\nprofiles development,debug,release\ndistribution_binding template_release\ndistribution_optimization Release\neditor_binding editor\neditor_optimization ${GDPP_EDITOR_OPTIMIZATION}\nplatform_minimum ${GDPP_PLATFORM_MINIMUM}\ngdpp_version ${PROJECT_VERSION}\ncxx_standard 17\nexceptions disabled\nmsvc_runtime ${GDPP_SDK_MSVC_RUNTIME}\nruntime_abi ${GDPP_NATIVE_RUNTIME_ABI}\nruntime_header_sha256 ${GDPP_NATIVE_RUNTIME_HEADER_SHA256}\nreference_semantics_header_sha256 ${GDPP_REFERENCE_SEMANTICS_HEADER_SHA256}\nruntime_source_sha256 ${GDPP_NATIVE_RUNTIME_SOURCE_SHA256}\nattached_runtime_header_sha256 ${GDPP_ATTACHED_RUNTIME_HEADER_SHA256}\nattached_runtime_registry_source_sha256 ${GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE_SHA256}\nattached_runtime_instance_source_sha256 ${GDPP_ATTACHED_RUNTIME_INSTANCE_SOURCE_SHA256}\nattached_runtime_language_source_sha256 ${GDPP_ATTACHED_RUNTIME_LANGUAGE_SOURCE_SHA256}\ninteger_semantics_header_sha256 ${GDPP_INTEGER_SEMANTICS_HEADER_SHA256}\ncompiler ${CMAKE_CXX_COMPILER_ID}\ncompiler_version ${CMAKE_CXX_COMPILER_VERSION}\n"
+            "GDPP_SDK ${GDPP_NATIVE_SDK_SCHEMA}\napi ${GDPP_SDK_VERSION}\nplatform ${GDPP_PLATFORM}\narch ${GDPP_ARCH}\nprofiles debug,release\ndistribution_binding template_release\ndistribution_optimization Release\nplatform_minimum ${GDPP_PLATFORM_MINIMUM}\ngdpp_version ${PROJECT_VERSION}\ncxx_standard 17\nexceptions disabled\nmsvc_runtime ${GDPP_SDK_MSVC_RUNTIME}\nruntime_abi ${GDPP_NATIVE_RUNTIME_ABI}\nruntime_header_sha256 ${GDPP_NATIVE_RUNTIME_HEADER_SHA256}\nreference_semantics_header_sha256 ${GDPP_REFERENCE_SEMANTICS_HEADER_SHA256}\nruntime_source_sha256 ${GDPP_NATIVE_RUNTIME_SOURCE_SHA256}\nattached_runtime_header_sha256 ${GDPP_ATTACHED_RUNTIME_HEADER_SHA256}\nattached_runtime_registry_source_sha256 ${GDPP_ATTACHED_RUNTIME_REGISTRY_SOURCE_SHA256}\nattached_runtime_instance_source_sha256 ${GDPP_ATTACHED_RUNTIME_INSTANCE_SOURCE_SHA256}\nattached_runtime_language_source_sha256 ${GDPP_ATTACHED_RUNTIME_LANGUAGE_SOURCE_SHA256}\ninteger_semantics_header_sha256 ${GDPP_INTEGER_SEMANTICS_HEADER_SHA256}\ncompiler ${CMAKE_CXX_COMPILER_ID}\ncompiler_version ${CMAKE_CXX_COMPILER_VERSION}\n"
     )
 
     set(GDPP_SDK_PACKAGE_COMMANDS
@@ -496,15 +471,11 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${CMAKE_SOURCE_DIR}/third/godot-cpp/include"
                 "${GDPP_SDK_DIRECTORY}/godot-cpp/include"
-        COMMAND "${CMAKE_COMMAND}"
-                -DGDPP_CLASS_DB_INPUT=${CMAKE_SOURCE_DIR}/third/godot-cpp/include/godot_cpp/core/class_db.hpp
-                -DGDPP_CLASS_DB_OUTPUT=${GDPP_SDK_DIRECTORY}/godot-cpp/include/godot_cpp/core/class_db.hpp
-                -P "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${CMAKE_SOURCE_DIR}/third/godot-cpp/LICENSE.md"
                 "${GDPP_SDK_DIRECTORY}/godot-cpp/LICENSE.md"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
-                "${GDPP_SDK_EDITOR_BUILD_${GDPP_SDK_SUFFIX}}/gen/include"
+                "${GDPP_SDK_RELEASE_BUILD_${GDPP_SDK_SUFFIX}}/gen/include"
                 "${GDPP_SDK_DIRECTORY}/godot-cpp/gen/include"
     )
     # godot-cpp deliberately fixes PREFIX to "lib" on every host, including MSVC where CMake's
@@ -514,20 +485,9 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
     if(NOT GDPP_GODOT_CPP_LIBRARY_PREFIX)
         message(FATAL_ERROR "godot-cpp must declare its static-library PREFIX")
     endif()
-    set(GDPP_EDITOR_LIBRARY_NAME
-        "${GDPP_GODOT_CPP_LIBRARY_PREFIX}godot-cpp.${GDPP_PLATFORM}.editor.${GDPP_ARCH}${CMAKE_STATIC_LIBRARY_SUFFIX}")
     set(GDPP_RELEASE_LIBRARY_NAME
         "${GDPP_GODOT_CPP_LIBRARY_PREFIX}godot-cpp.${GDPP_PLATFORM}.template_release.${GDPP_ARCH}${CMAKE_STATIC_LIBRARY_SUFFIX}")
-    if(GDPP_SDK_VERSION STREQUAL GDPP_GODOT_API_VERSION)
-        set(GDPP_EDITOR_LIBRARY_SOURCE "$<TARGET_FILE:godot-cpp>")
-    else()
-        set(GDPP_EDITOR_LIBRARY_SOURCE
-            "${GDPP_SDK_EDITOR_BUILD_${GDPP_SDK_SUFFIX}}/bin/${GDPP_EDITOR_LIBRARY_NAME}")
-    endif()
     list(APPEND GDPP_SDK_PACKAGE_COMMANDS
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${GDPP_EDITOR_LIBRARY_SOURCE}"
-                "${GDPP_SDK_DIRECTORY}/lib/${GDPP_EDITOR_LIBRARY_NAME}"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${GDPP_SDK_RELEASE_BUILD_${GDPP_SDK_SUFFIX}}/bin/${GDPP_RELEASE_LIBRARY_NAME}"
                 "${GDPP_SDK_DIRECTORY}/lib/${GDPP_RELEASE_LIBRARY_NAME}"
@@ -558,7 +518,6 @@ foreach(GDPP_SDK_VERSION IN LISTS GDPP_PACKAGE_GODOT_VERSIONS)
             "${GDPP_ATTACHED_RUNTIME_INSTANCE_SOURCE}"
             "${GDPP_ATTACHED_RUNTIME_LANGUAGE_SOURCE}"
             "${GDPP_INTEGER_SEMANTICS_HEADER}"
-            "${CMAKE_SOURCE_DIR}/cmake/PatchGodotCppClassDB.cmake"
         COMMENT "Packaging compiler-only Godot ${GDPP_SDK_VERSION} SDK"
         VERBATIM
     )
@@ -644,57 +603,6 @@ target_link_libraries(gdpp_generated_smoke PRIVATE gdpp::runtime godot::cpp)
 target_compile_features(gdpp_generated_smoke PRIVATE cxx_std_17)
 gdpp_set_project_warnings(gdpp_generated_smoke)
 
-set(GDPP_PROJECT_SMOKE_ROOT "${GDPP_EXAMPLE_DIRECTORY}")
-set(GDPP_PROJECT_SMOKE_OUTPUT "${GDPP_PROJECT_BUILD_ROOT}/project")
-list(GET GDPP_PACKAGE_GODOT_VERSIONS 0 GDPP_PROJECT_SMOKE_VERSION)
-string(REPLACE "." "_" GDPP_PROJECT_SMOKE_SUFFIX "${GDPP_PROJECT_SMOKE_VERSION}")
-set(GDPP_PROJECT_SMOKE_SDK "${GDPP_PACKAGED_SDK_${GDPP_PROJECT_SMOKE_SUFFIX}}")
-configure_file(
-    "${CMAKE_SOURCE_DIR}/test/native_project/smoke.gd"
-    "${GDPP_PROJECT_BUILD_ROOT}/native_smoke.gd"
-    COPYONLY
-)
-configure_file(
-    "${CMAKE_SOURCE_DIR}/test/native_project/editor_tool_smoke.gd"
-    "${CMAKE_BINARY_DIR}/editor_tool_smoke.gd"
-    COPYONLY
-)
-configure_file(
-    "${CMAKE_SOURCE_DIR}/test/native_project/extension_list.cfg"
-    "${GDPP_PROJECT_SMOKE_ROOT}/.godot/extension_list.cfg"
-    COPYONLY
-)
-file(GLOB_RECURSE GDPP_PROJECT_SMOKE_INPUTS CONFIGURE_DEPENDS LIST_DIRECTORIES false
-    "${GDPP_PROJECT_SMOKE_ROOT}/*.gd"
-    "${GDPP_PROJECT_SMOKE_ROOT}/*.tscn"
-    "${GDPP_PROJECT_SMOKE_ROOT}/*.tres"
-)
-list(FILTER GDPP_PROJECT_SMOKE_INPUTS EXCLUDE REGEX "/addons/gdpp/build/")
-list(FILTER GDPP_PROJECT_SMOKE_INPUTS EXCLUDE REGEX "/\\.godot/")
-list(APPEND GDPP_PROJECT_SMOKE_INPUTS "${GDPP_PROJECT_SMOKE_ROOT}/project.godot")
-list(REMOVE_DUPLICATES GDPP_PROJECT_SMOKE_INPUTS)
-list(SORT GDPP_PROJECT_SMOKE_INPUTS)
-set(GDPP_PROJECT_SMOKE_STAMP "${CMAKE_BINARY_DIR}/gdpp-project-sources.stamp")
-add_custom_command(
-    OUTPUT "${GDPP_PROJECT_SMOKE_STAMP}"
-    COMMAND $<TARGET_FILE:gdpp> project "${GDPP_PROJECT_SMOKE_ROOT}"
-            --output "${GDPP_PROJECT_SMOKE_OUTPUT}"
-            --sdk-root "${GDPP_PROJECT_SMOKE_SDK}"
-            --godot-cpp "${CMAKE_SOURCE_DIR}/third/godot-cpp"
-            --target-godot "${GDPP_PROJECT_SMOKE_VERSION}"
-    COMMAND "${CMAKE_COMMAND}" -E touch "${GDPP_PROJECT_SMOKE_STAMP}"
-    DEPENDS
-        gdpp
-        gdpp_packaged_sdk
-        ${GDPP_PROJECT_SMOKE_INPUTS}
-    COMMENT "Generating deterministic native project smoke sources"
-    VERBATIM
-)
-add_custom_target(
-    gdpp_project_sources ALL
-    DEPENDS "${GDPP_PROJECT_SMOKE_STAMP}"
-)
-
 add_custom_target(
     gdpp_addon ALL
     COMMAND "${CMAKE_COMMAND}" -E rm -f
@@ -753,9 +661,13 @@ if(GDPP_BUILD_TESTS)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "$<TARGET_FILE:gdpp_godot_plugin>"
                 "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/binary/$<TARGET_FILE_NAME:gdpp_godot_plugin>"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/sdk/${GDPP_ATTACHED_TEST_SDK_VERSION}"
+        COMMAND "${CMAKE_COMMAND}" -E touch
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/sdk/.gdignore"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
-                "${GDPP_ADDON_DIRECTORY}/sdk"
-                "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/sdk"
+                "${GDPP_ATTACHED_TEST_SDK}"
+                "${GDPP_ATTACHED_TEST_ROOT}/addons/gdpp/sdk/${GDPP_ATTACHED_TEST_SDK_VERSION}"
         DEPENDS gdpp_addon gdpp_test_vendor gdpp_test_vendor_release
         COMMENT "Preparing independent GDExtension attachment integration project"
         VERBATIM
@@ -765,16 +677,6 @@ endif()
 configure_file(
     "${CMAKE_SOURCE_DIR}/test/godot/smoke.gd"
     "${GDPP_PROJECT_BUILD_ROOT}/service_smoke.gd"
-    COPYONLY
-)
-configure_file(
-    "${CMAKE_SOURCE_DIR}/test/godot/direct_build.gd"
-    "${GDPP_PROJECT_BUILD_ROOT}/direct_build.gd"
-    COPYONLY
-)
-configure_file(
-    "${CMAKE_SOURCE_DIR}/test/godot/direct_build_4_7.gd"
-    "${GDPP_PROJECT_BUILD_ROOT}/direct_build_4_7.gd"
     COPYONLY
 )
 configure_file(
@@ -792,14 +694,12 @@ configure_file(
     "${GDPP_PROJECT_BUILD_ROOT}/build_progress_model.gd"
     COPYONLY
 )
-
 if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
     add_test(
         NAME gdpp.godot.reset_extension_registry
         COMMAND "${CMAKE_COMMAND}"
                 -DGDPP_PROJECT_DIRECTORY=${GDPP_EXAMPLE_DIRECTORY}
                 -DGDPP_COMPILER_DESCRIPTOR=${GDPP_TEST_COMPILER_DESCRIPTOR_RESOURCE}
-                -DGDPP_INCLUDE_PROJECT_EXTENSION=OFF
                 -P "${CMAKE_SOURCE_DIR}/test/native_project/write_extension_registry.cmake"
     )
     set_tests_properties(
@@ -811,7 +711,6 @@ if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
         COMMAND "${CMAKE_COMMAND}"
                 -DGDPP_PROJECT_DIRECTORY=${GDPP_EXAMPLE_DIRECTORY}
                 -DGDPP_COMPILER_DESCRIPTOR=res://addons/gdpp/gdpp.gdextension
-                -DGDPP_INCLUDE_PROJECT_EXTENSION=OFF
                 -P "${CMAKE_SOURCE_DIR}/test/native_project/write_extension_registry.cmake"
     )
     set_tests_properties(
@@ -855,92 +754,6 @@ if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
             TIMEOUT 60
     )
     add_test(
-        NAME gdpp.godot.direct_build
-        COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --path "${GDPP_EXAMPLE_DIRECTORY}"
-                --script addons/gdpp/build/direct_build.gd
-    )
-    set_tests_properties(
-        gdpp.godot.direct_build
-        PROPERTIES
-            PASS_REGULAR_EXPRESSION "GDPP_DIRECT_BUILD_OK"
-            FIXTURES_SETUP gdpp_direct_native
-            FIXTURES_REQUIRED "gdpp_cmake_scaffold;gdpp_clean_extension_registry"
-            TIMEOUT 600
-    )
-    add_test(
-        NAME gdpp.godot.register_native_project
-        COMMAND "${CMAKE_COMMAND}"
-                -DGDPP_PROJECT_DIRECTORY=${GDPP_EXAMPLE_DIRECTORY}
-                -DGDPP_COMPILER_DESCRIPTOR=${GDPP_TEST_COMPILER_DESCRIPTOR_RESOURCE}
-                -DGDPP_INCLUDE_PROJECT_EXTENSION=ON
-                -P "${CMAKE_SOURCE_DIR}/test/native_project/write_extension_registry.cmake"
-    )
-    set_tests_properties(
-        gdpp.godot.register_native_project
-        PROPERTIES
-            FIXTURES_REQUIRED "gdpp_direct_native;gdpp_clean_extension_registry"
-            FIXTURES_SETUP gdpp_native_extension_registry
-    )
-    add_test(
-        NAME gdpp.godot.native_project
-        COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --path "${GDPP_PROJECT_SMOKE_ROOT}"
-                --script addons/gdpp/build/native_smoke.gd
-    )
-    set_tests_properties(
-        gdpp.godot.native_project
-        PROPERTIES
-            PASS_REGULAR_EXPRESSION "GDPP_NATIVE_PROJECT_OK"
-            FIXTURES_REQUIRED "gdpp_native_extension_registry;gdpp_clean_extension_registry"
-            TIMEOUT 120
-    )
-    add_test(
-        NAME gdpp.godot.prepare_native_project_editor
-        COMMAND "${CMAKE_COMMAND}"
-                -DGDPP_PROJECT_DIRECTORY=${GDPP_EXAMPLE_DIRECTORY}
-                -DGDPP_COMPILER_DESCRIPTOR=res://addons/gdpp/gdpp.gdextension
-                -DGDPP_INCLUDE_PROJECT_EXTENSION=ON
-                -P "${CMAKE_SOURCE_DIR}/test/native_project/write_extension_registry.cmake"
-    )
-    set_tests_properties(
-        gdpp.godot.prepare_native_project_editor
-        PROPERTIES
-            DEPENDS gdpp.godot.native_project
-            FIXTURES_REQUIRED "gdpp_native_extension_registry;gdpp_clean_extension_registry"
-            FIXTURES_SETUP gdpp_native_editor_extension_registry
-    )
-    add_test(
-        NAME gdpp.godot.native_project_editor
-        COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --editor
-                --path "${GDPP_PROJECT_SMOKE_ROOT}"
-                --script "${CMAKE_BINARY_DIR}/editor_tool_smoke.gd"
-    )
-    set_tests_properties(
-        gdpp.godot.native_project_editor
-        PROPERTIES
-            PASS_REGULAR_EXPRESSION "GDPP_TOOL_EDITOR_OK"
-            FIXTURES_REQUIRED
-                "gdpp_native_editor_extension_registry;gdpp_clean_extension_registry"
-            TIMEOUT 120
-    )
-    if("4.7" IN_LIST GDPP_PACKAGE_GODOT_VERSIONS)
-        add_test(
-            NAME gdpp.godot.direct_build_4_7
-            COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --path "${GDPP_EXAMPLE_DIRECTORY}"
-                    --script addons/gdpp/build/direct_build_4_7.gd
-        )
-        set_tests_properties(
-            gdpp.godot.direct_build_4_7
-            PROPERTIES
-                PASS_REGULAR_EXPRESSION "GDPP_DIRECT_BUILD_4_7_OK"
-                DEPENDS gdpp.godot.native_project
-                FIXTURES_REQUIRED gdpp_clean_extension_registry
-                TIMEOUT 600
-        )
-        set(GDPP_DIRECT_EXPORT_DEPENDENCY gdpp.godot.direct_build_4_7)
-    else()
-        set(GDPP_DIRECT_EXPORT_DEPENDENCY gdpp.godot.native_project)
-    endif()
-    add_test(
         NAME gdpp.godot.direct_export_build
         COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --path "${GDPP_EXAMPLE_DIRECTORY}"
                 --script addons/gdpp/build/direct_export_build.gd
@@ -949,112 +762,7 @@ if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
         gdpp.godot.direct_export_build
         PROPERTIES
             PASS_REGULAR_EXPRESSION "GDPP_DIRECT_EXPORT_BUILD_OK"
-            DEPENDS ${GDPP_DIRECT_EXPORT_DEPENDENCY}
             FIXTURES_REQUIRED gdpp_clean_extension_registry
             TIMEOUT 600
-    )
-    add_test(
-        NAME gdpp.godot.attached_extension_reset
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${GDPP_ATTACHED_TEST_ROOT}/extension_list.compiler.cfg"
-                "${GDPP_ATTACHED_TEST_ROOT}/.godot/extension_list.cfg"
-    )
-    set_tests_properties(
-        gdpp.godot.attached_extension_reset
-        PROPERTIES
-            FIXTURES_SETUP gdpp_attached_extension_compiler_registry
-            TIMEOUT 30
-    )
-    add_test(
-        NAME gdpp.godot.attached_extension_compile
-        COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --path "${GDPP_ATTACHED_TEST_ROOT}"
-                --script addons/gdpp/build/compile_attached.gd
-    )
-    set_tests_properties(
-        gdpp.godot.attached_extension_compile
-        PROPERTIES
-            PASS_REGULAR_EXPRESSION "GDPP_ATTACHED_COMPILE_OK"
-            FIXTURES_REQUIRED gdpp_attached_extension_compiler_registry
-            FIXTURES_SETUP gdpp_attached_extension_native
-            TIMEOUT 600
-    )
-    add_test(
-        NAME gdpp.godot.attached_extension_runtime_provider_first
-        COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --path "${GDPP_ATTACHED_TEST_ROOT}"
-                --script addons/gdpp/build/runtime_attached.gd
-    )
-    set_tests_properties(
-        gdpp.godot.attached_extension_runtime_provider_first
-        PROPERTIES
-            PASS_REGULAR_EXPRESSION "GDPP_ATTACHED_RUNTIME_OK"
-            FIXTURES_REQUIRED gdpp_attached_extension_native
-            DEPENDS gdpp.godot.attached_extension_compile
-            TIMEOUT 120
-    )
-    add_test(
-        NAME gdpp.godot.attached_extension_project_first
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${GDPP_ATTACHED_TEST_ROOT}/extension_list.project_first.cfg"
-                "${GDPP_ATTACHED_TEST_ROOT}/.godot/extension_list.cfg"
-    )
-    set_tests_properties(
-        gdpp.godot.attached_extension_project_first
-        PROPERTIES
-            FIXTURES_REQUIRED gdpp_attached_extension_native
-            DEPENDS gdpp.godot.attached_extension_runtime_provider_first
-            TIMEOUT 30
-    )
-    add_test(
-        NAME gdpp.godot.attached_extension_runtime_project_first
-        COMMAND "${GDPP_GODOT_EXECUTABLE}" --headless --path "${GDPP_ATTACHED_TEST_ROOT}"
-                --script addons/gdpp/build/runtime_attached.gd
-    )
-    set_tests_properties(
-        gdpp.godot.attached_extension_runtime_project_first
-        PROPERTIES
-            PASS_REGULAR_EXPRESSION "GDPP_ATTACHED_RUNTIME_OK"
-            FIXTURES_REQUIRED gdpp_attached_extension_native
-            DEPENDS gdpp.godot.attached_extension_project_first
-            TIMEOUT 120
-    )
-    add_test(
-        NAME gdpp.godot.attached_extension_restore
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${GDPP_ATTACHED_TEST_ROOT}/extension_list.compiler.cfg"
-                "${GDPP_ATTACHED_TEST_ROOT}/.godot/extension_list.cfg"
-    )
-    set_tests_properties(
-        gdpp.godot.attached_extension_restore
-        PROPERTIES
-            FIXTURES_CLEANUP gdpp_attached_extension_native
-            DEPENDS gdpp.godot.attached_extension_runtime_project_first
-            TIMEOUT 30
-    )
-endif()
-
-if(GDPP_BUILD_TESTS)
-    set(GDPP_PROJECT_CONFIGURE_TEST_COMMAND
-        "${CMAKE_COMMAND}"
-        -S "${GDPP_PROJECT_SMOKE_OUTPUT}"
-        -B "${GDPP_PROJECT_SMOKE_OUTPUT}/configure-contract-$<CONFIG>"
-        -G "${CMAKE_GENERATOR}"
-        -DGODOTCPP_TARGET=editor
-        -DGDPP_GODOT_CPP_DIR=${CMAKE_SOURCE_DIR}/third/godot-cpp
-    )
-    if(CMAKE_GENERATOR_PLATFORM)
-        list(APPEND GDPP_PROJECT_CONFIGURE_TEST_COMMAND
-            -A "${CMAKE_GENERATOR_PLATFORM}")
-    endif()
-    if(CMAKE_GENERATOR_TOOLSET)
-        list(APPEND GDPP_PROJECT_CONFIGURE_TEST_COMMAND
-            -T "${CMAKE_GENERATOR_TOOLSET}")
-    endif()
-    add_test(
-        NAME gdpp.project.cmake.configure
-        COMMAND ${GDPP_PROJECT_CONFIGURE_TEST_COMMAND}
-    )
-    set_tests_properties(
-        gdpp.project.cmake.configure
-        PROPERTIES FIXTURES_SETUP gdpp_cmake_scaffold
     )
 endif()

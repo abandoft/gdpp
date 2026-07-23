@@ -291,7 +291,7 @@ endforeach()
 foreach(required_abstract_contract IN ITEMS
         "distribution_result.get(\"abstract_scripts\", PackedStringArray())"
         "not _abstract_scripts.has(script_path)"
-        "and not ClassDB.can_instantiate(native_class_name)")
+        "and not ClassDB.can_instantiate(attached_base)")
     string(FIND "${export_plugin}" "${required_abstract_contract}" abstract_contract_offset)
     if(abstract_contract_offset EQUAL -1)
         message(FATAL_ERROR

@@ -1,15 +1,10 @@
 set(fixture "${GDPP_TEST_BINARY_DIR}/test-fixtures/clean-addon/addons/gdpp")
 file(REMOVE_RECURSE "${GDPP_TEST_BINARY_DIR}/test-fixtures/clean-addon")
 file(MAKE_DIRECTORY "${fixture}/build/project" "${fixture}/binary")
-file(MAKE_DIRECTORY "${GDPP_TEST_BINARY_DIR}/test-fixtures/clean-addon/.godot")
 file(WRITE "${fixture}/build/project/manifest.txt" "generated\n")
 file(WRITE "${fixture}/binary/libgdpp_compiler.test.so" "compiler\n")
 file(WRITE "${fixture}/binary/libgdpp_fallback.test.so" "fallback\n")
 file(WRITE "${fixture}/binary/libgdpp_project.release.test.so" "project\n")
-file(WRITE "${GDPP_TEST_BINARY_DIR}/test-fixtures/clean-addon/.godot/extension_list.cfg"
-    "res://addons/other/provider.gdextension\n"
-    "res://addons/gdpp/build/compiler_test.gdextension\n"
-    "res://addons/gdpp/build/project/gdpp_project.gdextension\n")
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -DGDPP_ADDON_DIRECTORY=${fixture}
@@ -28,13 +23,4 @@ endif()
 if(NOT EXISTS "${fixture}/binary/libgdpp_compiler.test.so" OR
    NOT EXISTS "${fixture}/binary/libgdpp_fallback.test.so")
     message(FATAL_ERROR "compiler or fallback library was removed")
-endif()
-file(READ "${GDPP_TEST_BINARY_DIR}/test-fixtures/clean-addon/.godot/extension_list.cfg"
-    extension_registry)
-if(extension_registry MATCHES "res://addons/gdpp/build/")
-    message(FATAL_ERROR "generated GDPP descriptor survived product cleanup")
-endif()
-if(NOT extension_registry MATCHES "res://addons/other/provider.gdextension" OR
-   NOT extension_registry MATCHES "res://addons/gdpp/gdpp.gdextension")
-    message(FATAL_ERROR "cleanup damaged the stable extension registry")
 endif()
