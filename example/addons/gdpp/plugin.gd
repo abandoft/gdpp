@@ -14,7 +14,7 @@ const COMPILER_DESCRIPTOR_BACKUP := "res://.godot/gdpp_compiler_descriptor.expor
 
 var _compiler: Object
 var _export_plugin: EditorExportPlugin
-var _build_progress: Window
+var _build_progress: CanvasLayer
 var _building := false
 
 

@@ -1,5 +1,5 @@
 @tool
-extends Window
+extends CanvasLayer
 
 const PANEL_SIZE := Vector2(480.0, 136.0)
 const WINDOW_MARGIN := Vector2(6.0, 6.0)
@@ -33,14 +33,14 @@ const PHASE_TEXT := {
 }
 
 var _surface: Control
+var _panel_group: Control
 var _fill: ColorRect
-var _track: ColorRect
-var _stage_label: Label
-var _phase_label: Label
-var _item_counter: Label
+var _stage_labels: Dictionary = {}
+var _phase_labels: Dictionary = {}
 var _stages := PackedStringArray()
 var _active_stage := ""
 var _active_phase := ""
+var _target_progress := 0.0
 var _displayed_progress := 0.0
 
 
@@ -48,41 +48,34 @@ func _ready() -> void:
     if DisplayServer.get_name().to_lower() == "headless":
         return
 
-    name = "GDPPNativeBuildProgress"
-    title = "GDPP Native Build"
-    unresizable = true
-    borderless = true
-    transient = true
-    transient_to_focused = true
-    exclusive = true
-    visible = false
-    close_requested.connect(_keep_open_during_build)
-
+    layer = 127
     var editor_scale := EditorInterface.get_editor_scale()
     var panel_size := PANEL_SIZE * editor_scale
     var window_margin := WINDOW_MARGIN * editor_scale
-    var window_size := Vector2i(ceil(panel_size.x + window_margin.x * 2.0), ceil(
-        panel_size.y + window_margin.y * 2.0
-    ))
-    size = window_size
-    min_size = window_size
+    var group_size := panel_size + window_margin * 2.0
 
     _surface = Control.new()
-    _surface.mouse_filter = Control.MOUSE_FILTER_STOP
+    _surface.name = "GDPPNativeBuildProgress"
+    _surface.mouse_filter = Control.MOUSE_FILTER_IGNORE
     _surface.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    _surface.modulate = Color(1.0, 1.0, 1.0, 0.0)
     add_child(_surface)
+
+    _panel_group = Control.new()
+    _panel_group.size = group_size
+    _surface.add_child(_panel_group)
 
     var shadow := ColorRect.new()
     shadow.position = Vector2(0.0, 5.0) * editor_scale
-    shadow.size = Vector2(window_size)
+    shadow.size = group_size
     shadow.color = Color(0.0, 0.0, 0.0, 0.34)
-    _surface.add_child(shadow)
+    _panel_group.add_child(shadow)
 
     var panel := ColorRect.new()
     panel.position = window_margin
     panel.size = panel_size
     panel.color = PANEL_COLOR
-    _surface.add_child(panel)
+    _panel_group.add_child(panel)
 
     var title_label := _make_label(
         "GDPP Native Build",
@@ -92,54 +85,54 @@ func _ready() -> void:
     )
     panel.add_child(title_label)
 
-    _stage_label = _make_label(
-        STAGE_TEXT["prepare"],
-        Vector2(28.0, 43.0) * editor_scale,
-        Vector2(424.0, 22.0) * editor_scale,
-        int(round(13.0 * editor_scale))
-    )
-    _stage_label.modulate = Color(0.72, 0.76, 0.83, 1.0)
-    panel.add_child(_stage_label)
+    for stage in STAGE_TEXT:
+        var stage_label := _make_label(
+            STAGE_TEXT[stage],
+            Vector2(28.0, 43.0) * editor_scale,
+            Vector2(424.0, 22.0) * editor_scale,
+            int(round(13.0 * editor_scale))
+        )
+        stage_label.modulate = Color(0.72, 0.76, 0.83, 0.0)
+        panel.add_child(stage_label)
+        _stage_labels[stage] = stage_label
 
-    _phase_label = _make_label(
-        PHASE_TEXT["scan"],
-        Vector2(28.0, 67.0) * editor_scale,
-        Vector2(340.0, 22.0) * editor_scale,
-        int(round(13.0 * editor_scale))
-    )
-    _phase_label.modulate = Color(0.94, 0.95, 0.98, 1.0)
-    panel.add_child(_phase_label)
+    for phase in PHASE_TEXT:
+        var phase_label := _make_label(
+            PHASE_TEXT[phase],
+            Vector2(28.0, 67.0) * editor_scale,
+            Vector2(424.0, 22.0) * editor_scale,
+            int(round(13.0 * editor_scale))
+        )
+        phase_label.modulate = Color(0.94, 0.95, 0.98, 0.0)
+        panel.add_child(phase_label)
+        _phase_labels[phase] = phase_label
 
-    _item_counter = _make_label(
-        "",
-        Vector2(368.0, 67.0) * editor_scale,
-        Vector2(84.0, 22.0) * editor_scale,
-        int(round(12.0 * editor_scale))
-    )
-    _item_counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-    _item_counter.modulate = Color(0.72, 0.76, 0.83, 1.0)
-    panel.add_child(_item_counter)
-
-    _track = ColorRect.new()
-    _track.position = Vector2(28.0, 101.0) * editor_scale
-    _track.size = Vector2(424.0, 12.0) * editor_scale
-    _track.color = TRACK_COLOR
-    _track.clip_contents = true
-    panel.add_child(_track)
+    var track := ColorRect.new()
+    track.position = Vector2(28.0, 101.0) * editor_scale
+    track.size = Vector2(424.0, 12.0) * editor_scale
+    track.color = TRACK_COLOR
+    track.clip_contents = true
+    panel.add_child(track)
 
     _fill = ColorRect.new()
     _fill.position = Vector2.ZERO
-    _fill.size = Vector2(0.0, _track.size.y)
+    _fill.size = track.size
+    _fill.pivot_offset = Vector2.ZERO
+    _fill.scale = Vector2(0.00001, 1.0)
+    _fill.modulate = Color(1.0, 1.0, 1.0, 0.0)
     _fill.color = FILL_COLOR
-    _track.add_child(_fill)
+    track.add_child(_fill)
+
+    _center_on_window(EditorInterface.get_base_control().get_window())
 
 
 func is_available() -> bool:
     return (
         _surface != null
+        and _panel_group != null
         and _fill != null
-        and _stage_label != null
-        and _phase_label != null
+        and _stage_labels.size() == STAGE_TEXT.size()
+        and _phase_labels.size() == PHASE_TEXT.size()
     )
 
 
@@ -149,12 +142,14 @@ func begin(stages: PackedStringArray) -> void:
     _stages = _normalized_stages(stages)
     _active_stage = ""
     _active_phase = ""
+    _target_progress = 0.0
     _displayed_progress = 0.0
     _set_stage("prepare")
     _set_phase("scan")
-    _set_item_counter(0, 0)
     _set_progress(0.0)
-    popup_centered(size)
+    refresh(true)
+    _attach_to_frontmost_editor_window()
+    _surface.modulate = Color.WHITE
     _redraw_now()
 
 
@@ -163,7 +158,6 @@ func set_active_stage(stage: String) -> void:
         return
     _set_stage(stage)
     _set_phase("scan")
-    _set_item_counter(0, 0)
     _set_progress(calculate_hierarchical_progress(_stages, stage, "scan", 0, 1))
     _redraw_now()
 
@@ -174,7 +168,6 @@ func update(stage: String, phase: String, completed: int, total: int) -> void:
     _set_stage(stage)
     var known_phase := phase if PHASE_TEXT.has(phase) else "compile"
     _set_phase(known_phase)
-    _set_item_counter(completed, total)
     _set_progress(
         calculate_hierarchical_progress(_stages, stage, known_phase, completed, total)
     )
@@ -185,11 +178,12 @@ func finish() -> void:
     if not is_available():
         return
     _set_phase("complete")
-    _set_item_counter(0, 0)
     _set_progress(1.0)
+    refresh(true)
     _redraw_now()
-    hide()
+    _surface.modulate = Color(1.0, 1.0, 1.0, 0.0)
     _redraw_now()
+    _restore_editor_parent()
 
 
 static func calculate_hierarchical_progress(
@@ -233,32 +227,99 @@ func _normalized_stages(stages: PackedStringArray) -> PackedStringArray:
 
 
 func _set_stage(stage: String) -> void:
-    var known_stage := stage if STAGE_TEXT.has(stage) else "prepare"
+    var known_stage := stage if _stage_labels.has(stage) else "prepare"
     if known_stage == _active_stage:
         return
-    _stage_label.text = STAGE_TEXT[known_stage]
+    if _stage_labels.has(_active_stage):
+        _stage_labels[_active_stage].modulate = Color(0.72, 0.76, 0.83, 0.0)
+    _stage_labels[known_stage].modulate = Color(0.72, 0.76, 0.83, 1.0)
     _active_stage = known_stage
 
 
 func _set_phase(phase: String) -> void:
-    var known_phase := phase if PHASE_TEXT.has(phase) else "compile"
+    var known_phase := phase if _phase_labels.has(phase) else "compile"
     if known_phase == _active_phase:
         return
-    _phase_label.text = PHASE_TEXT[known_phase]
+    if _phase_labels.has(_active_phase):
+        _phase_labels[_active_phase].modulate = Color(0.94, 0.95, 0.98, 0.0)
+    _phase_labels[known_phase].modulate = Color(0.94, 0.95, 0.98, 1.0)
     _active_phase = known_phase
 
 
-func _set_item_counter(completed: int, total: int) -> void:
-    _item_counter.text = (
-        "%d / %d" % [clampi(completed, 0, total), total]
-        if total > 1
-        else ""
-    )
-
-
 func _set_progress(progress: float) -> void:
-    _displayed_progress = maxf(_displayed_progress, clampf(progress, 0.0, 1.0))
-    _fill.size = Vector2(_track.size.x * _displayed_progress, _track.size.y)
+    _target_progress = maxf(_target_progress, clampf(progress, 0.0, 1.0))
+
+
+func refresh(snap_to_target := false) -> void:
+    if not is_available():
+        return
+    if snap_to_target:
+        _displayed_progress = _target_progress
+    else:
+        var remaining := _target_progress - _displayed_progress
+        if remaining > 0.0:
+            _displayed_progress = minf(
+                _target_progress,
+                _displayed_progress + maxf(0.0015, remaining * 0.16)
+            )
+    _fill.scale = Vector2(maxf(_displayed_progress, 0.00001), 1.0)
+    _fill.modulate = (
+        Color.WHITE
+        if _displayed_progress > 0.0
+        else Color(1.0, 1.0, 1.0, 0.0)
+    )
+    _redraw_now()
+
+
+func _attach_to_frontmost_editor_window() -> void:
+    var host_window := _frontmost_editor_window()
+    if host_window == null:
+        return
+    if get_parent() != host_window:
+        reparent(host_window, false)
+    _center_on_window(host_window)
+
+
+func _frontmost_editor_window() -> Window:
+    var editor_window := EditorInterface.get_base_control().get_window()
+    if editor_window == null:
+        return null
+    var exclusive_window := editor_window.get_last_exclusive_window()
+    if exclusive_window != null and exclusive_window.visible:
+        return exclusive_window
+    var popup_window := _find_window_by_id(
+        editor_window,
+        DisplayServer.window_get_active_popup()
+    )
+    return popup_window if popup_window != null else editor_window
+
+
+func _find_window_by_id(node: Node, window_id: int) -> Window:
+    if node is Window:
+        var candidate := node as Window
+        if candidate.get_window_id() == window_id:
+            return candidate
+    for child in node.get_children():
+        var result := _find_window_by_id(child, window_id)
+        if result != null:
+            return result
+    return null
+
+
+func _center_on_window(host_window: Window) -> void:
+    if host_window == null:
+        return
+    _panel_group.position = (
+        Vector2(host_window.size) - _panel_group.size
+    ) * 0.5
+
+
+func _restore_editor_parent() -> void:
+    var editor_parent := EditorInterface.get_base_control()
+    if editor_parent != null and get_parent() != editor_parent:
+        reparent(editor_parent, false)
+    if editor_parent != null:
+        _center_on_window(editor_parent.get_window())
 
 
 func _make_label(text: String, position: Vector2, size: Vector2, font_size: int) -> Label:
@@ -269,10 +330,6 @@ func _make_label(text: String, position: Vector2, size: Vector2, font_size: int)
     label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
     label.add_theme_font_size_override("font_size", font_size)
     return label
-
-
-func _keep_open_during_build() -> void:
-    pass
 
 
 func _redraw_now() -> void:

@@ -25,7 +25,7 @@ const GODOT_EXPORT_CACHE_DIRECTORY := "res://.godot/exported"
 const EXPORT_TRANSFORM_REVISION := 19
 
 var _compiler: Object
-var _build_progress: Window
+var _build_progress: CanvasLayer
 var _active_build_label := ""
 var _ready := false
 var _script_classes: Dictionary = {}
@@ -62,7 +62,7 @@ var _copied_property_count := 0
 var _strict_failure_injected := false
 
 
-func configure(compiler: Object, build_progress: Window) -> void:
+func configure(compiler: Object, build_progress: CanvasLayer) -> void:
     _compiler = compiler
     _build_progress = build_progress
 
