@@ -537,6 +537,7 @@ ir::Parameter IrLowerer::lower_parameter(const ast::Parameter& parameter) const 
     ir::Parameter lowered;
     lowered.name = parameter.name;
     lowered.type = semantic_.type_of(parameter);
+    lowered.ownership = lowered.type.ownership();
     lowered.default_evaluation = semantic_.default_argument_evaluation_of(parameter);
     if (parameter.default_value)
         lowered.default_value = lower_expression(*parameter.default_value);
@@ -864,6 +865,11 @@ ir::Module IrLowerer::lower(const ast::Script& script) const {
 
 bool IrVerifier::verify_parameter(const ir::Parameter& parameter) {
     bool valid = true;
+    if (parameter.ownership != parameter.type.ownership()) {
+        diagnostics_.error("GDS5045", "parameter IR ownership disagrees with its semantic type",
+                           parameter.span);
+        valid = false;
+    }
     const bool has_default = parameter.default_value != nullptr;
     const bool has_evaluation = parameter.default_evaluation != DefaultArgumentEvaluation::absent;
     if (has_default != has_evaluation) {

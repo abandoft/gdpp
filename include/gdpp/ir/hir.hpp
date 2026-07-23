@@ -157,6 +157,7 @@ struct PropertyAccessor {
 struct Parameter {
     std::string name;
     Type type;
+    OwnershipKind ownership{OwnershipKind::value};
     ExpressionPtr default_value;
     DefaultArgumentEvaluation default_evaluation{DefaultArgumentEvaluation::absent};
     SourceSpan span{};

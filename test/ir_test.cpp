@@ -132,6 +132,30 @@ TEST_CASE("typed IR owns function and lambda rest parameters") {
                         [](const auto& diagnostic) { return diagnostic.code == "GDS5043"; }));
 }
 
+TEST_CASE("typed IR preserves shared container ownership through parameters") {
+    gdpp::DiagnosticBag diagnostics;
+    auto module = lower_source(
+        "func mutate(bytes: PackedByteArray, values: Array, scalar: int) -> void:\n"
+        "    bytes.append(1)\n"
+        "    values.append(2)\n",
+        diagnostics);
+
+    REQUIRE(!diagnostics.has_errors());
+    REQUIRE_EQ(module.functions.front().parameters.at(0).ownership,
+               gdpp::OwnershipKind::shared_container);
+    REQUIRE_EQ(module.functions.front().parameters.at(1).ownership,
+               gdpp::OwnershipKind::shared_container);
+    REQUIRE_EQ(module.functions.front().parameters.at(2).ownership, gdpp::OwnershipKind::value);
+
+    gdpp::IrVerifier verifier{diagnostics};
+    REQUIRE(verifier.verify(module));
+
+    module.functions.front().parameters.front().ownership = gdpp::OwnershipKind::value;
+    REQUIRE(!verifier.verify(module));
+    REQUIRE(std::any_of(diagnostics.items().begin(), diagnostics.items().end(),
+                        [](const auto& diagnostic) { return diagnostic.code == "GDS5045"; }));
+}
+
 TEST_CASE("typed IR rejects missing default argument evaluation contracts") {
     gdpp::DiagnosticBag diagnostics;
     auto module = lower_source("func invoke(value: int = 1) -> void:\n"
