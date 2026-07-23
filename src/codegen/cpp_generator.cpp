@@ -3471,9 +3471,13 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             receiver_name = receiver;
             receiver_setup =
                 "auto &&" + receiver + " = " + emit_expression(*callee.operands.at(0)) + "; ";
-            const auto connector =
-                callee.operands.at(0)->type.kind == TypeKind::object ? "->" : ".";
-            invocation = receiver + connector + script_native_name;
+            if (callee.operands.at(0)->type.is_packed_array())
+                invocation = receiver + ".native()." + script_native_name;
+            else {
+                const auto connector =
+                    callee.operands.at(0)->type.kind == TypeKind::object ? "->" : ".";
+                invocation = receiver + connector + script_native_name;
+            }
             if (callee.resolution == ir::ResolutionKind::godot_method &&
                 callee.value == "get_node") {
                 invocation += "<godot::Node>";
@@ -3704,9 +3708,11 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                    key_name + " = " + emit_expression(*expression.operands.at(1)) +
                    "; return gdpp::runtime::get_key(" + target_name + ", " + key_name + "); }())";
         }
-        return emit_subscript_read(expression.operands.at(0)->type, expression.type,
-                                   emit_expression(*expression.operands.at(0)) + "[" +
-                                       emit_expression(*expression.operands.at(1)) + "]");
+        return emit_subscript_read(
+            expression.operands.at(0)->type, expression.type,
+            emit_expression(*expression.operands.at(0)) +
+                (expression.operands.at(0)->type.is_packed_array() ? ".native()[" : "[") +
+                emit_expression(*expression.operands.at(1)) + "]");
     case ir::ExpressionKind::array_literal: {
         const auto descriptor = describe_container_type(expression.type);
         const auto runtime_typed = descriptor && descriptor->has_runtime_constraint();
@@ -4610,8 +4616,12 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
             if (statement.operation != "=") {
                 const auto current_name = "_gdpp_subscript_current_" + suffix;
                 result += nested_prefix + "const auto " + current_name + " = " +
-                          emit_subscript_read(target.operands.at(0)->type, target.type,
-                                              container_name + "[" + index_name + "]") +
+                          emit_subscript_read(
+                              target.operands.at(0)->type, target.type,
+                              container_name +
+                                  (target.operands.at(0)->type.is_packed_array() ? ".native()["
+                                                                                : "[") +
+                                  index_name + "]") +
                           ";\n";
                 result += nested_prefix + "const auto " + value_name + " = " +
                           emit_expression(*statement.expression) + ";\n";
@@ -4642,8 +4652,9 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                     : target.type;
             assigned = emit_conversion(target.type, assigned_source_type, std::move(assigned));
             assigned = emit_subscript_store(target.operands.at(0)->type, std::move(assigned));
-            result += nested_prefix + container_name + "[" + index_name + "] = " + assigned +
-                      ";\n" + prefix + "}\n";
+            result += nested_prefix + container_name +
+                      (target.operands.at(0)->type.is_packed_array() ? ".native()[" : "[") +
+                      index_name + "] = " + assigned + ";\n" + prefix + "}\n";
             return result;
         }
         std::string value = emit_expression(*statement.expression);
@@ -5076,13 +5087,14 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
             std::string result =
                 prefix + "{\n" + nested_prefix + "auto &&" + iterable_name + " = " +
                 emit_expression(*statement.condition) + ";\n" + nested_prefix + "for (int64_t " +
-                index_name + " = 0; " + index_name + " < " + iterable_name + ".size(); ++" +
+                index_name + " = 0; " + index_name + " < " + iterable_name +
+                ".native().size(); ++" +
                 index_name + ") {\n" + body_prefix +
                 (statement.declared_type.is_dynamic() ? std::string{"godot::Variant"}
                                                       : cpp_type(statement.declared_type)) +
                 " " + sanitize_identifier(statement.name) + " = " +
                 emit_conversion(statement.declared_type, statement.iteration.element_type,
-                                iterable_name + "[" + index_name + "]") +
+                                iterable_name + ".native()[" + index_name + "]") +
                 ";\n";
             for (const auto& child : statement.body)
                 result += emit_statement(child, indentation + 2);
