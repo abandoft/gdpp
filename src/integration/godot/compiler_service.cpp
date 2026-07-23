@@ -10,11 +10,9 @@
 #include "gdpp/support/sha256.hpp"
 
 #include <godot_cpp/classes/class_db_singleton.hpp>
-#include <godot_cpp/classes/display_server.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
-#include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/templates/hashfuncs.hpp>
 #include <godot_cpp/variant/array.hpp>
@@ -32,10 +30,7 @@
 #endif
 
 #include <algorithm>
-#include <atomic>
 #include <cctype>
-#include <chrono>
-#include <condition_variable>
 #include <cstring>
 #include <cwctype>
 #include <filesystem>
@@ -45,7 +40,6 @@
 #include <mutex>
 #include <optional>
 #include <string>
-#include <thread>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -1029,20 +1023,12 @@ std::string trimmed_toolchain_output(std::string output) {
     return output;
 }
 
-void refresh_editor_display() {
-    if (auto* display_server = godot::DisplayServer::get_singleton())
-        display_server->process_events();
-    if (auto* rendering_server = godot::RenderingServer::get_singleton())
-        rendering_server->force_draw();
-}
-
 void report_build_progress(const godot::Callable& callback, const char* phase,
                            const std::size_t completed, const std::size_t total) {
     if (!callback.is_valid())
         return;
     (void)callback.call(godot::String{phase}, static_cast<int64_t>(completed),
                         static_cast<int64_t>(total));
-    refresh_editor_display();
 }
 
 } // namespace
@@ -1075,6 +1061,8 @@ void GDPPCompiler::_bind_methods() {
     godot::ClassDB::bind_method(
         godot::D_METHOD("execute_project_build", "build_plan", "progress_callback"),
         &GDPPCompiler::execute_project_build, DEFVAL(godot::Callable{}));
+    godot::ClassDB::bind_method(godot::D_METHOD("prepare_project_build"),
+                                &GDPPCompiler::prepare_project_build);
     godot::ClassDB::bind_method(
         godot::D_METHOD("prune_stale_development_libraries", "current_library"),
         &GDPPCompiler::prune_stale_development_libraries);
@@ -1122,19 +1110,9 @@ GDPPCompiler::execute_build_commands(const godot::Array& commands,
         const auto* phase = invocations[begin].stage == 0 ? "compile" : "link";
         report_build_progress(progress_callback, phase, 0, count);
         for (std::size_t index = begin; index < end; ++index) {
-            std::atomic<bool> command_complete{false};
-            NativeProcessResult process_result;
-            std::thread worker{[&]() {
-                const auto& invocation = invocations[index];
-                process_result =
-                    execute_native_process(invocation.executable, invocation.arguments);
-                command_complete.store(true);
-            }};
-            while (!command_complete.load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds{50});
-                refresh_editor_display();
-            }
-            worker.join();
+            const auto& invocation = invocations[index];
+            auto process_result =
+                execute_native_process(invocation.executable, invocation.arguments);
             report_build_progress(progress_callback, phase, index - begin + 1, count);
             if (process_result.exit_code != 0) {
                 result.exit_code = process_result.exit_code;
@@ -1235,6 +1213,12 @@ GDPPCompiler::execute_project_build(const godot::Dictionary& build_plan,
     return output;
 }
 
+void GDPPCompiler::prepare_project_build() {
+    auto reflected = reflect_extension_contracts();
+    const std::lock_guard lock{reflected_bridges_mutex_};
+    reflected_bridges_ = std::move(reflected);
+}
+
 godot::Dictionary
 GDPPCompiler::prune_stale_development_libraries(const godot::String& current_library) const {
     auto* settings = godot::ProjectSettings::get_singleton();
@@ -1325,7 +1309,16 @@ godot::Dictionary GDPPCompiler::compile_project(
     options.sdk_root =
         versioned_sdk_root(path_from_utf8(native_string(settings->globalize_path(sdk_root))),
                            *version, *platform, architecture, web_thread_mode);
-    options.reflected_extension_bridges = reflect_extension_contracts();
+    bool has_reflected_snapshot = false;
+    {
+        const std::lock_guard lock{reflected_bridges_mutex_};
+        if (reflected_bridges_) {
+            options.reflected_extension_bridges = *reflected_bridges_;
+            has_reflected_snapshot = true;
+        }
+    }
+    if (!has_reflected_snapshot)
+        options.reflected_extension_bridges = reflect_extension_contracts();
     options.compiler.target_version = *version;
     if (progress_callback.is_valid()) {
         options.progress_callback = [&](const ProjectCompilePhase phase,

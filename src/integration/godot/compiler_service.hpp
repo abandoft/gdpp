@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gdpp/project/extension_bridge.hpp"
+
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -7,6 +9,9 @@
 #include <godot_cpp/variant/string.hpp>
 
 #include <cstdint>
+#include <mutex>
+#include <optional>
+#include <vector>
 
 namespace gdpp::extension {
 
@@ -30,6 +35,7 @@ class GDPPCompiler final : public godot::RefCounted {
     [[nodiscard]] godot::Dictionary
     execute_project_build(const godot::Dictionary& build_plan,
                           const godot::Callable& progress_callback = {}) const;
+    void prepare_project_build();
     [[nodiscard]] godot::Dictionary
     prune_stale_development_libraries(const godot::String& current_library) const;
     [[nodiscard]] godot::String get_default_sdk_root() const;
@@ -52,6 +58,9 @@ class GDPPCompiler final : public godot::RefCounted {
     [[nodiscard]] BuildExecutionResult
     execute_build_commands(const godot::Array& commands,
                            const godot::Callable& progress_callback) const;
+
+    mutable std::mutex reflected_bridges_mutex_;
+    std::optional<std::vector<gdpp::ExtensionBridge>> reflected_bridges_;
 };
 
 } // namespace gdpp::extension
