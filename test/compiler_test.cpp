@@ -384,6 +384,10 @@ TEST_CASE("compiler applies internal call contracts to every native storage fami
         "    sink.vector(vector_value)\n");
 
     REQUIRE(result.success);
+    REQUIRE(result.unit.header.find("#include <godot_cpp/classes/node.hpp>") !=
+            std::string::npos);
+    REQUIRE(result.unit.header.find("#include <godot_cpp/variant/vector3.hpp>") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find(
                 "gdpp::runtime::strict_typed_storage<godot::TypedArray<godot::String>>("
                 "godot::Variant(_gdpp_call_argument_") != std::string::npos);

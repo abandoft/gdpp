@@ -566,6 +566,10 @@ void collect_expression_types(const ir::Expression& expression, NativeTypeInclud
                               const GodotApi& api, const ScriptSymbolTable* script_symbols) {
     collect_type(expression.type, includes, api, script_symbols);
     collect_type(expression.storage_type, includes, api, script_symbols);
+    if (expression.call_contract) {
+        for (const auto& parameter : expression.call_contract->parameters)
+            collect_type(parameter, includes, api, script_symbols);
+    }
     // A GDScript property can intentionally publish a broader type than its native getter. For
     // example, SceneTree.root is a Node property while godot-cpp returns Window*. Include the
     // concrete getter result so C++ can see the inheritance needed for the implicit upcast.
