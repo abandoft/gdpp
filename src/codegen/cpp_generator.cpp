@@ -1884,6 +1884,7 @@ std::string CodeGenerator::emit_method_callback_definition(
            << "    r_error->error = GDEXTENSION_CALL_OK;\n"
            << "    r_error->argument = 0;\n"
            << "    r_error->expected = 0;\n"
+           << "    (void)p_args;\n"
            << "    if (p_argument_count < " << required << ") {\n"
            << "        r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;\n"
            << "        r_error->expected = " << required << ";\n"
