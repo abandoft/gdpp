@@ -205,9 +205,10 @@ GDPP 自身使用 CMake、Python 和 godot-cpp 生成器，以保证开发构建
 重新生成或构建 godot-cpp。
 
 `sdk/<version>/sdk.manifest` 固定 API、平台、架构、编译器族和版本。`NativeBuilder` 在生成
-命令前验证 API、平台与架构，防止错误版本或平台静态库进入链接。发行包按操作系统和架构
-分别构建，不能混用。macOS universal SDK 的静态库同时包含 arm64 与 x86_64，直接构建命令也
-显式传递两组 `-arch`，不会把单架构库伪装成 universal。
+命令前验证 API、平台与架构，防止错误版本或平台静态库进入链接。发行包按桌面宿主分别构建，
+每个包同时携带 4.4～4.7 四套同宿主 SDK，不能混用其他桌面平台静态库。macOS universal SDK
+的静态库同时包含 arm64 与 x86_64，直接构建命令也显式传递两组 `-arch`，不会把单架构库伪装成
+universal。
 
 客户项目公开 profile 只有强类型的 `debug` 与 `release`。二者都映射到 godot-cpp 上游
 `template_release` target；差异仅由 GDPP 的脚本调试语义定义表达。客户 SDK 不包含 editor 或

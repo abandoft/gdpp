@@ -103,9 +103,10 @@ Debug 与 Release。`register_types.cpp`、GDPP runtime 和每个生成的 `.gd.
 
 ## SDK 与缓存
 
-单宿主插件包只包含所选 Godot 小版本的 SDK；完整包按 Godot 版本组合三个桌面 compiler
-动态库、三个桌面目标 SDK，以及 Android、iOS、Web target pack。无论哪一种包，每个平台/架构/
-线程模式都只允许一份 `template_release` 绑定。
+发行物按桌面宿主固定为 `gdpp-mac.zip`、`gdpp-linux.zip`、`gdpp-win.zip` 三个包。每个包只
+携带当前宿主的 compiler/fallback 和桌面 SDK，但同时包含 Godot 4.4～4.7 全部版本。三个包
+均包含 Android arm64 与 Web threads/nothreads；mac 包另外包含 iOS device 和 Universal
+Simulator。每个平台/架构/线程模式都只允许一份 `template_release` 绑定。
 
 SDK schema 11 固定：
 
