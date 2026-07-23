@@ -2938,6 +2938,25 @@ TEST_CASE("compiler lowers Dictionary named access through its keyed native ABI"
     REQUIRE(result.unit.source.find("gdpp::runtime::set_named") == std::string::npos);
 }
 
+TEST_CASE("dynamic named access preserves Dictionary dot syntax across Variant boundaries") {
+    const gdpp::Compiler compiler;
+    const auto result =
+        compiler.compile("dynamic_dictionary_named_access.gd",
+                         "func read_login(response: Variant) -> Variant:\n"
+                         "    return response.uuid\n"
+                         "func update_login(response: Variant, token: String) -> Variant:\n"
+                         "    response.uuid = token\n"
+                         "    response.profile.score += 1\n"
+                         "    return response.profile.score\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("gdpp::runtime::get_named(response") != std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::set_named") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::StringName(\"uuid\")") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::StringName(\"profile\")") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::StringName(\"score\")") != std::string::npos);
+}
+
 TEST_CASE("dynamic nested value assignments write every changed value back to its owner") {
     const gdpp::Compiler compiler;
     const auto result =
