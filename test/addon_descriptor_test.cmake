@@ -10,7 +10,7 @@ foreach(required_plugin_metadata IN ITEMS
         "description=\"GDScript AOT & Extension\""
         "author=\"GodotHub\""
         "website=\"https://godothub.com\""
-        "version=\"1.7.5\""
+        "version=\"1.7.6\""
         "script=\"plugin.gd\"")
     string(FIND "${plugin_metadata}" "${required_plugin_metadata}" metadata_offset)
     if(metadata_offset EQUAL -1)
@@ -149,14 +149,21 @@ foreach(forbidden_parallel_build_contract IN ITEMS
     endif()
 endforeach()
 foreach(required_build_progress_contract IN ITEMS
-        "extends CanvasLayer"
-        "func begin() -> void:"
-        "func update(profile: String, phase: String, completed: int, total: int) -> void:"
-        "const FILL_COLUMN_COUNT := 424"
-        "track.position = Vector2(28.0, 101.0) * editor_scale"
-        "column.size = Vector2(column_width + 0.5, track.size.y)"
-        "_fill_columns[index].modulate = Color(1.0, 1.0, 1.0, alpha)"
-        "_overall_progress(known_phase, phase_progress)"
+        "extends Window"
+        "transient_to_focused = true"
+        "exclusive = true"
+        "func begin(stages: PackedStringArray) -> void:"
+        "func set_active_stage(stage: String) -> void:"
+        "func update(stage: String, phase: String, completed: int, total: int) -> void:"
+        "static func calculate_hierarchical_progress("
+        "float(stage_index) + stage_progress"
+        "float(phase_index) + item_progress"
+        "_fill.size = Vector2(_track.size.x * _displayed_progress, _track.size.y)"
+        "popup_centered(size)"
+        "\"Preparing AOT export\""
+        "\"Precompiling project scripts\""
+        "\"Compiling project sources\""
+        "\"AOT build complete\""
         "RenderingServer.force_draw()")
     string(FIND "${build_progress}" "${required_build_progress_contract}"
         build_progress_offset)
@@ -165,9 +172,23 @@ foreach(required_build_progress_contract IN ITEMS
             "Native build progress overlay is missing: ${required_build_progress_contract}")
     endif()
 endforeach()
+foreach(forbidden_build_progress_contract IN ITEMS
+        "extends CanvasLayer"
+        "FILL_COLUMN_COUNT"
+        "_fill_columns"
+        "set_translation_profile")
+    string(FIND "${build_progress}" "${forbidden_build_progress_contract}"
+        forbidden_build_progress_offset)
+    if(NOT forbidden_build_progress_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Native build progress must use one top-level continuous bar: "
+            "${forbidden_build_progress_contract}")
+    endif()
+endforeach()
 foreach(required_progress_integration IN ITEMS
         "_export_plugin.configure(_compiler, _build_progress)"
-        "_build_progress.begin()"
+        "_build_progress.begin(PackedStringArray(["
+        "_build_progress.set_active_stage("
         "_build_progress.finish()"
         "Callable(self, \"_on_native_build_progress\")"
         "godot::D_METHOD(\"compile_project\", \"project_root\""
