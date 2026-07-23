@@ -768,6 +768,8 @@ SemanticAnalyzer::find_inner_member(const ScriptInnerClassSymbol& owner,
                 return script_symbols_->find_member(*base, name);
             terminal = inner_base_of(*terminal);
         }
+        if (const auto* external = script_symbols_->external_base_of(owner))
+            return script_symbols_->find_external_member(*external, name);
     }
     return nullptr;
 }
@@ -1563,10 +1565,18 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             }
             model_.referenced_symbols_.emplace(&expression, *symbol);
             const bool external_member =
-                script_symbols_ && current_script_ &&
-                script_symbols_->member_is_external(*current_script_, expression.value());
+                script_symbols_ &&
+                ((current_inner_class_ &&
+                  script_symbols_->member_is_external(*current_inner_class_,
+                                                      expression.value())) ||
+                 (!current_inner_class_ && current_script_ &&
+                  script_symbols_->member_is_external(*current_script_, expression.value())));
             const auto* external_base =
-                external_member ? script_symbols_->external_base_of(*current_script_) : nullptr;
+                !external_member
+                    ? nullptr
+                : current_inner_class_
+                    ? script_symbols_->external_base_of(*current_inner_class_)
+                    : script_symbols_->external_base_of(*current_script_);
             if (external_base)
                 model_.referenced_extension_abis_.insert(external_base->provider_abi);
             if (external_base && symbol->kind == SymbolKind::function) {
@@ -2225,9 +2235,12 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                               ? script_symbols_->base_of(*current_script_)
                                               : nullptr;
                 const auto* external_base =
-                    !base_inner && !base_script && script_symbols_ && current_script_ &&
-                            current_script_->attached
-                        ? script_symbols_->external_base_of(*current_script_)
+                    !base_inner && !base_script && script_symbols_
+                        ? current_inner_class_
+                              ? script_symbols_->external_base_of(*current_inner_class_)
+                          : current_script_ && current_script_->attached
+                              ? script_symbols_->external_base_of(*current_script_)
+                              : nullptr
                         : nullptr;
                 const auto* external_member =
                     external_base ? script_symbols_->find_external_member(*external_base,
@@ -2338,6 +2351,25 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                         validate_script_call(*member, argument_types, expression, expression.span);
                         result = member->type;
                         if (current_inner_class_) {
+                            if (script_symbols_->member_is_external(*current_inner_class_,
+                                                                   callee.value())) {
+                                if (const auto* external =
+                                        script_symbols_->external_base_of(*current_inner_class_)) {
+                                    model_.referenced_extension_abis_.insert(
+                                        external->provider_abi);
+                                    model_.api_resolutions_.insert_or_assign(
+                                        &callee,
+                                        ApiResolution{
+                                            ApiResolutionKind::dynamic_method, external->name, "",
+                                            "", result,
+                                            static_cast<std::uint16_t>(
+                                                member->required_arguments),
+                                            static_cast<std::uint16_t>(
+                                                member->parameters.size()),
+                                            member->is_vararg, false});
+                                }
+                                break;
+                            }
                             const bool dynamic_dispatch =
                                 !member->is_static && script_symbols_->requires_dynamic_dispatch(
                                                           *current_inner_class_, callee.value());
@@ -2411,10 +2443,14 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
             const auto* project_super = called_on_super && script_symbols_ && current_script_
                                             ? script_symbols_->base_of(*current_script_)
                                             : nullptr;
-            const auto* external_super = called_on_super && !project_super && script_symbols_ &&
-                                                 current_script_ && current_script_->attached
-                                             ? script_symbols_->external_base_of(*current_script_)
-                                             : nullptr;
+            const auto* external_super =
+                called_on_super && !project_super && script_symbols_
+                    ? current_inner_class_
+                          ? script_symbols_->external_base_of(*current_inner_class_)
+                      : current_script_ && current_script_->attached
+                          ? script_symbols_->external_base_of(*current_script_)
+                          : nullptr
+                    : nullptr;
             if (external_super) {
                 const auto* member =
                     script_symbols_->find_external_member(*external_super, callee.value());
@@ -4489,6 +4525,12 @@ void SemanticAnalyzer::analyze_function(const ast::FunctionDeclaration& function
             const auto* inherited = script_symbols_->find_member(*base, function.name);
             if (inherited && inherited->kind == ScriptMemberKind::function)
                 inherited_script_method = inherited;
+        } else if (script_symbols_) {
+            const auto* external = script_symbols_->external_base_of(*current_inner_class_);
+            const auto* inherited =
+                external ? script_symbols_->find_external_member(*external, function.name) : nullptr;
+            if (inherited && inherited->kind == ScriptMemberKind::function)
+                inherited_script_method = inherited;
         }
     } else if (function.name != "_init" && script_symbols_ && current_script_) {
         if (const auto* base = script_symbols_->base_of(*current_script_)) {
@@ -4843,6 +4885,12 @@ void SemanticAnalyzer::analyze_class(const ast::ClassDeclaration& declaration) {
             hierarchy.push_back(base);
         for (auto base = hierarchy.rbegin(); base != hierarchy.rend(); ++base) {
             for (const auto& member : (*base)->members)
+                import_inherited_member(member);
+        }
+    }
+    if (current_inner_class_ && script_symbols_) {
+        if (const auto* external = script_symbols_->external_base_of(*current_inner_class_)) {
+            for (const auto& member : external->members)
                 import_inherited_member(member);
         }
     }
@@ -5690,6 +5738,8 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
                         script_symbols_->find_inner(*current_script_, qualified)) {
                     symbol.native_class_name = published->native_class_name;
                     symbol.godot_base_type = published->godot_base_type;
+                    symbol.attached_native_base = published->attached_native_base;
+                    symbol.external_base_name = published->external_base_name;
                     symbol.base_class_name = published->base_class_name;
                     symbol.base_script_path = published->base_script_path;
                 }
@@ -5764,6 +5814,8 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
             current = &base->second;
         }
         inner.godot_base_type = current->godot_base_type;
+        inner.attached_native_base = current->attached_native_base;
+        inner.external_base_name = current->external_base_name;
     }
     const auto populate_inner_enums = [&](const auto& self, const auto& declarations,
                                           const std::string& parent) -> void {
@@ -5786,16 +5838,12 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
                     previous.emplace(entry.name, resolved);
                     enum_symbol.entries.push_back({entry.name, resolved});
                     if (!enumeration.name) {
-                        found->second.members.push_back({ScriptMemberKind::enum_value,
-                                                         entry.name,
-                                                         {TypeKind::integer, "int"},
-                                                         {},
-                                                         0,
-                                                         true,
-                                                         false,
-                                                         false,
-                                                         {},
-                                                         {}});
+                        ScriptMemberSymbol member;
+                        member.kind = ScriptMemberKind::enum_value;
+                        member.name = entry.name;
+                        member.type = {TypeKind::integer, "int"};
+                        member.is_static = true;
+                        found->second.members.push_back(std::move(member));
                     }
                     if (resolved != std::numeric_limits<std::int64_t>::max())
                         next_value = resolved + 1;
@@ -5818,17 +5866,15 @@ SemanticModel SemanticAnalyzer::analyze(const ast::Script& script) {
             const auto* saved_inner = current_inner_class_;
             current_inner_class_ = &found->second;
             for (const auto& variable : declaration.variables) {
-                found->second.members.push_back(
-                    {variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field,
-                     variable.name,
-                     variable.type ? type_from_name(*variable.type, variable.span) : variant_type,
-                     {},
-                     0,
-                     variable.is_constant || variable.is_static,
-                     variable.getter.has_value() || variable.setter.has_value(),
-                     false,
-                     {},
-                     {}});
+                ScriptMemberSymbol member;
+                member.kind =
+                    variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field;
+                member.name = variable.name;
+                member.type =
+                    variable.type ? type_from_name(*variable.type, variable.span) : variant_type;
+                member.is_static = variable.is_constant || variable.is_static;
+                member.has_accessor = variable.getter.has_value() || variable.setter.has_value();
+                found->second.members.push_back(std::move(member));
             }
             for (const auto& function : declaration.functions) {
                 ScriptMemberSymbol member;

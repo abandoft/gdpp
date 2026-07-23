@@ -35,6 +35,12 @@ struct ScriptMemberSymbol {
     bool is_abstract{false};
     std::uint32_t method_hash{0};
     bool has_method_hash{false};
+    // Export-time attached-script reflection is produced by the compiler rather than by loading
+    // customer GDScript resources in the editor. These flags preserve the serialization surface
+    // needed while a scene/resource is being rewritten.
+    bool property_storage{false};
+    bool property_editor{false};
+    std::vector<std::string> parameter_names;
 };
 
 struct ScriptEnumEntrySymbol {
@@ -52,6 +58,10 @@ struct ScriptInnerClassSymbol {
     std::string name;
     std::string native_class_name;
     std::string godot_base_type{"RefCounted"};
+    // Exact ClassDB type used to allocate the Godot owner. This differs from godot_base_type
+    // when the hierarchy is rooted in a class supplied by another GDExtension.
+    std::string attached_native_base{"RefCounted"};
+    std::string external_base_name;
     std::string base_class_name;
     // Project path of a top-level script used as this internal class's direct base. This is
     // distinct from base_class_name, which identifies another internal class in the same unit.
@@ -67,10 +77,11 @@ struct ScriptClassSymbol {
     std::string native_class_name;
     std::string header_file_name;
     std::string godot_base_type{"Node"};
+    std::string attached_native_base{"Node"};
     std::string base_script_path;
     // Non-empty when this script hierarchy is rooted in a ClassDB class owned by another
-    // GDExtension. Such scripts are emitted as attached behaviors instead of illegal native
-    // cross-library subclasses.
+    // GDExtension. It selects the provider MethodBind contract; all project scripts use the
+    // attached behavior model regardless of whether this field is populated.
     std::string external_base_name;
     std::string autoload_name;
     bool globally_named{false};
@@ -120,6 +131,8 @@ class ScriptSymbolTable final {
     [[nodiscard]] const ExternalClassSymbol* find_external(const std::string& name) const noexcept;
     [[nodiscard]] const ExternalClassSymbol*
     external_base_of(const ScriptClassSymbol& owner) const noexcept;
+    [[nodiscard]] const ExternalClassSymbol*
+    external_base_of(const ScriptInnerClassSymbol& owner) const noexcept;
     [[nodiscard]] const ScriptMemberSymbol*
     find_external_member(const ExternalClassSymbol& owner, const std::string& name) const noexcept;
     [[nodiscard]] const ScriptEnumSymbol*
@@ -132,6 +145,8 @@ class ScriptSymbolTable final {
     [[nodiscard]] const ScriptMemberSymbol* find_member(const ScriptClassSymbol& owner,
                                                         const std::string& name) const noexcept;
     [[nodiscard]] bool member_is_external(const ScriptClassSymbol& owner,
+                                          const std::string& name) const noexcept;
+    [[nodiscard]] bool member_is_external(const ScriptInnerClassSymbol& owner,
                                           const std::string& name) const noexcept;
     [[nodiscard]] const ScriptEnumSymbol* find_enum(const ScriptClassSymbol& owner,
                                                     const std::string& name) const noexcept;

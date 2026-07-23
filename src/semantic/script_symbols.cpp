@@ -176,6 +176,20 @@ ScriptSymbolTable::external_base_of(const ScriptClassSymbol& owner) const noexce
     return nullptr;
 }
 
+const ExternalClassSymbol*
+ScriptSymbolTable::external_base_of(const ScriptInnerClassSymbol& owner) const noexcept {
+    const ScriptInnerClassSymbol* current = &owner;
+    std::unordered_set<const ScriptInnerClassSymbol*> visited;
+    while (current && visited.insert(current).second) {
+        if (!current->external_base_name.empty())
+            return find_external(current->external_base_name);
+        if (const auto* script_base = base_of(*current))
+            return external_base_of(*script_base);
+        current = inner_base_of(*current);
+    }
+    return nullptr;
+}
+
 const ScriptMemberSymbol*
 ScriptSymbolTable::find_external_member(const ExternalClassSymbol& owner,
                                         const std::string& name) const noexcept {
@@ -239,6 +253,13 @@ bool ScriptSymbolTable::member_is_external(const ScriptClassSymbol& owner,
     const auto* external = external_base_of(owner);
     const auto* external_member = external ? find_external_member(*external, name) : nullptr;
     return external_member && find_member(owner, name) == external_member;
+}
+
+bool ScriptSymbolTable::member_is_external(const ScriptInnerClassSymbol& owner,
+                                           const std::string& name) const noexcept {
+    const auto* external = external_base_of(owner);
+    const auto* external_member = external ? find_external_member(*external, name) : nullptr;
+    return external_member && find_inner_member(owner, name) == external_member;
 }
 
 const ScriptEnumSymbol* ScriptSymbolTable::find_enum(const ScriptClassSymbol& owner,
@@ -322,7 +343,10 @@ ScriptSymbolTable::find_inner_member(const ScriptInnerClassSymbol& owner,
             continue;
         }
         const auto* script_base = base_of(*current);
-        return script_base ? find_member(*script_base, name) : nullptr;
+        if (script_base)
+            return find_member(*script_base, name);
+        const auto* external = external_base_of(*current);
+        return external ? find_external_member(*external, name) : nullptr;
     }
     return nullptr;
 }
