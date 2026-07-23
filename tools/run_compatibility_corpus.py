@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
-import shutil
 import subprocess
 import sys
 import time
@@ -46,55 +46,92 @@ def write_report(
     temporary_path.replace(report_path)
 
 
-def has_host_binding(sdk_root: Path) -> bool:
-    library_directory = sdk_root / "lib"
-    return library_directory.is_dir() and any(
-        path.is_file() and "editor" in path.name for path in library_directory.iterdir()
-    )
+def generate_binding_headers(source_root: Path, output: Path) -> tuple[Path, float]:
+    godot_cpp = source_root / "third/godot-cpp"
+    api = godot_cpp / "gdextension/extension_api.json"
+    interface = godot_cpp / "gdextension/gdextension_interface.json"
+    for required in (godot_cpp / "binding_generator.py", api, interface):
+        if not required.is_file():
+            raise RuntimeError(f"godot-cpp binding input is missing: {required}")
+
+    started = time.monotonic()
+    sys.path.insert(0, str(godot_cpp))
+    try:
+        binding_generator = importlib.import_module("binding_generator")
+        binding_generator.generate_bindings(
+            api_filepath=str(api),
+            interface_filepath=str(interface),
+            use_template_get_node=True,
+            output_dir=str(output / "binding-headers"),
+        )
+    finally:
+        sys.path.remove(str(godot_cpp))
+    generated_include = output / "binding-headers/gen/include"
+    if not (generated_include / "godot_cpp/classes/object.hpp").is_file():
+        raise RuntimeError("godot-cpp binding generator did not produce Object headers")
+    return generated_include, round(time.monotonic() - started, 4)
 
 
-def create_reusable_host_sdk(source_root: Path, native_directory: Path, output: Path) -> Path:
-    binding_build = native_directory / "godot-cpp"
-    binding_libraries = sorted(
-        path
-        for path in (native_directory / "bin").glob("*")
-        if path.is_file()
-        and "godot-cpp" in path.name
-        and "editor" in path.name
-        and path.suffix in {".a", ".lib"}
-    )
-    if len(binding_libraries) != 1:
+def native_syntax_command(
+    compiler: Path,
+    compiler_id: str,
+    source_root: Path,
+    generated_include: Path,
+    project_output: Path,
+) -> list[str]:
+    sources = sorted((project_output / "generated").glob("*.cpp"))
+    sources.append(project_output / "register_types.cpp")
+    missing = [path for path in sources if not path.is_file()]
+    if missing:
         raise RuntimeError(
-            "expected one reusable host godot-cpp binding, found: "
-            + ", ".join(str(path) for path in binding_libraries)
+            "generated native source is missing: " + ", ".join(str(path) for path in missing)
         )
 
-    generated_include = binding_build / "gen/include"
-    source_include = source_root / "third/godot-cpp/include"
-    numeric_include = source_root / "include/gdpp/numeric"
-    runtime_include = source_root / "include/gdpp/runtime"
-    runtime_source = source_root / "src/runtime"
-    for required in (
+    include_directories = (
+        project_output / "generated",
+        source_root / "include",
+        source_root / "third/godot-cpp/include",
         generated_include,
-        source_include,
-        numeric_include,
-        runtime_include,
-        runtime_source,
-    ):
-        if not required.is_dir():
-            raise RuntimeError(f"reusable host SDK input is missing: {required}")
-
-    shared_sdk = output / "shared-host-sdk"
-    if shared_sdk.exists():
-        shutil.rmtree(shared_sdk)
-    (shared_sdk / "lib").mkdir(parents=True)
-    shutil.copytree(source_include, shared_sdk / "godot-cpp/include")
-    shutil.copytree(generated_include, shared_sdk / "godot-cpp/gen/include")
-    shutil.copytree(numeric_include, shared_sdk / "include/gdpp/numeric")
-    shutil.copytree(runtime_include, shared_sdk / "include/gdpp/runtime")
-    shutil.copytree(runtime_source, shared_sdk / "src/runtime")
-    shutil.copy2(binding_libraries[0], shared_sdk / "lib" / binding_libraries[0].name)
-    return shared_sdk
+    )
+    if compiler_id.upper() == "MSVC":
+        definitions = (
+            "GDEXTENSION",
+            "THREADS_ENABLED",
+            "WINDOWS_ENABLED",
+            "TYPED_METHOD_BIND",
+            "_HAS_EXCEPTIONS=0",
+            "NOMINMAX",
+        )
+        command = [
+            str(compiler),
+            "/nologo",
+            "/std:c++17",
+            "/permissive-",
+            "/Zc:__cplusplus",
+            "/utf-8",
+            "/bigobj",
+            "/EHsc",
+            "/Zs",
+        ]
+        command.extend(f"/D{definition}" for definition in definitions)
+        command.extend(f"/I{directory}" for directory in include_directories)
+    else:
+        definitions = ["GDEXTENSION", "THREADS_ENABLED"]
+        if sys.platform == "darwin":
+            definitions.extend(("MACOS_ENABLED", "UNIX_ENABLED"))
+        elif sys.platform.startswith("linux"):
+            definitions.extend(("LINUX_ENABLED", "UNIX_ENABLED"))
+        command = [
+            str(compiler),
+            "-std=c++17",
+            "-fsyntax-only",
+            "-fno-exceptions",
+            "-fPIC",
+        ]
+        command.extend(f"-D{definition}" for definition in definitions)
+        command.extend(f"-I{directory}" for directory in include_directories)
+    command.extend(str(source) for source in sources)
+    return command
 
 
 def invoke(command: list[str], timeout: float) -> dict:
@@ -134,6 +171,8 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--compiler", type=Path, required=True)
+    parser.add_argument("--cxx-compiler", type=Path, required=True)
+    parser.add_argument("--compiler-id", required=True)
     parser.add_argument("--sdk-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--target-godot", default="4.7")
@@ -162,13 +201,14 @@ def main() -> int:
         raise RuntimeError(f"corpus commit mismatch: expected {expected_commit}, got {actual_commit}")
 
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "repository": manifest["repository"],
         "target_godot": args.target_godot,
         "projects": [],
-        "binding_cache": {
-            "bootstrapped": False,
-            "reused_project_count": 0,
+        "native_validation": {
+            "binding_headers_generated": False,
+            "binding_generation_seconds": 0.0,
+            "validated_project_count": 0,
         },
         "summary": {},
     }
@@ -176,8 +216,12 @@ def main() -> int:
     total_scripts = 0
     total_successes = 0
     source_sdk_root = args.sdk_root.resolve()
-    active_sdk_root = source_sdk_root
     godot_cpp_directory = source_sdk_root / "third/godot-cpp"
+    generated_include, generation_seconds = generate_binding_headers(
+        source_sdk_root, output
+    )
+    report["native_validation"]["binding_headers_generated"] = True
+    report["native_validation"]["binding_generation_seconds"] = generation_seconds
     write_report(report, report_path, total_scripts, total_successes, hard_failures, "running")
 
     project_count = len(manifest["projects"])
@@ -234,14 +278,9 @@ def main() -> int:
         # The sparse corpus itself lives below the repository build/ root, so this still obeys
         # the global artifact-location invariant without modifying checked-in source.
         project_output = project_root / "addons/gdpp/build/compatibility"
-        using_prebuilt_binding = has_host_binding(active_sdk_root)
         project_report["phase"] = "project_compile"
-        project_report["used_prebuilt_binding"] = using_prebuilt_binding
-        if using_prebuilt_binding:
-            report["binding_cache"]["reused_project_count"] += 1
         print(
-            f"[{project_index}/{project_count}] {relative_project}: project compile "
-            f"(prebuilt binding={using_prebuilt_binding})",
+            f"[{project_index}/{project_count}] {relative_project}: project compile",
             flush=True,
         )
         project_result = invoke(
@@ -254,7 +293,7 @@ def main() -> int:
                 "--target-godot",
                 args.target_godot,
                 "--sdk-root",
-                str(active_sdk_root),
+                str(source_sdk_root),
                 "--godot-cpp",
                 str(godot_cpp_directory),
             ],
@@ -271,53 +310,29 @@ def main() -> int:
         if project_report["require_project_native_success"] and project_result["exit_code"] != 0:
             hard_failures.append(f"required project compile failed for {relative_project}")
         if project_result["exit_code"] == 0:
-            native_directory = project_output / "native"
-            project_report["phase"] = "native_configure"
-            configure_result = invoke(
-                [
-                    "cmake",
-                    "-S",
-                    str(project_output),
-                    "-B",
-                    str(native_directory),
-                    "-G",
-                    "Ninja",
-                    "-DCMAKE_BUILD_TYPE=Debug",
-                ],
-                args.project_timeout,
+            project_report["phase"] = "native_syntax"
+            print(
+                f"[{project_index}/{project_count}] {relative_project}: "
+                "validating generated C++",
+                flush=True,
             )
-            project_report["native_configure"] = configure_result
-            write_report(report, report_path, total_scripts, total_successes, hard_failures, "running")
-            if configure_result["exit_code"] != 0:
-                hard_failures.append(f"native configure failed for {relative_project}")
+            native_result = invoke(
+                native_syntax_command(
+                    args.cxx_compiler.resolve(),
+                    args.compiler_id,
+                    source_sdk_root,
+                    generated_include,
+                    project_output,
+                ),
+                args.native_build_timeout,
+            )
+            project_report["native_syntax"] = native_result
+            if native_result["exit_code"] != 0:
+                hard_failures.append(f"generated native code failed for {relative_project}")
             else:
-                project_report["phase"] = "native_build"
-                print(
-                    f"[{project_index}/{project_count}] {relative_project}: native build",
-                    flush=True,
-                )
-                native_result = invoke(
-                    ["cmake", "--build", str(native_directory), "--parallel"],
-                    args.native_build_timeout,
-                )
-                project_report["native_build"] = native_result
-                if native_result["exit_code"] != 0:
-                    hard_failures.append(f"generated native code failed for {relative_project}")
-                elif project_report["require_project_native_success"]:
+                report["native_validation"]["validated_project_count"] += 1
+                if project_report["require_project_native_success"]:
                     project_report["project_native_gate_passed"] = True
-                if native_result["exit_code"] == 0 and not using_prebuilt_binding:
-                    try:
-                        active_sdk_root = create_reusable_host_sdk(
-                            source_sdk_root, native_directory, output
-                        )
-                        report["binding_cache"]["bootstrapped"] = True
-                        print(
-                            f"[{project_index}/{project_count}] cached host binding for "
-                            "remaining projects",
-                            flush=True,
-                        )
-                    except RuntimeError as error:
-                        hard_failures.append(str(error))
         if project_report["isolated_successes"] < project_spec["minimum_isolated_successes"]:
             hard_failures.append(
                 f"compatibility regression for {relative_project}: "
@@ -330,7 +345,7 @@ def main() -> int:
             f"[{project_index}/{project_count}] {relative_project}: "
             f"{project_report['isolated_successes']}/{project_report['script_count']} isolated; "
             f"project exit={project_result['exit_code']}; "
-            f"native exit={project_report.get('native_build', {}).get('exit_code', 'skipped')}",
+            f"native exit={project_report.get('native_syntax', {}).get('exit_code', 'skipped')}",
             flush=True,
         )
 
@@ -345,7 +360,7 @@ def main() -> int:
         print(
             f"  {project['path']}: {project['isolated_successes']}/{project['script_count']}; "
             f"project exit={project['project_compile']['exit_code']}; "
-            f"native exit={project.get('native_build', {}).get('exit_code', 'skipped')}"
+            f"native exit={project.get('native_syntax', {}).get('exit_code', 'skipped')}"
         )
     if hard_failures:
         for failure in hard_failures:
