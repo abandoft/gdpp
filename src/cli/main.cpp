@@ -130,11 +130,8 @@ int main(int argc, char** argv) {
             return 1;
         std::cout << "project generated: " << result.scripts.size() << " script(s), "
                   << result.compiled_count << " compiled, " << result.cache_hit_count << " cached, "
-                  << result.removed_count << " removed\n"
-                  << "configure: cmake -S " << gdpp::path_to_utf8(result.cmake_source_directory)
-                  << " -B " << gdpp::path_to_utf8(result.cmake_build_directory) << " -G Ninja\n"
-                  << "build: cmake --build " << gdpp::path_to_utf8(result.cmake_build_directory)
-                  << " --parallel\n";
+                  << result.removed_count
+                  << " removed; native compilation is performed by the export integration\n";
         return 0;
     }
     if (argc < 3 || std::string{argv[1]} != "compile") {

@@ -11,7 +11,7 @@
 namespace gdpp {
 
 enum class NativePlatform { macos, linux, windows, android, ios, web };
-enum class NativeBuildProfile { development, debug, release };
+enum class NativeBuildProfile { debug, release };
 enum class NativeWebThreadMode { not_applicable, single_threaded, multi_threaded };
 
 [[nodiscard]] const char* native_build_profile_name(NativeBuildProfile profile) noexcept;
@@ -21,13 +21,8 @@ parse_native_build_profile(std::string_view value) noexcept;
                                                  std::string_view architecture) noexcept;
 [[nodiscard]] std::string
 native_library_name(NativeBuildProfile profile, NativePlatform platform,
-                    std::string_view architecture, std::string_view build_id,
+                    std::string_view architecture,
                     NativeWebThreadMode web_thread_mode = NativeWebThreadMode::not_applicable);
-[[nodiscard]] std::string native_development_extension_descriptor(
-    GodotVersion target_version, NativePlatform platform, std::string_view architecture,
-    std::string_view resource_library_path,
-    NativeWebThreadMode web_thread_mode = NativeWebThreadMode::not_applicable,
-    std::string_view additional_sections = {}, bool reloadable = true);
 
 struct NativeBuildOptions {
     std::filesystem::path project_output_directory;
@@ -36,7 +31,7 @@ struct NativeBuildOptions {
     std::string compiler_executable;
     NativePlatform platform{NativePlatform::linux};
     std::string architecture{"x86_64"};
-    NativeBuildProfile profile{NativeBuildProfile::development};
+    NativeBuildProfile profile{NativeBuildProfile::release};
     NativeWebThreadMode web_thread_mode{NativeWebThreadMode::not_applicable};
     GodotVersion target_version{minimum_godot_version};
 };
@@ -61,18 +56,6 @@ struct NativeBuildPlan {
     // output and committed only after the complete build succeeds.
     std::filesystem::path pending_output_library;
 };
-
-struct NativeArtifactCleanupResult {
-    bool success{false};
-    std::size_t removed_count{0};
-    std::vector<std::string> diagnostics;
-};
-
-// Development libraries carry a content build ID so Godot can load a repaired image without
-// reusing an already mapped binary. Prune only older images for the same profile/platform/CPU;
-// libraries for other export targets are independent customer artifacts and must be retained.
-[[nodiscard]] NativeArtifactCleanupResult
-prune_stale_development_libraries(const std::filesystem::path& current_library);
 
 class NativeBuilder final {
   public:

@@ -249,8 +249,6 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
     std::string profiles;
     std::string distribution_binding;
     std::string distribution_optimization;
-    std::string editor_binding;
-    std::string editor_optimization;
     std::string runtime_abi;
     std::string runtime_header_sha256;
     std::string reference_semantics_header_sha256;
@@ -285,10 +283,6 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
             distribution_binding = value;
         else if (key == "distribution_optimization")
             distribution_optimization = value;
-        else if (key == "editor_binding")
-            editor_binding = value;
-        else if (key == "editor_optimization")
-            editor_optimization = value;
         else if (key == "runtime_abi")
             runtime_abi = value;
         else if (key == "runtime_header_sha256")
@@ -463,18 +457,6 @@ bool validate_manifest(const NativeBuildOptions& options, std::vector<std::strin
             "native SDK distribution optimization mismatch: expected Release, package contains " +
             (distribution_optimization.empty() ? std::string{"<missing>"}
                                                : distribution_optimization));
-    }
-    if (options.profile == NativeBuildProfile::development) {
-        if (editor_binding != "editor") {
-            diagnostics.push_back("native SDK editor binding mismatch: expected editor, package "
-                                  "contains " +
-                                  (editor_binding.empty() ? std::string{"<missing>"}
-                                                          : editor_binding));
-        }
-        if (editor_optimization.empty()) {
-            diagnostics.emplace_back(
-                "native SDK manifest does not declare the editor binding optimization");
-        }
     }
     const auto expected_runtime_abi = std::to_string(GDPP_NATIVE_RUNTIME_ABI);
     if (runtime_abi != expected_runtime_abi) {
@@ -753,16 +735,11 @@ NativeBuildCommand compile_command(const NativeBuildOptions& options,
                      "/D_HAS_EXCEPTIONS=0",
                      "/DNOMINMAX"};
         arguments.emplace_back("/O2");
-        if (options.profile == NativeBuildProfile::development) {
-            arguments.emplace_back("/DDEBUG_ENABLED");
+        arguments.emplace_back("/DNDEBUG");
+        arguments.emplace_back("/Gy");
+        arguments.emplace_back("/Gw");
+        if (options.profile == NativeBuildProfile::debug)
             arguments.emplace_back("/DGDPP_SCRIPT_DEBUG_ENABLED");
-        } else {
-            arguments.emplace_back("/DNDEBUG");
-            arguments.emplace_back("/Gy");
-            arguments.emplace_back("/Gw");
-            if (options.profile == NativeBuildProfile::debug)
-                arguments.emplace_back("/DGDPP_SCRIPT_DEBUG_ENABLED");
-        }
         append_reproducible_path_arguments(arguments, options);
         append_include_arguments(arguments, includes, options.platform);
         arguments.emplace_back("/c");
@@ -784,14 +761,9 @@ NativeBuildCommand compile_command(const NativeBuildOptions& options,
         }
         arguments.insert(arguments.end(), {"-O3", "-fvisibility=hidden", "-ffunction-sections",
                                            "-fdata-sections"});
-        if (options.profile == NativeBuildProfile::development) {
-            arguments.emplace_back("-DDEBUG_ENABLED");
+        arguments.emplace_back("-DNDEBUG");
+        if (options.profile == NativeBuildProfile::debug)
             arguments.emplace_back("-DGDPP_SCRIPT_DEBUG_ENABLED");
-        } else {
-            arguments.emplace_back("-DNDEBUG");
-            if (options.profile == NativeBuildProfile::debug)
-                arguments.emplace_back("-DGDPP_SCRIPT_DEBUG_ENABLED");
-        }
         append_reproducible_path_arguments(arguments, options);
         append_macos_architecture_arguments(arguments, options);
         append_android_target_arguments(arguments, options);
@@ -826,13 +798,9 @@ NativeBuildCommand ios_compile_command(const NativeBuildOptions& options,
         "-DIOS_ENABLED", "-DUNIX_ENABLED"};
     arguments.insert(arguments.end(), {"-O3", "-fvisibility=hidden", "-ffunction-sections",
                                        "-fdata-sections"});
-    if (options.profile == NativeBuildProfile::development) {
-        arguments.insert(arguments.end(), {"-DDEBUG_ENABLED", "-DGDPP_SCRIPT_DEBUG_ENABLED"});
-    } else {
-        arguments.emplace_back("-DNDEBUG");
-        if (options.profile == NativeBuildProfile::debug)
-            arguments.emplace_back("-DGDPP_SCRIPT_DEBUG_ENABLED");
-    }
+    arguments.emplace_back("-DNDEBUG");
+    if (options.profile == NativeBuildProfile::debug)
+        arguments.emplace_back("-DGDPP_SCRIPT_DEBUG_ENABLED");
     append_reproducible_path_arguments(arguments, options);
     append_include_arguments(arguments, includes, options.platform);
     arguments.emplace_back("-c");
@@ -860,10 +828,8 @@ NativeBuildCommand ios_link_command(const NativeBuildOptions& options, const IOS
         arguments.push_back(path_to_utf8(library));
     arguments.push_back("-Wl,-exported_symbols_list," + path_to_utf8(export_map));
     arguments.emplace_back("-Wl,-install_name,@rpath/libgdpp_project.dylib");
-    if (options.profile != NativeBuildProfile::development) {
-        arguments.emplace_back("-Wl,-dead_strip");
-        arguments.emplace_back("-Wl,-x");
-    }
+    arguments.emplace_back("-Wl,-dead_strip");
+    arguments.emplace_back("-Wl,-x");
     arguments.emplace_back("-o");
     arguments.push_back(path_to_utf8(output));
     return command;
@@ -971,11 +937,9 @@ std::optional<NativeBuildCommand> link_command(const NativeBuildOptions& options
             response_arguments.push_back(library.u8string());
         response_arguments.push_back("/IMPLIB:" + import_library.u8string());
         response_arguments.push_back("/OUT:" + output.u8string());
-        if (options.profile != NativeBuildProfile::development) {
-            response_arguments.emplace_back("/OPT:REF");
-            response_arguments.emplace_back("/OPT:ICF");
-            response_arguments.emplace_back("/INCREMENTAL:NO");
-        }
+        response_arguments.emplace_back("/OPT:REF");
+        response_arguments.emplace_back("/OPT:ICF");
+        response_arguments.emplace_back("/INCREMENTAL:NO");
         if (!write_msvc_response_file(response_file, response_arguments))
             return std::nullopt;
         arguments = {"/NOLOGO", "@" + response_file.u8string()};
@@ -991,12 +955,7 @@ std::optional<NativeBuildCommand> link_command(const NativeBuildOptions& options
         arguments.push_back(path_to_utf8(binding_library));
         for (const auto& library : libraries)
             arguments.push_back(path_to_utf8(library));
-        if (options.profile == NativeBuildProfile::development) {
-            arguments.insert(arguments.end(), {"-O0", "-g2", "-sASSERTIONS=1",
-                                               "-fdebug-compilation-dir=/gdpp/project"});
-        } else {
-            arguments.insert(arguments.end(), {"-O3", "-Wl,--gc-sections", "-s"});
-        }
+        arguments.insert(arguments.end(), {"-O3", "-Wl,--gc-sections", "-s"});
         arguments.emplace_back("-o");
         arguments.push_back(path_to_utf8(output));
     } else {
@@ -1021,17 +980,15 @@ std::optional<NativeBuildCommand> link_command(const NativeBuildOptions& options
             // is supplied. Only the GDExtension ABI entry point belongs to the customer binary.
             arguments.push_back("-Wl,-exported_symbols_list," + path_to_utf8(export_map));
         }
-        if (options.profile != NativeBuildProfile::development) {
-            if (options.platform == NativePlatform::macos) {
-                arguments.emplace_back("-Wl,-dead_strip");
-                // Distribution images do not need the local symbol table. Keep the public
-                // GDExtension entry point while reducing package size and exposed internals.
-                arguments.emplace_back("-Wl,-x");
-            } else {
-                arguments.insert(arguments.end(), {"-Wl,--gc-sections", "-Wl,-O1", "-Wl,-s"});
-                if (options.platform == NativePlatform::android) {
-                    arguments.insert(arguments.end(), {"-Wl,-z,relro", "-Wl,-z,now"});
-                }
+        if (options.platform == NativePlatform::macos) {
+            arguments.emplace_back("-Wl,-dead_strip");
+            // Distribution images do not need the local symbol table. Keep the public
+            // GDExtension entry point while reducing package size and exposed internals.
+            arguments.emplace_back("-Wl,-x");
+        } else {
+            arguments.insert(arguments.end(), {"-Wl,--gc-sections", "-Wl,-O1", "-Wl,-s"});
+            if (options.platform == NativePlatform::android) {
+                arguments.insert(arguments.end(), {"-Wl,-z,relro", "-Wl,-z,now"});
             }
         }
         arguments.emplace_back("-o");
@@ -1044,19 +1001,15 @@ std::optional<NativeBuildCommand> link_command(const NativeBuildOptions& options
 
 const char* native_build_profile_name(NativeBuildProfile profile) noexcept {
     switch (profile) {
-    case NativeBuildProfile::development:
-        return "development";
     case NativeBuildProfile::debug:
         return "debug";
     case NativeBuildProfile::release:
         return "release";
     }
-    return "development";
+    return "release";
 }
 
 std::optional<NativeBuildProfile> parse_native_build_profile(std::string_view value) noexcept {
-    if (value == "development")
-        return NativeBuildProfile::development;
     if (value == "debug")
         return NativeBuildProfile::debug;
     if (value == "release")
@@ -1082,12 +1035,10 @@ bool native_architecture_supported(const NativePlatform platform,
 }
 
 std::string native_library_name(NativeBuildProfile profile, NativePlatform platform,
-                                std::string_view architecture, std::string_view build_id,
+                                std::string_view architecture,
                                 NativeWebThreadMode web_thread_mode) {
     std::string stem = "gdpp_project." + std::string{native_build_profile_name(profile)} + "." +
                        platform_name(platform) + "." + std::string{architecture};
-    if (profile == NativeBuildProfile::development)
-        stem += "." + std::string{build_id};
     if (platform == NativePlatform::web)
         stem += "." + web_thread_mode_name(web_thread_mode);
     if (platform == NativePlatform::windows)
@@ -1097,112 +1048,6 @@ std::string native_library_name(NativeBuildProfile profile, NativePlatform platf
     if (platform == NativePlatform::ios)
         return "lib" + stem + ".xcframework";
     return "lib" + stem + (platform == NativePlatform::macos ? ".dylib" : ".so");
-}
-
-std::string native_development_extension_descriptor(
-    GodotVersion target_version, NativePlatform platform, std::string_view architecture,
-    std::string_view resource_library_path, NativeWebThreadMode web_thread_mode,
-    std::string_view additional_sections, const bool reloadable) {
-    std::ostringstream output;
-    output << "[configuration]\n\n"
-           << "entry_symbol = \"gdpp_project_library_init\"\n"
-           << "compatibility_minimum = \"" << godot_version_name(target_version) << "\"\n"
-           << "reloadable = " << (reloadable ? "true" : "false") << "\n\n"
-           << "[libraries]\n\n";
-    // "universal" describes the Mach-O payload, not a Godot runtime feature tag. A Universal 2
-    // process still reports exactly one active CPU architecture, so both supported architecture
-    // keys must resolve to the same fat library.
-    if (platform == NativePlatform::macos && architecture == "universal") {
-        output << "macos.editor.arm64 = \"" << resource_library_path << "\"\n"
-               << "macos.editor.x86_64 = \"" << resource_library_path << "\"\n";
-    } else if (platform == NativePlatform::web) {
-        output << "web.editor.";
-        if (web_thread_mode == NativeWebThreadMode::multi_threaded)
-            output << "threads.";
-        output << "wasm32 = \"" << resource_library_path << "\"\n";
-    } else {
-        output << platform_name(platform) << ".editor." << architecture << " = \""
-               << resource_library_path << "\"\n";
-    }
-    if (!additional_sections.empty())
-        output << '\n' << additional_sections;
-    return output.str();
-}
-
-NativeArtifactCleanupResult
-prune_stale_development_libraries(const std::filesystem::path& current_library) {
-    NativeArtifactCleanupResult result;
-    std::error_code error;
-    if (!std::filesystem::is_regular_file(current_library, error) || error) {
-        result.diagnostics.push_back("current development library does not exist: " +
-                                     path_to_utf8(current_library));
-        return result;
-    }
-
-    const auto filename = current_library.filename().string();
-    const auto extension = current_library.extension().string();
-    const auto stem = filename.substr(0, filename.size() - extension.size());
-    const auto build_separator = stem.rfind('.');
-    if (build_separator == std::string::npos) {
-        result.diagnostics.push_back("development library has no content build identifier: " +
-                                     filename);
-        return result;
-    }
-    const auto build_id = stem.substr(build_separator + 1);
-    if (build_id.size() != 16 ||
-        !std::all_of(build_id.begin(), build_id.end(), [](const char character) {
-            return std::isxdigit(static_cast<unsigned char>(character)) != 0;
-        })) {
-        result.diagnostics.push_back(
-            "development library has an invalid content build identifier: " + filename);
-        return result;
-    }
-    const auto family_prefix = stem.substr(0, build_separator + 1);
-    const bool known_family = family_prefix.rfind("gdpp_project.development.", 0) == 0 ||
-                              family_prefix.rfind("libgdpp_project.development.", 0) == 0;
-    if (!known_family) {
-        result.diagnostics.push_back("refusing to prune an unknown native artifact family: " +
-                                     filename);
-        return result;
-    }
-
-    for (std::filesystem::directory_iterator iterator{current_library.parent_path(), error}, end;
-         !error && iterator != end; iterator.increment(error)) {
-        const auto candidate = iterator->path();
-        if (candidate.filename() == current_library.filename() ||
-            candidate.extension() != extension ||
-            !std::filesystem::is_regular_file(iterator->symlink_status())) {
-            continue;
-        }
-        const auto candidate_filename = candidate.filename().string();
-        const auto candidate_stem = candidate_filename.substr(
-            0, candidate_filename.size() - candidate.extension().string().size());
-        if (candidate_stem.rfind(family_prefix, 0) != 0)
-            continue;
-        const auto candidate_build_id = candidate_stem.substr(family_prefix.size());
-        if (candidate_build_id.size() != 16 ||
-            !std::all_of(candidate_build_id.begin(), candidate_build_id.end(),
-                         [](const char character) {
-                             return std::isxdigit(static_cast<unsigned char>(character)) != 0;
-                         })) {
-            continue;
-        }
-        std::filesystem::remove(candidate, error);
-        if (error) {
-            result.diagnostics.push_back("cannot remove stale development library '" +
-                                         path_to_utf8(candidate) + "': " + error.message());
-            error.clear();
-            continue;
-        }
-        ++result.removed_count;
-    }
-    if (error) {
-        result.diagnostics.push_back("cannot inspect native artifact directory '" +
-                                     path_to_utf8(current_library.parent_path()) +
-                                     "': " + error.message());
-    }
-    result.success = result.diagnostics.empty();
-    return result;
 }
 
 NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
@@ -1222,22 +1067,9 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
         return result;
     }
     if (options.platform == NativePlatform::web) {
-        if (options.profile == NativeBuildProfile::development) {
-            result.diagnostics.emplace_back(
-                "Web distribution libraries support only debug or release profiles; "
-                "editor development validation must use the host platform library");
-            return result;
-        }
         if (options.web_thread_mode == NativeWebThreadMode::not_applicable) {
             result.diagnostics.emplace_back(
                 "Web target must explicitly select threads or nothreads");
-            return result;
-        }
-    } else if (options.platform == NativePlatform::ios) {
-        if (options.profile == NativeBuildProfile::development) {
-            result.diagnostics.emplace_back(
-                "iOS distribution libraries support only debug or release profiles; "
-                "editor development validation must use the macOS host library");
             return result;
         }
     } else if (options.web_thread_mode != NativeWebThreadMode::not_applicable) {
@@ -1306,8 +1138,7 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
     }
     // Godot-cpp uses upstream ABI target names internally. They are deliberately kept out of
     // GDPP's public build-profile API and artifact names.
-    const std::string binding_target =
-        options.profile == NativeBuildProfile::development ? "editor" : "template_release";
+    const std::string binding_target = "template_release";
     std::filesystem::path binding_library;
     std::filesystem::path ios_device_binding_library;
     std::filesystem::path ios_simulator_binding_library;
@@ -1395,8 +1226,7 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
     }
     result.output_library =
         binary_directory / native_library_name(options.profile, options.platform,
-                                               options.architecture, build_id,
-                                               options.web_thread_mode);
+                                               options.architecture, options.web_thread_mode);
 
     std::vector<std::filesystem::path> compile_inputs{
         build_configuration,
@@ -1454,8 +1284,7 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
 
         result.output_library =
             binary_directory / native_library_name(options.profile, options.platform,
-                                                   options.architecture, build_id,
-                                                   options.web_thread_mode);
+                                                   options.architecture, options.web_thread_mode);
         const auto staging_directory = native / "xcframework-staging";
         result.pending_output_library = staging_directory / result.output_library.filename();
 

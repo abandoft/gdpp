@@ -52,10 +52,8 @@ std::string native_abi_manifest_fields(const std::string& platform) {
 }
 
 std::string binding_manifest_fields(const std::string& platform) {
-    const bool host = platform == "macos" || platform == "linux" || platform == "windows";
-    return std::string{
-               "distribution_binding template_release\ndistribution_optimization Release\n"} +
-           (host ? "editor_binding editor\neditor_optimization Release\n" : "");
+    (void)platform;
+    return "distribution_binding template_release\ndistribution_optimization Release\n";
 }
 
 std::filesystem::path make_sdk_fixture(const std::string& name, const std::string& library_name) {
@@ -136,7 +134,7 @@ std::filesystem::path make_sdk_fixture(const std::string& name, const std::strin
     write_input(root / "sdk/sdk.manifest",
                 "GDPP_SDK " + std::to_string(GDPP_NATIVE_SDK_SCHEMA) + "\napi 4.4\nplatform " +
                     platform + "\narch " + architecture +
-                    "\nprofiles development,debug,release\n" + binding_manifest_fields(platform) +
+                    "\nprofiles debug,release\n" + binding_manifest_fields(platform) +
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
                     GDPP_NATIVE_RUNTIME_HEADER_SHA256 +
@@ -178,50 +176,9 @@ bool contains_utf16le_ascii(const std::filesystem::path& path, const std::string
            std::search(bytes.begin() + 2, bytes.end(), needle.begin(), needle.end()) != bytes.end();
 }
 
-TEST_CASE("native artifact cleanup removes only stale images from the current target family") {
-    const auto root =
-        std::filesystem::path{GDPP_TEST_BINARY_DIR} / "test-fixtures" / "native-artifact-cleanup";
-    std::error_code error;
-    std::filesystem::remove_all(root, error);
-    const auto current = root / "libgdpp_project.development.macos.arm64.0123456789abcdef.dylib";
-    const auto stale = root / "libgdpp_project.development.macos.arm64.fedcba9876543210.dylib";
-    const auto other_arch =
-        root / "libgdpp_project.development.macos.x86_64.fedcba9876543210.dylib";
-    const auto malformed = root / "libgdpp_project.development.macos.arm64.backup.dylib";
-    const auto release = root / "libgdpp_project.release.macos.arm64.dylib";
-    for (const auto& path : {current, stale, other_arch, malformed, release})
-        write_input(path);
-
-    const auto cleanup = gdpp::prune_stale_development_libraries(current);
-
-    REQUIRE(cleanup.success);
-    REQUIRE_EQ(cleanup.removed_count, std::size_t{1});
-    REQUIRE(std::filesystem::is_regular_file(current));
-    REQUIRE(!std::filesystem::exists(stale));
-    REQUIRE(std::filesystem::is_regular_file(other_arch));
-    REQUIRE(std::filesystem::is_regular_file(malformed));
-    REQUIRE(std::filesystem::is_regular_file(release));
-}
-
-TEST_CASE("native artifact cleanup fails closed for unknown artifact names") {
-    const auto root = std::filesystem::path{GDPP_TEST_BINARY_DIR} / "test-fixtures" /
-                      "native-artifact-cleanup-unknown";
-    std::error_code error;
-    std::filesystem::remove_all(root, error);
-    const auto unknown = root / "customer.development.macos.arm64.0123456789abcdef.dylib";
-    const auto neighbor = root / "customer.development.macos.arm64.fedcba9876543210.dylib";
-    write_input(unknown);
-    write_input(neighbor);
-
-    const auto cleanup = gdpp::prune_stale_development_libraries(unknown);
-
-    REQUIRE(!cleanup.success);
-    REQUIRE_EQ(cleanup.removed_count, std::size_t{0});
-    REQUIRE(std::filesystem::is_regular_file(neighbor));
-}
-
 TEST_CASE("native builder rejects an SDK for a different Godot target") {
-    const auto root = make_sdk_fixture("native-builder-version", "libgodot-cpp.editor.arm64.a");
+    const auto root = make_sdk_fixture(
+        "native-builder-version", "libgodot-cpp.macos.template_release.arm64.a");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -237,9 +194,10 @@ TEST_CASE("native builder rejects an SDK for a different Godot target") {
 }
 
 TEST_CASE("native builder rejects a legacy SDK before creating compiler commands") {
-    const auto root = make_sdk_fixture("native-builder-legacy-sdk", "libgodot-cpp.editor.arm64.a");
+    const auto root = make_sdk_fixture(
+        "native-builder-legacy-sdk", "libgodot-cpp.macos.template_release.arm64.a");
     write_input(root / "sdk/sdk.manifest", "GDPP_SDK 2\napi 4.4\nplatform macos\narch arm64\n"
-                                           "profiles development,debug,release\n");
+                                           "profiles debug,release\n");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -269,7 +227,8 @@ TEST_CASE("native builder rejects native ABI manifest drift before creating comm
     };
 
     const auto standard_root =
-        make_sdk_fixture("native-builder-standard-contract", "libgodot-cpp.editor.arm64.a");
+        make_sdk_fixture("native-builder-standard-contract",
+                         "libgodot-cpp.macos.template_release.arm64.a");
     replace_manifest_field(standard_root / "sdk/sdk.manifest", "cxx_standard 17",
                            "cxx_standard 20");
     const auto standard = plan_for(standard_root, gdpp::NativePlatform::macos, "arm64");
@@ -278,7 +237,8 @@ TEST_CASE("native builder rejects native ABI manifest drift before creating comm
     REQUIRE(diagnostic_contains(standard, "C++ standard mismatch"));
 
     const auto windows_root =
-        make_sdk_fixture("native-builder-windows-crt-contract", "godot-cpp.editor.x86_64.lib");
+        make_sdk_fixture("native-builder-windows-crt-contract",
+                         "godot-cpp.windows.template_release.x86_64.lib");
     replace_manifest_field(windows_root / "sdk/sdk.manifest", "msvc_runtime static",
                            "msvc_runtime dynamic");
     const auto windows = plan_for(windows_root, gdpp::NativePlatform::windows, "x86_64");
@@ -287,7 +247,8 @@ TEST_CASE("native builder rejects native ABI manifest drift before creating comm
     REQUIRE(diagnostic_contains(windows, "MSVC runtime mismatch"));
 
     const auto compiler_root =
-        make_sdk_fixture("native-builder-windows-compiler-contract", "godot-cpp.editor.x86_64.lib");
+        make_sdk_fixture("native-builder-windows-compiler-contract",
+                         "godot-cpp.windows.template_release.x86_64.lib");
     replace_manifest_field(compiler_root / "sdk/sdk.manifest", "compiler MSVC", "compiler Clang");
     const auto compiler = plan_for(compiler_root, gdpp::NativePlatform::windows, "x86_64");
     REQUIRE(!compiler.success);
@@ -295,7 +256,8 @@ TEST_CASE("native builder rejects native ABI manifest drift before creating comm
     REQUIRE(diagnostic_contains(compiler, "compiler family mismatch"));
 
     const auto toolset_root =
-        make_sdk_fixture("native-builder-windows-toolset-contract", "godot-cpp.editor.x86_64.lib");
+        make_sdk_fixture("native-builder-windows-toolset-contract",
+                         "godot-cpp.windows.template_release.x86_64.lib");
     replace_manifest_field(toolset_root / "sdk/sdk.manifest", "compiler_version 19.44.35207.1",
                            "compiler_version 18.0");
     const auto toolset = plan_for(toolset_root, gdpp::NativePlatform::windows, "x86_64");
@@ -304,7 +266,8 @@ TEST_CASE("native builder rejects native ABI manifest drift before creating comm
     REQUIRE(diagnostic_contains(toolset, "MSVC toolset"));
 
     const auto frontend_root =
-        make_sdk_fixture("native-builder-windows-frontend-contract", "godot-cpp.editor.x86_64.lib");
+        make_sdk_fixture("native-builder-windows-frontend-contract",
+                         "godot-cpp.windows.template_release.x86_64.lib");
     gdpp::NativeBuildOptions frontend_options;
     frontend_options.project_output_directory = frontend_root / "project";
     frontend_options.binary_output_directory = frontend_root / "addons/gdpp/binary";
@@ -318,7 +281,8 @@ TEST_CASE("native builder rejects native ABI manifest drift before creating comm
     REQUIRE(diagnostic_contains(frontend, "cl.exe frontend"));
 
     const auto android_root =
-        make_sdk_fixture("native-builder-android-stl-contract", "libgodot-cpp.editor.arm64.a");
+        make_sdk_fixture("native-builder-android-stl-contract",
+                         "libgodot-cpp.android.template_release.arm64.a");
     replace_manifest_field(android_root / "sdk/sdk.manifest", "android_stl c++_shared",
                            "android_stl c++_static");
     const auto android = plan_for(android_root, gdpp::NativePlatform::android, "arm64");
@@ -328,7 +292,8 @@ TEST_CASE("native builder rejects native ABI manifest drift before creating comm
 }
 
 TEST_CASE("native builder rejects a modified SDK runtime before creating compiler commands") {
-    const auto root = make_sdk_fixture("native-builder-corrupt-sdk", "libgodot-cpp.editor.arm64.a");
+    const auto root = make_sdk_fixture(
+        "native-builder-corrupt-sdk", "libgodot-cpp.macos.template_release.arm64.a");
     write_input(root / "sdk/include/gdpp/runtime/variant_ops.hpp", "// modified after packaging\n");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
@@ -347,7 +312,8 @@ TEST_CASE("native builder rejects a modified SDK runtime before creating compile
 
 TEST_CASE("native builder rejects a modified attached runtime before creating compiler commands") {
     const auto root =
-        make_sdk_fixture("native-builder-corrupt-attached", "libgodot-cpp.editor.arm64.a");
+        make_sdk_fixture("native-builder-corrupt-attached",
+                         "libgodot-cpp.macos.template_release.arm64.a");
     write_input(root / "sdk/src/runtime/attached_script_instance.cpp",
                 "// modified after packaging\n");
     gdpp::NativeBuildOptions options;
@@ -368,7 +334,8 @@ TEST_CASE("native builder rejects a modified attached runtime before creating co
 
 TEST_CASE("native builder rejects modified integer semantics before creating commands") {
     const auto root =
-        make_sdk_fixture("native-builder-corrupt-integers", "libgodot-cpp.editor.arm64.a");
+        make_sdk_fixture("native-builder-corrupt-integers",
+                         "libgodot-cpp.macos.template_release.arm64.a");
     write_input(root / "sdk/include/gdpp/numeric/integer_semantics.hpp",
                 "// modified after packaging\n");
     gdpp::NativeBuildOptions options;
@@ -388,7 +355,8 @@ TEST_CASE("native builder rejects modified integer semantics before creating com
 
 TEST_CASE("native builder rejects unsupported architecture names before planning commands") {
     const auto root =
-        make_sdk_fixture("native-builder-invalid-arch", "libgodot-cpp.editor.arm64.a");
+        make_sdk_fixture("native-builder-invalid-arch",
+                         "libgodot-cpp.macos.template_release.arm64.a");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -406,7 +374,8 @@ TEST_CASE("native builder rejects unsupported architecture names before planning
 
 TEST_CASE("native builder rejects non-Release distribution binding contracts") {
     const auto root =
-        make_sdk_fixture("native-builder-binding-contract", "libgodot-cpp.editor.arm64.a");
+        make_sdk_fixture("native-builder-binding-contract",
+                         "libgodot-cpp.macos.template_release.arm64.a");
     const auto manifest = root / "sdk/sdk.manifest";
     replace_manifest_field(manifest, "distribution_binding template_release",
                            "distribution_binding template_debug");
@@ -450,7 +419,8 @@ TEST_CASE("native architecture support matches the shipped target matrix") {
 
 TEST_CASE("native builder rejects unshipped Windows arm64 before touching the SDK") {
     const auto root =
-        make_sdk_fixture("native-builder-windows-arm64", "godot-cpp.editor.x86_64.lib");
+        make_sdk_fixture("native-builder-windows-arm64",
+                         "godot-cpp.windows.template_release.x86_64.lib");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -468,7 +438,8 @@ TEST_CASE("native builder rejects unshipped Windows arm64 before touching the SD
 
 TEST_CASE("native builder requires an explicit project library output directory") {
     const auto root =
-        make_sdk_fixture("native-builder-output-directory", "libgodot-cpp.editor.arm64.a");
+        make_sdk_fixture("native-builder-output-directory",
+                         "libgodot-cpp.macos.template_release.arm64.a");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.sdk_root = root / "sdk";
@@ -491,53 +462,16 @@ bool contains(const std::vector<std::string>& arguments, const std::string& valu
 } // namespace
 
 TEST_CASE("native build profiles use product roles instead of Godot ABI target names") {
-    REQUIRE_EQ(*gdpp::parse_native_build_profile("development"),
-               gdpp::NativeBuildProfile::development);
     REQUIRE_EQ(*gdpp::parse_native_build_profile("debug"), gdpp::NativeBuildProfile::debug);
     REQUIRE_EQ(*gdpp::parse_native_build_profile("release"), gdpp::NativeBuildProfile::release);
+    REQUIRE(!gdpp::parse_native_build_profile("development").has_value());
     REQUIRE(!gdpp::parse_native_build_profile("editor").has_value());
     REQUIRE(!gdpp::parse_native_build_profile("template_release").has_value());
 }
 
-TEST_CASE("development descriptor selects only the library that was actually built") {
-    const auto descriptor = gdpp::native_development_extension_descriptor(
-        gdpp::GodotVersion::v4_5, gdpp::NativePlatform::macos, "arm64",
-        "res://addons/gdpp/binary/libgdpp_project.development.macos.arm64.0123.dylib",
-        gdpp::NativeWebThreadMode::not_applicable,
-        "[icons]\nGDPPNative_Player = \"res://icons/player.svg\"\n");
-
-    REQUIRE(descriptor.find("compatibility_minimum = \"4.5\"") != std::string::npos);
-    REQUIRE(descriptor.find("macos.editor.arm64 = \"res://addons/gdpp/binary/") !=
-            std::string::npos);
-    REQUIRE(descriptor.find("macos.editor.universal") == std::string::npos);
-    REQUIRE(descriptor.find("macos.editor.x86_64") == std::string::npos);
-    REQUIRE(descriptor.find("[icons]\nGDPPNative_Player = \"res://icons/player.svg\"") !=
-            std::string::npos);
-}
-
-TEST_CASE("development descriptor disables reload for attached script runtimes") {
-    const auto descriptor = gdpp::native_development_extension_descriptor(
-        gdpp::GodotVersion::v4_4, gdpp::NativePlatform::macos, "arm64",
-        "res://addons/gdpp/binary/libproject.dylib", gdpp::NativeWebThreadMode::not_applicable, {},
-        false);
-
-    REQUIRE(descriptor.find("reloadable = false") != std::string::npos);
-}
-
-TEST_CASE("universal macOS descriptor maps both runtime architectures to one fat library") {
-    const auto descriptor = gdpp::native_development_extension_descriptor(
-        gdpp::GodotVersion::v4_5, gdpp::NativePlatform::macos, "universal",
-        "res://addons/gdpp/binary/libgdpp_project.development.macos.universal.0123.dylib");
-
-    REQUIRE(descriptor.find("macos.editor.arm64 = \"res://addons/gdpp/binary/") !=
-            std::string::npos);
-    REQUIRE(descriptor.find("macos.editor.x86_64 = \"res://addons/gdpp/binary/") !=
-            std::string::npos);
-    REQUIRE(descriptor.find("macos.editor.universal") == std::string::npos);
-}
-
-TEST_CASE("native builder creates compiler-only macOS commands and reuses fresh objects") {
-    const auto root = make_sdk_fixture("native-builder-macos", "libgodot-cpp.editor.arm64.a");
+TEST_CASE("native builder creates release macOS commands and reuses fresh objects") {
+    const auto root = make_sdk_fixture(
+        "native-builder-macos", "libgodot-cpp.macos.template_release.arm64.a");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -554,13 +488,13 @@ TEST_CASE("native builder creates compiler-only macOS commands and reuses fresh 
     REQUIRE(contains(first.commands.front().arguments, "-std=c++17"));
     REQUIRE(contains(first.commands.back().arguments, "-dynamiclib"));
     REQUIRE_EQ(first.output_library.filename().string(),
-               std::string{"libgdpp_project.development.macos.arm64.0123456789abcdef.dylib"});
+               std::string{"libgdpp_project.release.macos.arm64.dylib"});
     REQUIRE_EQ(first.output_library.parent_path(), options.binary_output_directory);
 
     const auto future = std::filesystem::file_time_type::clock::now() + std::chrono::seconds{5};
     for (const auto& name : {"example_gd_cpp.o", "register_types_cpp.o", "variant_ops_cpp.o"}) {
         const auto object =
-            root / "project/native-direct/4.4/macos/arm64/development/objects" / name;
+            root / "project/native-direct/4.4/macos/arm64/release/objects" / name;
         write_input(object);
         std::filesystem::last_write_time(object, future);
     }
@@ -580,7 +514,8 @@ TEST_CASE("native builder creates compiler-only macOS commands and reuses fresh 
 
 TEST_CASE("native builder relinks without recompiling when a static library changes") {
     const auto root =
-        make_sdk_fixture("native-builder-link-only-change", "libgodot-cpp.editor.arm64.a");
+        make_sdk_fixture("native-builder-link-only-change",
+                         "libgodot-cpp.macos.template_release.arm64.a");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -595,13 +530,14 @@ TEST_CASE("native builder relinks without recompiling when a static library chan
     const auto future = std::filesystem::file_time_type::clock::now() + std::chrono::seconds{5};
     for (const auto& name : {"example_gd_cpp.o", "register_types_cpp.o", "variant_ops_cpp.o"}) {
         const auto object =
-            root / "project/native-direct/4.4/macos/arm64/development/objects" / name;
+            root / "project/native-direct/4.4/macos/arm64/release/objects" / name;
         write_input(object);
         std::filesystem::last_write_time(object, future);
     }
     write_input(first.output_library);
     std::filesystem::last_write_time(first.output_library, future + std::chrono::seconds{1});
-    const auto binding_library = root / "sdk/lib/libgodot-cpp.editor.arm64.a";
+    const auto binding_library =
+        root / "sdk/lib/libgodot-cpp.macos.template_release.arm64.a";
     std::filesystem::last_write_time(binding_library, future + std::chrono::seconds{2});
 
     const auto relink = builder.plan(options);
@@ -615,7 +551,8 @@ TEST_CASE("native builder relinks without recompiling when a static library chan
 
 TEST_CASE("native builder injects the selected third-party bridge target") {
     const auto root =
-        make_sdk_fixture("native-builder-extension-bridge", "libgodot-cpp.editor.arm64.a");
+        make_sdk_fixture("native-builder-extension-bridge",
+                         "libgodot-cpp.macos.template_release.arm64.a");
     const auto include = root / "provider/include";
     const auto library = root / "provider/lib/libprovider.a";
     const auto manifest = root / "provider/gdpp_bridge.json";
@@ -624,7 +561,7 @@ TEST_CASE("native builder injects the selected third-party bridge target") {
     write_input(manifest, "{}\n");
     write_input(root / "project/bridge.lock",
                 "GDPP_BRIDGE_LOCK 1\nbridge \"provider-v1\" \"" + manifest.generic_string() +
-                    "\"\ntarget \"macos\" \"arm64\" \"development\" 1 \"" +
+                    "\"\ntarget \"macos\" \"arm64\" \"release\" 1 \"" +
                     include.generic_string() + "\" 1 \"" + library.generic_string() + "\"\n");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
@@ -643,7 +580,8 @@ TEST_CASE("native builder injects the selected third-party bridge target") {
 
 TEST_CASE("native builder accepts a runtime-only bridge without native link inputs") {
     const auto root =
-        make_sdk_fixture("native-builder-runtime-bridge", "libgodot-cpp.editor.arm64.a");
+        make_sdk_fixture("native-builder-runtime-bridge",
+                         "libgodot-cpp.macos.template_release.arm64.a");
     write_input(root / "project/bridge.lock",
                 "GDPP_BRIDGE_LOCK 1\nbridge \"classdb:ProviderRuntime\" \"\"\nruntime\n");
     gdpp::NativeBuildOptions options;
@@ -664,7 +602,8 @@ TEST_CASE("native builder accepts a runtime-only bridge without native link inpu
 
 TEST_CASE("native builder compiles the complete attached runtime on demand") {
     const auto root =
-        make_sdk_fixture("native-builder-attached-runtime", "libgodot-cpp.editor.arm64.a");
+        make_sdk_fixture("native-builder-attached-runtime",
+                         "libgodot-cpp.macos.template_release.arm64.a");
     write_input(root / "project/register_types.cpp",
                 "void probe() { gdpp::runtime::register_attached_script({}); }\n");
     gdpp::NativeBuildOptions options;
@@ -687,7 +626,8 @@ TEST_CASE("native builder compiles the complete attached runtime on demand") {
 }
 
 TEST_CASE("native builder emits MSVC compile and link arguments") {
-    const auto root = make_sdk_fixture("native-builder-windows", "godot-cpp.editor.x86_64.lib");
+    const auto root = make_sdk_fixture(
+        "native-builder-windows", "godot-cpp.windows.template_release.x86_64.lib");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -719,13 +659,13 @@ TEST_CASE("native builder emits MSVC compile and link arguments") {
     REQUIRE(contains_utf16le_ascii(response_file, "/IMPLIB:"));
     REQUIRE(contains_utf16le_ascii(response_file, "/OUT:"));
     REQUIRE_EQ(plan.output_library.filename().string(),
-               std::string{"gdpp_project.development.windows.x86_64.0123456789abcdef.dll"});
+               std::string{"gdpp_project.release.windows.x86_64.dll"});
     REQUIRE_EQ(plan.output_library.parent_path(), options.binary_output_directory);
 }
 
 TEST_CASE("native builder creates a stable release library with release bindings") {
-    const auto root = make_sdk_fixture("native-builder-release", "libgodot-cpp.editor.arm64.a");
-    write_input(root / "sdk/lib/libgodot-cpp.macos.template_release.arm64.a");
+    const auto root = make_sdk_fixture(
+        "native-builder-release", "libgodot-cpp.macos.template_release.arm64.a");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -758,8 +698,8 @@ TEST_CASE("native builder creates a stable release library with release bindings
 
 TEST_CASE("native builder enables release dead-code elimination for MSVC") {
     const auto root =
-        make_sdk_fixture("native-builder-windows-release", "godot-cpp.editor.x86_64.lib");
-    write_input(root / "sdk/lib/godot-cpp.template_release.x86_64.lib");
+        make_sdk_fixture("native-builder-windows-release",
+                         "godot-cpp.windows.template_release.x86_64.lib");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -781,8 +721,8 @@ TEST_CASE("native builder enables release dead-code elimination for MSVC") {
 }
 
 TEST_CASE("native builder optimizes MSVC debug exports against release bindings") {
-    const auto root =
-        make_sdk_fixture("native-builder-windows-debug", "godot-cpp.template_release.x86_64.lib");
+    const auto root = make_sdk_fixture(
+        "native-builder-windows-debug", "godot-cpp.windows.template_release.x86_64.lib");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -801,7 +741,8 @@ TEST_CASE("native builder optimizes MSVC debug exports against release bindings"
     REQUIRE(!contains(plan.commands.front().arguments, "/Od"));
     REQUIRE(!contains(plan.commands.front().arguments, "/DDEBUG_ENABLED"));
     const std::filesystem::path response_file = plan.commands.back().arguments.back().substr(1);
-    REQUIRE(contains_utf16le_ascii(response_file, "godot-cpp.template_release.x86_64.lib"));
+    REQUIRE(
+        contains_utf16le_ascii(response_file, "godot-cpp.windows.template_release.x86_64.lib"));
     REQUIRE(contains_utf16le_ascii(response_file, "/OPT:REF"));
     REQUIRE(contains_utf16le_ascii(response_file, "/OPT:ICF"));
     REQUIRE(contains_utf16le_ascii(response_file, "/INCREMENTAL:NO"));
@@ -953,10 +894,6 @@ TEST_CASE("native builder fails closed for incomplete iOS target contracts") {
     REQUIRE(!missing_slices.success);
     REQUIRE(diagnostic_contains(missing_slices, "simulator-arm64"));
 
-    options.profile = gdpp::NativeBuildProfile::development;
-    const auto development = gdpp::NativeBuilder{}.plan(options);
-    REQUIRE(!development.success);
-    REQUIRE(diagnostic_contains(development, "only debug or release"));
 }
 
 TEST_CASE("native builder emits a single-threaded WebAssembly side module") {
@@ -1054,17 +991,12 @@ TEST_CASE("native builder fails closed for incomplete Web target contracts") {
     REQUIRE(!missing_variant.success);
     REQUIRE(diagnostic_contains(missing_variant, "explicitly select threads or nothreads"));
 
-    options.web_thread_mode = gdpp::NativeWebThreadMode::single_threaded;
-    options.profile = gdpp::NativeBuildProfile::development;
-    const auto development = gdpp::NativeBuilder{}.plan(options);
-    REQUIRE(!development.success);
-    REQUIRE(diagnostic_contains(development, "only debug or release"));
 }
 
 TEST_CASE("native builder strips Linux release symbols") {
     const auto root =
-        make_sdk_fixture("native-builder-linux-release", "libgodot-cpp.linux.editor.x86_64.a");
-    write_input(root / "sdk/lib/libgodot-cpp.linux.template_release.x86_64.a");
+        make_sdk_fixture("native-builder-linux-release",
+                         "libgodot-cpp.linux.template_release.x86_64.a");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -1083,7 +1015,8 @@ TEST_CASE("native builder strips Linux release symbols") {
 
 TEST_CASE("native builder hides static archive symbols in every Linux project extension") {
     const auto root =
-        make_sdk_fixture("native-builder-linux", "libgodot-cpp.linux.editor.x86_64.a");
+        make_sdk_fixture("native-builder-linux",
+                         "libgodot-cpp.linux.template_release.x86_64.a");
     gdpp::NativeBuildOptions options;
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
@@ -1103,11 +1036,12 @@ TEST_CASE("native builder hides static archive symbols in every Linux project ex
 
 TEST_CASE("native builder emits a macOS universal compile and link plan") {
     const auto root =
-        make_sdk_fixture("native-builder-universal", "libgodot-cpp.editor.universal.a");
+        make_sdk_fixture("native-builder-universal",
+                         "libgodot-cpp.macos.template_release.universal.a");
     write_input(root / "sdk/sdk.manifest",
                 "GDPP_SDK " + std::to_string(GDPP_NATIVE_SDK_SCHEMA) +
                     "\napi 4.4\nplatform macos\narch universal\n"
-                    "profiles development,debug,release\n" + binding_manifest_fields("macos") +
+                    "profiles debug,release\n" + binding_manifest_fields("macos") +
                     "platform_minimum macOS_11.0\n"
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
@@ -1129,20 +1063,21 @@ TEST_CASE("native builder emits a macOS universal compile and link plan") {
 
     REQUIRE(plan.success);
     REQUIRE_EQ(plan.output_library.filename().string(),
-               std::string{"libgdpp_project.development.macos.universal.0123456789abcdef.dylib"});
+               std::string{"libgdpp_project.release.macos.universal.dylib"});
     REQUIRE(contains(plan.commands.front().arguments, "arm64"));
     REQUIRE(contains(plan.commands.front().arguments, "x86_64"));
     REQUIRE(contains(plan.commands.back().arguments, "arm64"));
     REQUIRE(contains(plan.commands.back().arguments, "x86_64"));
 }
 
-TEST_CASE("macOS universal SDK can build a thin host development library") {
+TEST_CASE("macOS universal SDK can build a thin host release library") {
     const auto root =
-        make_sdk_fixture("native-builder-universal-host", "libgodot-cpp.editor.universal.a");
+        make_sdk_fixture("native-builder-universal-host",
+                         "libgodot-cpp.macos.template_release.universal.a");
     write_input(root / "sdk/sdk.manifest",
                 "GDPP_SDK " + std::to_string(GDPP_NATIVE_SDK_SCHEMA) +
                     "\napi 4.4\nplatform macos\narch universal\n"
-                    "profiles development,debug,release\n" + binding_manifest_fields("macos") +
+                    "profiles debug,release\n" + binding_manifest_fields("macos") +
                     "platform_minimum macOS_11.0\n"
                     "runtime_abi " +
                     std::to_string(GDPP_NATIVE_RUNTIME_ABI) + "\nruntime_header_sha256 " +
@@ -1164,7 +1099,7 @@ TEST_CASE("macOS universal SDK can build a thin host development library") {
 
     REQUIRE(plan.success);
     REQUIRE_EQ(plan.output_library.filename().string(),
-               std::string{"libgdpp_project.development.macos.arm64.0123456789abcdef.dylib"});
+               std::string{"libgdpp_project.release.macos.arm64.dylib"});
     REQUIRE(contains(plan.commands.front().arguments, "arm64"));
     REQUIRE(!contains(plan.commands.front().arguments, "x86_64"));
 }
