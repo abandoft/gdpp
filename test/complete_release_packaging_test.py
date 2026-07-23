@@ -103,7 +103,6 @@ def create_host_component(root: Path, host_name: str, godot_version: str) -> Pat
     write_runtime(sdk)
     extension = ".lib" if host.platform == "windows" else ".a"
     prefix = "libgodot-cpp" if host.platform != "windows" else "libgodot-cpp"
-    write(sdk / "lib" / f"{prefix}.{host.platform}.editor.{host.architecture}{extension}")
     write(
         sdk
         / "lib"
@@ -115,9 +114,7 @@ def create_host_component(root: Path, host_name: str, godot_version: str) -> Pat
             "api": godot_version,
             "platform": host.platform,
             "arch": host.architecture,
-            "profiles": "development,debug,release",
-            "editor_binding": "editor",
-            "editor_optimization": "Release",
+            "profiles": "debug,release",
             "platform_minimum": host.platform_minimum,
             "msvc_runtime": "static" if host.platform == "windows" else "not_applicable",
             **(

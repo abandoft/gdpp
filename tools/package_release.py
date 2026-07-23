@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 SUPPORTED_GODOT_VERSIONS = ("4.4", "4.5", "4.6", "4.7")
-SDK_SCHEMA = 10
+SDK_SCHEMA = 11
 STATIC_ADDON_FILES = (
     "build_progress.gd",
     "native_build_job.gd",
@@ -174,11 +174,9 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
             "api": godot_version,
             "platform": host.platform,
             "arch": host.architecture,
-            "profiles": "development,debug,release",
+            "profiles": "debug,release",
             "distribution_binding": "template_release",
             "distribution_optimization": "Release",
-            "editor_binding": "editor",
-            "editor_optimization": "Release",
             "platform_minimum": host.platform_minimum,
             "gdpp_version": version,
             "cxx_standard": "17",
@@ -191,7 +189,7 @@ def validate_source(addon: Path, host: HostContract, godot_version: str) -> str:
             fail(f"Windows SDK compiler must be MSVC in {host_manifest}")
         if not re.fullmatch(r"19(?:\.[0-9]+)+", host_fields.get("compiler_version", "")):
             fail(f"Windows SDK compiler_version must identify an MSVC 19.x toolset")
-    require_profile_libraries(sdk / "lib", ("editor", "template_release"))
+    require_profile_libraries(sdk / "lib", ("template_release",))
 
     android_manifest = sdk / "android/arm64/sdk.manifest"
     android_schema, android_fields = read_sdk_manifest(android_manifest)

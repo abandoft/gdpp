@@ -105,11 +105,9 @@ def validate_host_sdk(
             "api": godot_version,
             "platform": host.platform,
             "arch": host.architecture,
-            "profiles": "development,debug,release",
+            "profiles": "debug,release",
             "distribution_binding": "template_release",
             "distribution_optimization": "Release",
-            "editor_binding": "editor",
-            "editor_optimization": "Release",
             "platform_minimum": host.platform_minimum,
             "gdpp_version": gdpp_version,
             "cxx_standard": "17",
@@ -122,7 +120,7 @@ def validate_host_sdk(
             "19."
         ):
             fail(f"complete package Windows SDK must use an MSVC 19.x toolset: {manifest}")
-    package_release.require_profile_libraries(sdk / "lib", ("editor", "template_release"))
+    package_release.require_profile_libraries(sdk / "lib", ("template_release",))
     return require_runtime_contract(sdk, fields, runtime_contract)
 
 

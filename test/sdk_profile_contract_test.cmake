@@ -32,17 +32,10 @@ foreach(GDPP_TEST_SDK_VERSION IN LISTS GDPP_TEST_SDK_VERSIONS)
     set(GDPP_TEST_SDK_ROOT "${GDPP_TEST_ADDON_DIR}/sdk/${GDPP_TEST_SDK_VERSION}")
     file(GLOB GDPP_TEST_BINDINGS LIST_DIRECTORIES false "${GDPP_TEST_SDK_ROOT}/lib/*")
     list(LENGTH GDPP_TEST_BINDINGS GDPP_TEST_BINDING_COUNT)
-    if(NOT GDPP_TEST_BINDING_COUNT EQUAL 2)
+    if(NOT GDPP_TEST_BINDING_COUNT EQUAL 1)
         message(FATAL_ERROR
-            "Godot ${GDPP_TEST_SDK_VERSION} host SDK must contain exactly editor and "
-            "template_release bindings, found: ${GDPP_TEST_BINDINGS}")
-    endif()
-    set(GDPP_TEST_EDITOR_BINDINGS ${GDPP_TEST_BINDINGS})
-    list(FILTER GDPP_TEST_EDITOR_BINDINGS INCLUDE REGEX "\\.editor\\.")
-    list(LENGTH GDPP_TEST_EDITOR_BINDINGS GDPP_TEST_EDITOR_BINDING_COUNT)
-    if(NOT GDPP_TEST_EDITOR_BINDING_COUNT EQUAL 1)
-        message(FATAL_ERROR
-            "Godot ${GDPP_TEST_SDK_VERSION} host SDK must contain exactly one editor binding")
+            "Godot ${GDPP_TEST_SDK_VERSION} host SDK must contain exactly one "
+            "template_release binding, found: ${GDPP_TEST_BINDINGS}")
     endif()
     set(GDPP_TEST_RELEASE_BINDINGS ${GDPP_TEST_BINDINGS})
     list(FILTER GDPP_TEST_RELEASE_BINDINGS INCLUDE REGEX "\\.template_release\\.")
@@ -59,12 +52,5 @@ foreach(GDPP_TEST_SDK_VERSION IN LISTS GDPP_TEST_SDK_VERSIONS)
             "distribution_binding template_release")
         message(FATAL_ERROR
             "Godot ${GDPP_TEST_SDK_VERSION} SDK has an invalid distribution binding contract")
-    endif()
-    file(STRINGS "${GDPP_TEST_SDK_ROOT}/sdk.manifest" GDPP_TEST_EDITOR_OPTIMIZATION_LINE
-        REGEX "^editor_optimization ")
-    if(NOT GDPP_TEST_EDITOR_OPTIMIZATION_LINE STREQUAL
-            "editor_optimization ${GDPP_TEST_CONFIG}")
-        message(FATAL_ERROR
-            "Godot ${GDPP_TEST_SDK_VERSION} editor optimization does not match its parent build")
     endif()
 endforeach()

@@ -71,17 +71,18 @@ def create_addon(root: Path, host_name: str, godot_version: str = "4.6") -> Path
     sdk = addon / "sdk" / godot_version
     for directory in ("include", "src", "godot-cpp"):
         write(sdk / directory / "fixture")
-    for profile in ("editor", "template_release"):
-        write(sdk / "lib" / f"libgodot-cpp.{host.platform}.{profile}.{host.architecture}.a")
+    write(
+        sdk
+        / "lib"
+        / f"libgodot-cpp.{host.platform}.template_release.{host.architecture}.a"
+    )
     manifest(
         sdk / "sdk.manifest",
         {
             "api": godot_version,
             "platform": host.platform,
             "arch": host.architecture,
-            "profiles": "development,debug,release",
-            "editor_binding": "editor",
-            "editor_optimization": "Release",
+            "profiles": "debug,release",
             "platform_minimum": host.platform_minimum,
             "gdpp_version": "1.0.0",
             **COMMON_ABI_FIELDS,
