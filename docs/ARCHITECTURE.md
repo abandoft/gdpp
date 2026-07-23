@@ -53,7 +53,9 @@ compiler/project             → integration/godot、cli
 宿主工具根，不得反向依赖编译链；`runtime` 只依赖 `numeric` 与 godot-cpp，不得依赖编译器实现。
 `integration/godot` 与 `cli` 是宿主适配层，不允许把 Godot 类型泄漏进 `gdpp_core`。
 `tools/check_architecture.py` 在本地测试和质量流水线中检查目录集合、平铺文件和跨层 include，防止
-后续功能迭代破坏这些边界。
+后续功能迭代破坏这些边界。生成代码的所有 native→`Variant` 边界必须经过
+`gdpp::runtime::to_variant`；后端不得直接拼接带实参的 `godot::Variant(...)`，从而避免
+godot-cpp 构造重载在 MSVC、Clang 和 GCC 间产生不同选择，并保证共享 PackedArray 存储不会退化。
 
 | 模块 | 职责 | 主要内容 |
 |---|---|---|
