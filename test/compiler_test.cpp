@@ -308,6 +308,61 @@ TEST_CASE("compiler stores packed arrays with GDScript shared identity") {
     REQUIRE(result.unit.source.find(storage + " alias = values") != std::string::npos);
 }
 
+TEST_CASE("compiler converts Variant storage at typed PackedArray call boundaries") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "packed_variant_calls.gd",
+        "extends RefCounted\n"
+        "class Sink:\n"
+        "    func bytes(value: PackedByteArray): value.append(1)\n"
+        "    func i32(value: PackedInt32Array): value.append(1)\n"
+        "    func i64(value: PackedInt64Array): value.append(1)\n"
+        "    func f32(value: PackedFloat32Array): value.append(1.0)\n"
+        "    func f64(value: PackedFloat64Array): value.append(1.0)\n"
+        "    func strings(value: PackedStringArray): value.append(\"x\")\n"
+        "    func vec2(value: PackedVector2Array): value.append(Vector2.ONE)\n"
+        "    func vec3(value: PackedVector3Array): value.append(Vector3.ONE)\n"
+        "    func colors(value: PackedColorArray): value.append(Color.WHITE)\n"
+        "    func vec4(value: PackedVector4Array): value.append(Vector4.ONE)\n"
+        "func forward(bytes: PackedByteArray, i32: PackedInt32Array,\n"
+        "        i64: PackedInt64Array, f32: PackedFloat32Array,\n"
+        "        f64: PackedFloat64Array, strings: PackedStringArray,\n"
+        "        vec2: PackedVector2Array, vec3: PackedVector3Array,\n"
+        "        colors: PackedColorArray, vec4: PackedVector4Array) -> void:\n"
+        "    var dynamic_bytes = bytes\n"
+        "    var dynamic_i32 = i32\n"
+        "    var dynamic_i64 = i64\n"
+        "    var dynamic_f32 = f32\n"
+        "    var dynamic_f64 = f64\n"
+        "    var dynamic_strings = strings\n"
+        "    var dynamic_vec2 = vec2\n"
+        "    var dynamic_vec3 = vec3\n"
+        "    var dynamic_colors = colors\n"
+        "    var dynamic_vec4 = vec4\n"
+        "    var sink := Sink.new()\n"
+        "    sink.bytes(dynamic_bytes)\n"
+        "    sink.i32(dynamic_i32)\n"
+        "    sink.i64(dynamic_i64)\n"
+        "    sink.f32(dynamic_f32)\n"
+        "    sink.f64(dynamic_f64)\n"
+        "    sink.strings(dynamic_strings)\n"
+        "    sink.vec2(dynamic_vec2)\n"
+        "    sink.vec3(dynamic_vec3)\n"
+        "    sink.colors(dynamic_colors)\n"
+        "    sink.vec4(dynamic_vec4)\n");
+
+    REQUIRE(result.success);
+    for (const std::string_view type :
+         {"PackedByteArray", "PackedInt32Array", "PackedInt64Array", "PackedFloat32Array",
+          "PackedFloat64Array", "PackedStringArray", "PackedVector2Array", "PackedVector3Array",
+          "PackedColorArray", "PackedVector4Array"}) {
+        REQUIRE(result.unit.source.find("gdpp::runtime::packed_array_storage<godot::" +
+                                        std::string{type} +
+                                        ">(godot::Variant(_gdpp_call_argument_") !=
+                std::string::npos);
+    }
+}
+
 TEST_CASE("semantic analysis validates typed container arguments eagerly") {
     const gdpp::Compiler compiler;
     const auto legal = compiler.compile("legal_containers.gd",

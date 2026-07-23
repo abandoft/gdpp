@@ -3131,11 +3131,14 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             }
         }
         const bool direct_vararg =
+            (expression.call_contract && expression.call_contract->is_vararg) ||
             (script_method && script_method->is_vararg) ||
             (local_function && local_function->rest_parameter.has_value()) ||
             (constructor_function && constructor_function->rest_parameter.has_value());
         const auto vararg_positional_count =
-            script_method && script_method->is_vararg          ? script_method->parameters.size()
+            expression.call_contract && expression.call_contract->is_vararg
+                ? expression.call_contract->parameters.size()
+            : script_method && script_method->is_vararg          ? script_method->parameters.size()
             : local_function && local_function->rest_parameter ? local_function->parameters.size()
             : constructor_function && constructor_function->rest_parameter
                 ? constructor_function->parameters.size()
@@ -3155,6 +3158,11 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                                              expression.operands[operand_index]->type,
                                              std::move(value));
                 }
+            }
+            if (expression.call_contract &&
+                operand_index - 1 < expression.call_contract->parameters.size()) {
+                return emit_conversion(expression.call_contract->parameters[operand_index - 1],
+                                       expression.operands[operand_index]->type, std::move(value));
             }
             if (script_method && operand_index - 1 < script_method->parameters.size()) {
                 return emit_conversion(script_method->parameters[operand_index - 1],
