@@ -1,12 +1,11 @@
 if(NOT DEFINED GDPP_TEST_BINARY_DIR OR NOT DEFINED GDPP_TEST_SDK_VERSIONS OR
-        NOT DEFINED GDPP_TEST_ADDON_DIR)
+        NOT DEFINED GDPP_TEST_ADDON_DIR OR NOT DEFINED GDPP_TEST_CONFIG)
     message(FATAL_ERROR "SDK profile contract test requires the build directory and SDK versions")
 endif()
 
-file(STRINGS "${GDPP_TEST_BINARY_DIR}/CMakeCache.txt" GDPP_TEST_PARENT_BUILD_TYPE_LINE
-    REGEX "^CMAKE_BUILD_TYPE:STRING=")
-string(REPLACE "CMAKE_BUILD_TYPE:STRING=" "" GDPP_TEST_PARENT_BUILD_TYPE
-    "${GDPP_TEST_PARENT_BUILD_TYPE_LINE}")
+if(GDPP_TEST_CONFIG STREQUAL "")
+    set(GDPP_TEST_CONFIG Debug)
+endif()
 
 foreach(GDPP_TEST_SDK_VERSION IN LISTS GDPP_TEST_SDK_VERSIONS)
     string(REPLACE "." "_" GDPP_TEST_SDK_SUFFIX "${GDPP_TEST_SDK_VERSION}")
@@ -18,10 +17,14 @@ foreach(GDPP_TEST_SDK_VERSION IN LISTS GDPP_TEST_SDK_VERSIONS)
 
     file(STRINGS "${GDPP_TEST_CACHE}" GDPP_TEST_BUILD_TYPE_LINE
         REGEX "^CMAKE_BUILD_TYPE:STRING=")
-    if(NOT GDPP_TEST_BUILD_TYPE_LINE STREQUAL "CMAKE_BUILD_TYPE:STRING=Release")
+    file(STRINGS "${GDPP_TEST_CACHE}" GDPP_TEST_CONFIGURATION_TYPES_LINE
+        REGEX "^CMAKE_CONFIGURATION_TYPES:STRING=")
+    if(NOT GDPP_TEST_BUILD_TYPE_LINE STREQUAL "CMAKE_BUILD_TYPE:STRING=Release" AND
+            NOT GDPP_TEST_CONFIGURATION_TYPES_LINE MATCHES "(^|;)Release(;|$)")
         message(FATAL_ERROR
-            "Godot ${GDPP_TEST_SDK_VERSION} distribution binding must use Release, found "
-            "'${GDPP_TEST_BUILD_TYPE_LINE}'")
+            "Godot ${GDPP_TEST_SDK_VERSION} distribution binding cannot produce Release; "
+            "single-config='${GDPP_TEST_BUILD_TYPE_LINE}', "
+            "multi-config='${GDPP_TEST_CONFIGURATION_TYPES_LINE}'")
     endif()
 
     set(GDPP_TEST_SDK_ROOT "${GDPP_TEST_ADDON_DIR}/sdk/${GDPP_TEST_SDK_VERSION}")
@@ -58,7 +61,7 @@ foreach(GDPP_TEST_SDK_VERSION IN LISTS GDPP_TEST_SDK_VERSIONS)
     file(STRINGS "${GDPP_TEST_SDK_ROOT}/sdk.manifest" GDPP_TEST_EDITOR_OPTIMIZATION_LINE
         REGEX "^editor_optimization ")
     if(NOT GDPP_TEST_EDITOR_OPTIMIZATION_LINE STREQUAL
-            "editor_optimization ${GDPP_TEST_PARENT_BUILD_TYPE}")
+            "editor_optimization ${GDPP_TEST_CONFIG}")
         message(FATAL_ERROR
             "Godot ${GDPP_TEST_SDK_VERSION} editor optimization does not match its parent build")
     endif()

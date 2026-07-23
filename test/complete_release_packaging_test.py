@@ -209,7 +209,10 @@ def create_components(root: Path, godot_version: str) -> None:
 class CompleteReleasePackagingTest(unittest.TestCase):
     def setUp(self) -> None:
         BINARY_ROOT.mkdir(parents=True, exist_ok=True)
-        self.temporary = Path(tempfile.mkdtemp(prefix="complete-package-", dir=BINARY_ROOT))
+        # Complete-package fixtures intentionally reproduce the deepest installed SDK paths.
+        # Keeping another temporary root below the already-deep CMake build directory exceeds
+        # Win32 MAX_PATH before the packager itself is exercised.
+        self.temporary = Path(tempfile.mkdtemp(prefix="gdpp-complete-"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.temporary)

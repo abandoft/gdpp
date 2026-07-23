@@ -98,6 +98,7 @@ if(GDPP_BUILD_EXTENSION)
                 "-DGDPP_TEST_BINARY_DIR=${PROJECT_BINARY_DIR}"
                 "-DGDPP_TEST_SDK_VERSIONS=${GDPP_PACKAGE_GODOT_VERSIONS}"
                 "-DGDPP_TEST_ADDON_DIR=${PROJECT_SOURCE_DIR}/example/addons/gdpp"
+                "-DGDPP_TEST_CONFIG=$<CONFIG>"
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/sdk_profile_contract_test.cmake"
     )
 endif()

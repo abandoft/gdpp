@@ -1004,14 +1004,25 @@ if(GDPP_BUILD_TESTS AND EXISTS "${GDPP_GODOT_EXECUTABLE}")
 endif()
 
 if(GDPP_BUILD_TESTS)
+    set(GDPP_PROJECT_CONFIGURE_TEST_COMMAND
+        "${CMAKE_COMMAND}"
+        -S "${GDPP_PROJECT_SMOKE_OUTPUT}"
+        -B "${GDPP_PROJECT_SMOKE_OUTPUT}/configure-contract-$<CONFIG>"
+        -G "${CMAKE_GENERATOR}"
+        -DGODOTCPP_TARGET=editor
+        -DGDPP_GODOT_CPP_DIR=${CMAKE_SOURCE_DIR}/third/godot-cpp
+    )
+    if(CMAKE_GENERATOR_PLATFORM)
+        list(APPEND GDPP_PROJECT_CONFIGURE_TEST_COMMAND
+            -A "${CMAKE_GENERATOR_PLATFORM}")
+    endif()
+    if(CMAKE_GENERATOR_TOOLSET)
+        list(APPEND GDPP_PROJECT_CONFIGURE_TEST_COMMAND
+            -T "${CMAKE_GENERATOR_TOOLSET}")
+    endif()
     add_test(
         NAME gdpp.project.cmake.configure
-        COMMAND "${CMAKE_COMMAND}"
-                -S "${GDPP_PROJECT_SMOKE_OUTPUT}"
-                -B "${GDPP_PROJECT_SMOKE_OUTPUT}/configure-test"
-                -G Ninja
-                -DGODOTCPP_TARGET=editor
-                -DGDPP_GODOT_CPP_DIR=${CMAKE_SOURCE_DIR}/third/godot-cpp
+        COMMAND ${GDPP_PROJECT_CONFIGURE_TEST_COMMAND}
     )
     set_tests_properties(
         gdpp.project.cmake.configure

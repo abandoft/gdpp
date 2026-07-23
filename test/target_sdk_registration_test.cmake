@@ -65,6 +65,18 @@ if(GDPP_TEST_SDK_MSVC_PDB_LOCK_OFFSET EQUAL -1)
     message(FATAL_ERROR
         "Parallel MSVC SDK bindings do not serialize compiler PDB writes with /FS")
 endif()
+foreach(GDPP_TEST_MULTI_CONFIG_CONTRACT IN ITEMS
+        "set(binding_build_config Release)"
+        "--config \"\${binding_build_config}\""
+        "editor_optimization \${GDPP_EDITOR_OPTIMIZATION}")
+    string(FIND "${GDPP_TEST_PLUGIN_CMAKE}"
+        "${GDPP_TEST_MULTI_CONFIG_CONTRACT}"
+        GDPP_TEST_MULTI_CONFIG_CONTRACT_OFFSET)
+    if(GDPP_TEST_MULTI_CONFIG_CONTRACT_OFFSET EQUAL -1)
+        message(FATAL_ERROR
+            "SDK packaging omits multi-config contract: ${GDPP_TEST_MULTI_CONFIG_CONTRACT}")
+    endif()
+endforeach()
 foreach(GDPP_TEST_HOST_ABI_FIELD IN ITEMS
         "cxx_standard 17"
         "exceptions disabled"
