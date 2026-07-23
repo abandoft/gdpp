@@ -1,6 +1,8 @@
 #pragma once
 
+#include <godot_cpp/core/binder_common.hpp>
 #include <godot_cpp/core/error_macros.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/variant_internal.hpp>
 
@@ -18,6 +20,7 @@ template <typename PackedArray> class SharedPackedArray final {
     SharedPackedArray() : value_(PackedArray{}) {}
     SharedPackedArray(const PackedArray& value) : value_(value) {}
     SharedPackedArray(PackedArray&& value) : value_(value) {}
+    explicit SharedPackedArray(const godot::Array& value) : value_(PackedArray(value)) {}
 
     explicit SharedPackedArray(const godot::Variant& value) {
         if (value.get_type() ==
@@ -75,3 +78,58 @@ template <typename PackedArray> class SharedPackedArray final {
 };
 
 } // namespace gdpp::runtime
+
+// Generated methods use SharedPackedArray internally, but their reflected ABI remains the exact
+// Godot PackedArray Variant type. These adapters are also required for generated property
+// accessors; public script functions use GDPP's Variant-call bridge so their parameter identity is
+// not lost through godot-cpp's value-oriented PackedArray caster.
+namespace godot {
+
+template <typename PackedArray>
+struct GetTypeInfo<gdpp::runtime::SharedPackedArray<PackedArray>> {
+    static constexpr GDExtensionVariantType VARIANT_TYPE = GetTypeInfo<PackedArray>::VARIANT_TYPE;
+    static constexpr GDExtensionClassMethodArgumentMetadata METADATA =
+        GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE;
+
+    static inline PropertyInfo get_class_info() {
+        return GetTypeInfo<PackedArray>::get_class_info();
+    }
+};
+
+template <typename PackedArray>
+struct GetTypeInfo<const gdpp::runtime::SharedPackedArray<PackedArray>&>
+    : GetTypeInfo<gdpp::runtime::SharedPackedArray<PackedArray>> {};
+
+template <typename PackedArray>
+struct VariantCaster<gdpp::runtime::SharedPackedArray<PackedArray>> {
+    static _FORCE_INLINE_ gdpp::runtime::SharedPackedArray<PackedArray>
+    cast(const Variant& value) {
+        return gdpp::runtime::SharedPackedArray<PackedArray>(value);
+    }
+};
+
+template <typename PackedArray>
+struct VariantCaster<const gdpp::runtime::SharedPackedArray<PackedArray>&>
+    : VariantCaster<gdpp::runtime::SharedPackedArray<PackedArray>> {};
+
+template <typename PackedArray>
+struct PtrToArg<gdpp::runtime::SharedPackedArray<PackedArray>> {
+    static _FORCE_INLINE_ gdpp::runtime::SharedPackedArray<PackedArray>
+    convert(const void* value) {
+        return gdpp::runtime::SharedPackedArray<PackedArray>(
+            *reinterpret_cast<const PackedArray*>(value));
+    }
+
+    using EncodeT = PackedArray;
+
+    static _FORCE_INLINE_ void
+    encode(const gdpp::runtime::SharedPackedArray<PackedArray>& value, void* output) {
+        *reinterpret_cast<PackedArray*>(output) = value.native();
+    }
+};
+
+template <typename PackedArray>
+struct PtrToArg<const gdpp::runtime::SharedPackedArray<PackedArray>&>
+    : PtrToArg<gdpp::runtime::SharedPackedArray<PackedArray>> {};
+
+} // namespace godot
