@@ -3,16 +3,32 @@
 - 原生编译进度改为直接挂载到当前导出对话框视口的最前层覆盖界面，在所有桌面主机上均保持位于 Godot 模态导出界面之前。
 - 项目扫描、解析、语义分析、原生代码生成、编译与链接统一移入单个后台构建工作线程；编辑器线程仅负责窗口事件、绘制和导出协调。
 - 启动工作线程前先在主线程快照第三方 GDExtension ClassDB 契约，并通过互斥保护的进度邮箱传递状态，后台构建不再触碰活动编辑器场景树或界面。
+- 仅在启动 AOT 导出时编译项目中兼容的 GDScript；常规编辑、导入和编辑器内运行继续使用原始脚本，不生成或加载客户开发库。
+- 每次导出只构建所选的 Debug 或 Release 单一目标，移除 editor/development 预构建、客户 CMake 工程生成、第二套运行时描述符以及旧动态库热重载链。
+- 所有生成脚本统一使用附着式行为后端：原始 Godot 或第三方 GDExtension Node/Resource 始终是真实对象所有者，生成的 C++ 只提供其 ScriptInstance 行为。
+- 通过 `ScriptLanguageExtension` / `ScriptExtension` 建立仅限导出阶段的元数据桥接，覆盖外部脚本及 `.tres` / `.tscn` 内嵌子资源，使场景转换和 ClassDB 校验不再依赖宿主项目库。
+- 直接从编译器项目语义图生成声明本地的导出反射，包括继承脚本身份、存储属性使用情况、方法参数、信号和缓存命中；导出不再加载全部客户 `.gd`、运行静态初始化或滞留循环引用的 GDScript 资源。
+- 每个仅含元数据的 ScriptInstance 只序列化从源 SceneState/Resource 明确复制的字段，未触碰字段继续由目标 C++ 行为构造器提供默认值，避免空强类型容器或 `nil` 覆盖 AOT 默认值。
+- 跨脚本字段与方法、Autoload、`is` / `as`、内部类、RefCounted 对象及显式 `self` 统一经过同一套附着式脚本身份与分派契约；静态类型直接访问保持不变，不再把 C++ 类名转换成 Variant。
+- 附着式或动态属性读取跨越 Variant 边界时保留语义值类型，包括强类型 Dictionary 和跨脚本访问器。
+- 每个客户目标 SDK 只发布一套优化后的 `template_release` godot-cpp 归档，并同时用于 Debug 与 Release 导出；编译器的 editor 绑定只保留在预构建插件内部，不再分发第二套客户静态库。
+- 每个生成的客户翻译单元仅针对所选导出目标编译一次；Debug/Release 对象缓存彼此隔离，同时共享确定性的前端结果和生成源码状态。
 - `Dictionary` 接收者跨越 `Variant` 边界时完整保留 GDScript 的 `Dictionary.key` 读写语义，覆盖 JSON/HTTP 响应字典与嵌套复合赋值；异步认证和网络回调不再因响应字段被静默读成空值而中断后续流程。
 - 为全部十种 `PackedArray` 建立共享存储语义，局部别名、字段、参数、返回值、默认参数、`Callable`、lambda、Signal 与动态调用均与 GDScript 一致；显式构造复制和参数重绑定仍保持独立。
 - 公共脚本方法统一通过 Variant ABI 绑定，避免 godot-cpp 指针调用在 GDExtension 边界触发写时复制；下标读写、迭代、方法调用及引擎 API 转换均通过同一共享存储契约。
-- 发行 SDK 升级至 schema 10 / runtime ABI 9，并在桌面、Android、iOS 与 Web 清单中完整校验新增的引用语义运行时。
+- 将解析后的参数契约从语义分析贯通至 HIR 与项目接口，确保同脚本、继承、嵌套类和跨脚本调用均按被调用方真实原生 ABI 实体化参数，不再依赖调用方推断的表达式类型。
+- 所有生成的原生到 Variant 边界统一进入与重载无关的运行时适配器，覆盖数组、字典、动态调用、信号、Callable、match 绑定、外部 provider、工具函数和引擎可变参数。
+- 原生 `PackedArray` 转换改为显式执行，固定引擎参数独立适配，消除 MSVC 重载歧义且不重新引入值复制，也不削弱反射 Variant ABI。
+- 发行 SDK 升级至 schema 11 / runtime ABI 10，强制执行单绑定导出契约，并在桌面、Android、iOS 与 Web 清单中完整校验附着式及引用语义运行时。
 - 新增全部 `PackedArray` 类型的 GDScript/AOT 差分、公共方法与属性反射别名、Signal/Callable 动态边界以及逐字节二进制序列化回归，并在真实 Godot 原生运行中验证。
+- 新增生成代码架构门禁及真实 Godot fixture，覆盖固定 PackedArray 参数、引擎及工具可变参数、动态容器、序列化和跨脚本缓存失效。
+- 将生成项目 CMake 冒烟测试替换为官方兼容语料中每个生成单元的真实 C++17 语法编译，同时保留完整插件、独立 provider、导出、运行时和 PCK 门禁。
+- 使用打包 SDK 在 MSVC 下验证全新 Windows x86_64 Debug/Release 导出，审计内嵌 PCK 仅含一个项目原生库且不泄漏源码、编译器或 SDK，并在编辑器外独立运行导出程序。
 - Windows 插件发布构建对并行 MSVC SDK 编译启用受协调的 PDB 写入，避免大型 godot-cpp 目标因编译数据库争用而随机失败；客户导出仍保持逐文件串行。
 - Visual Studio 多配置构建现显式选择 Release SDK、记录实际 editor 优化配置并把插件 DLL 直接写入可安装的 `binary` 目录；发布链接优化与 Windows 长路径测试同样按配置可靠执行。
 - 将 `GDPP AOT Build` 覆盖界面精简为标题与当前任务两行，并在项目源码编译期间追加实时逐文件计数。
 - 进度条几何和动态任务文字改为直接提交渲染服务器，并在每次强制呈现前完成同步；Windows 无需移动窗口即可同时刷新文字与进度。
-- 新增真实后台构建、进度主线程派发、JSON 字典运行时、无界面进度模型、打包与交付契约，覆盖编辑器响应性、分层进度分配、精确界面文案和单填充控件实现。
+- 新增真实后台构建、进度主线程派发、JSON 字典运行时、无界面进度模型、打包、交付、AddressSanitizer、ThreadSanitizer 与 UndefinedBehaviorSanitizer 门禁，覆盖编辑器响应性、分层进度分配、精确界面文案、原生内存/线程安全和单填充控件实现。
 
 ## 1.7.6
 
