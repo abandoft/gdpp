@@ -32,11 +32,41 @@ const PHASE_TEXT := {
     "complete": "AOT build complete",
 }
 
+class ImmediateProgressFill:
+    extends Control
+
+    var _fraction := 0.0
+    var _color := Color.WHITE
+
+    func configure(extent: Vector2, color: Color) -> void:
+        size = extent
+        _color = color
+        set_progress_immediate(0.0)
+
+    func set_progress_immediate(fraction: float) -> void:
+        _fraction = clampf(fraction, 0.0, 1.0)
+        queue_redraw()
+        _submit_draw_commands()
+
+    func _draw() -> void:
+        var rect := _fill_rect()
+        if rect.size.x > 0.0:
+            draw_rect(rect, _color)
+
+    func _submit_draw_commands() -> void:
+        var canvas_item := get_canvas_item()
+        RenderingServer.canvas_item_clear(canvas_item)
+        var rect := _fill_rect()
+        if rect.size.x > 0.0:
+            RenderingServer.canvas_item_add_rect(canvas_item, rect, _color)
+
+    func _fill_rect() -> Rect2:
+        return Rect2(Vector2.ZERO, Vector2(size.x * _fraction, size.y))
+
 var _surface: Control
 var _panel_group: Control
 var _track: ColorRect
-var _fill: ColorRect
-var _fill_extent := Vector2.ZERO
+var _fill: ImmediateProgressFill
 var _stage_labels: Dictionary = {}
 var _phase_labels: Dictionary = {}
 var _stages := PackedStringArray()
@@ -116,13 +146,10 @@ func _ready() -> void:
     _track.clip_contents = true
     panel.add_child(_track)
 
-    _fill = ColorRect.new()
+    _fill = ImmediateProgressFill.new()
     _fill.position = Vector2.ZERO
-    _fill_extent = _track.size
-    _fill.size = Vector2(0.0, _fill_extent.y)
-    _fill.visible = false
-    _fill.color = FILL_COLOR
     _track.add_child(_fill)
+    _fill.configure(_track.size, FILL_COLOR)
 
     _center_on_window(EditorInterface.get_base_control().get_window())
 
@@ -264,17 +291,10 @@ func refresh(snap_to_target := false) -> void:
                 _target_progress,
                 _displayed_progress + maxf(0.0015, remaining * 0.16)
             )
-    _fill.size = Vector2(
-        _fill_extent.x * _displayed_progress,
-        _fill_extent.y
-    )
-    _fill.visible = _displayed_progress > 0.0
-    # Updating the real rectangle, rather than only its CanvasItem transform,
-    # invalidates the clipped track on Windows even while the export callback
-    # owns the editor loop. Explicitly queue both draw items before force_draw()
-    # so DWM receives every interpolated width without requiring window damage.
-    _fill.queue_redraw()
-    _track.queue_redraw()
+    # The export callback owns the editor loop, so queue_redraw() alone cannot
+    # deliver CanvasItem draw notifications. Submit the current rectangle
+    # directly to RenderingServer; _draw() keeps normal editor frames in sync.
+    _fill.set_progress_immediate(_displayed_progress)
     _redraw_now()
 
 
@@ -341,4 +361,5 @@ func _make_label(text: String, position: Vector2, size: Vector2, font_size: int)
 
 func _redraw_now() -> void:
     DisplayServer.process_events()
-    RenderingServer.force_draw()
+    RenderingServer.force_sync()
+    RenderingServer.force_draw(true)

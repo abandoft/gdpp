@@ -161,10 +161,11 @@ foreach(required_build_progress_contract IN ITEMS
         "static func calculate_hierarchical_progress("
         "float(stage_index) + stage_progress"
         "float(phase_index) + item_progress"
-        "_fill.size = Vector2("
-        "_fill_extent.x * _displayed_progress"
-        "_fill.queue_redraw()"
-        "_track.queue_redraw()"
+        "class ImmediateProgressFill:"
+        "func set_progress_immediate(fraction: float) -> void:"
+        "RenderingServer.canvas_item_clear(canvas_item)"
+        "RenderingServer.canvas_item_add_rect(canvas_item, rect, _color)"
+        "_fill.set_progress_immediate(_displayed_progress)"
         "get_last_exclusive_window()"
         "DisplayServer.window_get_active_popup()"
         "reparent(host_window, false)"
@@ -172,7 +173,8 @@ foreach(required_build_progress_contract IN ITEMS
         "\"Precompiling project scripts\""
         "\"Compiling project sources\""
         "\"AOT build complete\""
-        "RenderingServer.force_draw()")
+        "RenderingServer.force_sync()"
+        "RenderingServer.force_draw(true)")
     string(FIND "${build_progress}" "${required_build_progress_contract}"
         build_progress_offset)
     if(build_progress_offset EQUAL -1)
@@ -187,6 +189,7 @@ foreach(forbidden_build_progress_contract IN ITEMS
         "set_translation_profile"
         "_fill.scale = Vector2("
         "_fill.modulate ="
+        "_fill.size = Vector2("
         "set_deferred(\"size\"")
     string(FIND "${build_progress}" "${forbidden_build_progress_contract}"
         forbidden_build_progress_offset)
