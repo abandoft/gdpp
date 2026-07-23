@@ -1,7 +1,11 @@
 extends SceneTree
 
+const NATIVE_BUILD_JOB := preload("res://addons/gdpp/native_build_job.gd")
+
 var _project_progress_samples: Array[Dictionary] = []
 var _native_progress_samples: Array[Dictionary] = []
+var _main_thread_id := 0
+var _progress_thread_mismatch := false
 
 
 func _init() -> void:
@@ -10,22 +14,24 @@ func _init() -> void:
 
 func _run() -> void:
     var compiler := GDPPCompiler.new()
+    _main_thread_id = OS.get_thread_caller_id()
     var sdk_root := ProjectSettings.globalize_path("res://addons/gdpp/sdk")
     var engine := Engine.get_version_info()
     var target_version := "%d.%d" % [int(engine.major), int(engine.minor)]
     print("GDPP_DIRECT_BUILD_PLAN_BEGIN")
-    var result: Dictionary = compiler.compile_project(
-        "res://",
-        "res://addons/gdpp/build/project",
-        sdk_root,
-        compiler.get_default_compiler_executable(),
-        target_version,
-        "development",
-        "",
-        "",
-        "",
-        Callable(self, "_record_project_progress")
-    )
+    var job := NATIVE_BUILD_JOB.new()
+    var outcome: Dictionary = job.run(compiler, {
+        "project_root": "res://",
+        "output_directory": "res://addons/gdpp/build/project",
+        "sdk_root": sdk_root,
+        "compiler_executable": compiler.get_default_compiler_executable(),
+        "target_version": target_version,
+        "build_profile": "development",
+        "target_platform": "",
+        "target_architecture": "",
+        "target_variant": "",
+    }, Callable(self, "_record_progress"))
+    var result: Dictionary = outcome.get("plan", {})
     print("GDPP_DIRECT_BUILD_PLAN_END commands=", result.get("build_commands", []).size())
     if not result.get("success", false):
         push_error("GDPP direct build planning failed: %s" % result.get("diagnostics", []))
@@ -35,10 +41,7 @@ func _run() -> void:
         quit(1)
         return
     var command_count := int(result.get("build_commands", []).size())
-    var execution: Dictionary = compiler.execute_project_build(
-        result,
-        Callable(self, "_record_native_progress")
-    )
+    var execution: Dictionary = outcome.get("execution", {})
     var exit_code := int(execution.get("exit_code", -1))
     print("GDPP_DIRECT_BUILD_EXIT code=", exit_code)
     if not execution.get("success", false):
@@ -46,6 +49,10 @@ func _run() -> void:
         quit(1)
         return
     if command_count > 0 and not _validate_build_progress(command_count):
+        quit(1)
+        return
+    if _progress_thread_mismatch:
+        push_error("GDPP native build dispatched UI progress outside the editor thread")
         quit(1)
         return
     var library := str(result.get("output_library", ""))
@@ -84,20 +91,18 @@ func _run() -> void:
     quit(0)
 
 
-func _record_project_progress(phase: String, completed: int, total: int) -> void:
-    _project_progress_samples.push_back({
+func _record_progress(phase: String, completed: int, total: int) -> void:
+    if OS.get_thread_caller_id() != _main_thread_id:
+        _progress_thread_mismatch = true
+    var sample := {
         "phase": phase,
         "completed": completed,
         "total": total,
-    })
-
-
-func _record_native_progress(phase: String, completed: int, total: int) -> void:
-    _native_progress_samples.push_back({
-        "phase": phase,
-        "completed": completed,
-        "total": total,
-    })
+    }
+    if phase in ["compile", "link", "complete"]:
+        _native_progress_samples.push_back(sample)
+    else:
+        _project_progress_samples.push_back(sample)
 
 
 func _validate_project_progress() -> bool:
