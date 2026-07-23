@@ -50,6 +50,21 @@ endforeach()
 # Both independent CMake consumers of packaged godot-cpp archives must inherit one centralized
 # parent toolchain contract: the SDK profile builders and the release vendor GDExtension fixture.
 file(READ "${GDPP_TEST_SOURCE_DIR}/cmake/GodotPlugin.cmake" GDPP_TEST_PLUGIN_CMAKE)
+file(READ "${GDPP_TEST_SOURCE_DIR}/CMakeLists.txt" GDPP_TEST_ROOT_CMAKE)
+string(FIND "${GDPP_TEST_ROOT_CMAKE}"
+    "add_compile_options($<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/FS>)"
+    GDPP_TEST_PARENT_MSVC_PDB_LOCK_OFFSET)
+if(GDPP_TEST_PARENT_MSVC_PDB_LOCK_OFFSET EQUAL -1)
+    message(FATAL_ERROR
+        "The parent MSVC build does not serialize compiler PDB writes with /FS")
+endif()
+string(FIND "${GDPP_TEST_PLUGIN_CMAKE}"
+    "\"-DCMAKE_CXX_FLAGS=/FS /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00\""
+    GDPP_TEST_SDK_MSVC_PDB_LOCK_OFFSET)
+if(GDPP_TEST_SDK_MSVC_PDB_LOCK_OFFSET EQUAL -1)
+    message(FATAL_ERROR
+        "Parallel MSVC SDK bindings do not serialize compiler PDB writes with /FS")
+endif()
 foreach(GDPP_TEST_HOST_ABI_FIELD IN ITEMS
         "cxx_standard 17"
         "exceptions disabled"
