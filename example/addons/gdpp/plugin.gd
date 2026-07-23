@@ -1,6 +1,7 @@
 @tool
 extends EditorPlugin
 
+const NATIVE_BUILD_JOB := preload("res://addons/gdpp/native_build_job.gd")
 const OUTPUT_DIRECTORY := "res://addons/gdpp/build/project"
 const COMPILER_SETTING := "gdpp/build/cpp_compiler"
 const SDK_SETTING := "gdpp/build/sdk_root"
@@ -167,18 +168,22 @@ func _compile_project() -> void:
         _build_progress.set_active_stage("development")
         progress_callback = Callable(self, "_on_manual_build_progress")
     print("GDPP: analyzing project scripts for Godot %s..." % target_version)
-    var result: Dictionary = _compiler.compile_project(
-        "res://",
-        OUTPUT_DIRECTORY,
-        ProjectSettings.get_setting(SDK_SETTING),
-        ProjectSettings.get_setting(COMPILER_SETTING),
-        target_version,
-        "development",
-        _compiler.get_host_platform(),
-        _compiler.get_host_architecture(),
-        "",
-        progress_callback
-    )
+    var job := NATIVE_BUILD_JOB.new()
+    var frame_callback := Callable()
+    if _build_progress != null and _build_progress.is_available():
+        frame_callback = Callable(_build_progress, "refresh")
+    var outcome: Dictionary = job.run(_compiler, {
+        "project_root": "res://",
+        "output_directory": OUTPUT_DIRECTORY,
+        "sdk_root": ProjectSettings.get_setting(SDK_SETTING),
+        "compiler_executable": ProjectSettings.get_setting(COMPILER_SETTING),
+        "target_version": target_version,
+        "build_profile": "development",
+        "target_platform": _compiler.get_host_platform(),
+        "target_architecture": _compiler.get_host_architecture(),
+        "target_variant": "",
+    }, progress_callback, frame_callback)
+    var result: Dictionary = outcome.get("plan", {})
     if not result.get("success", false):
         for diagnostic in result.get("diagnostics", []):
             push_error(diagnostic)
@@ -193,7 +198,7 @@ func _compile_project() -> void:
             result.removed_count,
         ]
     )
-    if not _execute_project_build(result, progress_callback):
+    if not _accept_project_build(outcome.get("execution", {})):
         _finish_manual_build_progress()
         _building = false
         return
@@ -207,8 +212,7 @@ func _compile_project() -> void:
     _building = false
 
 
-func _execute_project_build(build_plan: Dictionary, progress_callback: Callable) -> bool:
-    var execution: Dictionary = _compiler.execute_project_build(build_plan, progress_callback)
+func _accept_project_build(execution: Dictionary) -> bool:
     if not execution.get("success", false):
         for diagnostic in execution.get("diagnostics", []):
             push_error("GDPP: %s" % diagnostic)
