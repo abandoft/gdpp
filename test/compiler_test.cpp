@@ -85,13 +85,19 @@ TEST_CASE("compiler centralizes packed values at every generated Variant boundar
         "signal payload(value: PackedByteArray)\n"
         "func collect(prefix: String, ...values: Array) -> int:\n"
         "    return values.size()\n"
-        "func exercise(target: Variant, callback: Callable, bytes: PackedByteArray) -> Variant:\n"
+        "func exercise(target: Variant, callback: Callable, peer: StreamPeer,\n"
+        "        node: Node, bytes: PackedByteArray) -> Variant:\n"
         "    payload.emit(bytes)\n"
         "    callback.call(bytes)\n"
         "    target.accept(bytes)\n"
+        "    print(\"bytes\", bytes)\n"
+        "    peer.put_data(bytes)\n"
+        "    node.call(&\"receive_bytes\", bytes)\n"
+        "    var values: Array = [bytes]\n"
+        "    var lookup: Dictionary = {&\"bytes\": bytes}\n"
         "    match bytes:\n"
         "        var captured when not captured.is_empty(): return captured\n"
-        "    return collect(\"payload\", bytes)\n",
+        "    return collect(\"payload\", values[0], lookup[&\"bytes\"])\n",
         options);
 
     REQUIRE(result.success);
@@ -113,6 +119,20 @@ TEST_CASE("compiler centralizes packed values at every generated Variant boundar
     REQUIRE(result.unit.source.find("_gdpp_match_bind_") != std::string::npos);
     REQUIRE(result.unit.source.find(" = gdpp::runtime::to_variant(_gdpp_match_value_") !=
             std::string::npos);
+    REQUIRE(result.unit.source.find("godot::UtilityFunctions::print("
+                                    "gdpp::runtime::to_variant(_gdpp_utility_argument_") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find(", gdpp::runtime::to_variant(_gdpp_utility_argument_") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("gdpp::runtime::packed_native_argument(_gdpp_call_argument_") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("call(_gdpp_call_argument_") != std::string::npos);
+    REQUIRE(result.unit.source.find(", gdpp::runtime::to_variant(_gdpp_call_argument_") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("const auto _gdpp_array_value_") != std::string::npos);
+    REQUIRE(result.unit.source.find(" = gdpp::runtime::to_variant(bytes); _gdpp_array_") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find(".set(_gdpp_dictionary_key_") != std::string::npos);
 }
 
 TEST_CASE("variadic initializers preserve default construction and pack new arguments") {
@@ -675,7 +695,8 @@ TEST_CASE("compiler generates serializable Godot export properties and inspector
     REQUIRE(result.unit.header.find("godot::Ref<godot::Texture2D> icon{}") != std::string::npos);
     REQUIRE(result.unit.source.find("godot::PROPERTY_USAGE_CATEGORY") != std::string::npos);
     REQUIRE(result.unit.header.find("godot::Variant inferred_count{}") != std::string::npos);
-    REQUIRE(result.unit.source.find("inferred_count = static_cast<int64_t>(5)") !=
+    REQUIRE(result.unit.source.find(
+                "inferred_count = gdpp::runtime::to_variant(static_cast<int64_t>(5))") !=
             std::string::npos);
     REQUIRE(
         result.unit.source.find("godot::PropertyInfo(godot::Variant::INT, \"inferred_count\"") !=
@@ -921,7 +942,8 @@ TEST_CASE("compiler resolves forward constants before field initializers") {
 
     REQUIRE(result.success);
     REQUIRE(result.unit.header.find("static const double& MIN_SPEED();") != std::string::npos);
-    REQUIRE(result.unit.source.find("speed = MIN_SPEED();") != std::string::npos);
+    REQUIRE(result.unit.source.find("speed = gdpp::runtime::to_variant(MIN_SPEED())") !=
+            std::string::npos);
 }
 
 TEST_CASE("compiler defers scalar Godot constants until after extension initialization") {
@@ -1176,8 +1198,8 @@ TEST_CASE("compiler preloads member resources before instances are constructed")
     REQUIRE(result.unit.header.find("static godot::Variant& _gdpp_preloaded_scene()") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("scene = _gdpp_preloaded_scene();") != std::string::npos);
-    REQUIRE(result.unit.source.find("_gdpp_preloaded_scene() = godot::Ref<godot::PackedScene>(") !=
-            std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_preloaded_scene() = gdpp::runtime::to_variant("
+                                    "godot::Ref<godot::PackedScene>(") != std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::load_resource(") != std::string::npos);
     REQUIRE(result.unit.header.find("static void _gdpp_release_preloaded_resources()") !=
             std::string::npos);
