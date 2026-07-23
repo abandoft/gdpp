@@ -27,6 +27,10 @@ struct CompileOptions {
     std::string native_base_header;
     bool attached_script{false};
     std::string attached_native_base;
+    std::string attached_base_script_path;
+    // Full public ABI digest shared by the editor reflection descriptor and the target runtime
+    // descriptor. Attached script replacement fails closed when these contracts diverge.
+    std::string script_contract_hash;
     const ScriptSymbolTable* script_symbols{nullptr};
     std::string current_script_path;
 };

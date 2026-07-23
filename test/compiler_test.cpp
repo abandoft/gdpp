@@ -147,9 +147,9 @@ TEST_CASE("variadic initializers preserve default construction and pack new argu
     REQUIRE(result.success);
     REQUIRE(result.unit.header.find("GDPPNative_RestConstructor__Payload();") != std::string::npos);
     REQUIRE(result.unit.header.find(
-                "GDPPNative_RestConstructor__Payload(godot::Variant _gdpp_argument_base, "
-                "godot::Array values)") != std::string::npos);
-    REQUIRE(result.unit.source.find("_init(gdpp::runtime::default_argument(), godot::Array())") !=
+                "virtual void _init(godot::Variant _gdpp_argument_base, godot::Array values)") !=
+            std::string::npos);
+    REQUIRE(result.unit.header.find("public gdpp::runtime::AttachedScriptBehavior") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("_gdpp_call_rest_") != std::string::npos);
     REQUIRE(result.unit.source.find("InternalClassResource<GDPPNative_RestConstructor__Payload>") !=
@@ -817,7 +817,8 @@ TEST_CASE("compiler generates registered internal classes and native lambda Call
     REQUIRE(result.success);
     REQUIRE_EQ(result.unit.inner_class_names.size(), std::size_t{1});
     REQUIRE_EQ(result.unit.inner_class_names.front(), std::string{"GDPPNative_Modern__Payload"});
-    REQUIRE(result.unit.header.find("GDCLASS(GDPPNative_Modern__Payload, godot::RefCounted)") !=
+    REQUIRE(result.unit.header.find(
+                "GDCLASS(GDPPNative_Modern__Payload, gdpp::runtime::AttachedScriptBehavior)") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("gdpp::runtime::make_local_callable(this, 1, 1") !=
             std::string::npos);
@@ -1073,7 +1074,7 @@ TEST_CASE("compiler flattens nested internal classes with inherited members") {
             std::string::npos);
     REQUIRE(result.unit.source.find("GDPPNative_Nested__Parent__Nested::nested_value") !=
             std::string::npos);
-    REQUIRE(result.unit.source.find("godot::Signal(this, godot::StringName(\"changed\"))") !=
+    REQUIRE(result.unit.source.find("godot::Signal(owner(), godot::StringName(\"changed\"))") !=
             std::string::npos);
 }
 
@@ -1121,8 +1122,9 @@ TEST_CASE("compiler emits complete native RPC configuration for Node classes") {
             std::string::npos);
     REQUIRE(result.unit.source.find("rpc_config(godot::StringName(\"synchronize\")") !=
             std::string::npos);
-    REQUIRE(result.unit.source.find("rpc_config(godot::StringName(\"update_remote\")") !=
+    REQUIRE(result.unit.source.find("rpc[godot::StringName(\"update_remote\")] = config") !=
             std::string::npos);
+    REQUIRE(result.unit.source.find("descriptor.rpc_config = rpc") != std::string::npos);
 }
 
 TEST_CASE("compiler accepts inert RPC metadata on non-Node classes") {
@@ -2315,6 +2317,9 @@ TEST_CASE("compiler preserves owner-free static fields methods lambdas and super
     REQUIRE(result.unit.source.find("GDPPNative_StaticContext__Child::_gdpp_set_total(") !=
             std::string::npos);
     REQUIRE(result.unit.source.find("GDPPNative_StaticContext__Child::_gdpp_get_total()") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find(
+                "return GDPPNative_StaticContext__Child::_gdpp_get_total();") !=
             std::string::npos);
 }
 

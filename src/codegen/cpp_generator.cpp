@@ -1141,8 +1141,12 @@ std::string CodeGenerator::cpp_type(const Type& type) const {
         return "godot::" + type.name;
     case TypeKind::object:
         if (!api_.find_class(type.name)) {
-            if (const auto inner = inner_cpp_type(type.name); !inner.empty())
-                return "godot::Ref<" + inner + ">";
+            if (const auto inner = inner_cpp_type(type.name); !inner.empty()) {
+                const auto godot_base = inner_godot_base_type(type.name);
+                if (api_.inherits(godot_base, "RefCounted"))
+                    return "godot::Ref<godot::RefCounted>";
+                return "godot::Object*";
+            }
             if (script_symbols_) {
                 if (const auto* symbol = script_symbols_->find_class(type.name)) {
                     if (symbol->attached) {
@@ -1384,11 +1388,94 @@ std::string CodeGenerator::inner_godot_base_type(std::string_view name) const {
         exact != inner_godot_base_types_.end()) {
         return exact->second;
     }
+    if (script_symbols_) {
+        if (const auto* inner = script_symbols_->find_inner_native(std::string{name}))
+            return inner->godot_base_type;
+    }
     const auto separator = name.rfind('.');
     if (separator != std::string_view::npos)
         name.remove_prefix(separator + 1);
     const auto found = inner_godot_base_types_.find(std::string{name});
     return found == inner_godot_base_types_.end() ? std::string{name} : found->second;
+}
+
+std::string CodeGenerator::inner_attached_native_base_type(std::string_view name) const {
+    if (const auto exact = inner_attached_native_base_types_.find(std::string{name});
+        exact != inner_attached_native_base_types_.end()) {
+        return exact->second;
+    }
+    if (script_symbols_) {
+        if (const auto* inner = script_symbols_->find_inner_native(std::string{name})) {
+            return inner->attached_native_base.empty() ? inner->godot_base_type
+                                                       : inner->attached_native_base;
+        }
+    }
+    const auto separator = name.rfind('.');
+    if (separator != std::string_view::npos)
+        name.remove_prefix(separator + 1);
+    const auto found = inner_attached_native_base_types_.find(std::string{name});
+    return found == inner_attached_native_base_types_.end()
+               ? inner_godot_base_type(name)
+               : found->second;
+}
+
+std::string CodeGenerator::attached_script_source_path(
+    const Type& type, const std::string_view resolved_owner) const {
+    if (type.kind != TypeKind::object || !script_symbols_)
+        return {};
+
+    const auto find_script = [&](const std::string_view identity) {
+        if (identity.empty())
+            return static_cast<const ScriptClassSymbol*>(nullptr);
+        const auto name = std::string{identity};
+        if (const auto* script = script_symbols_->find_class(name))
+            return script;
+        return script_symbols_->find_native_class(name);
+    };
+    const auto find_inner = [&](const std::string_view identity) {
+        if (identity.empty())
+            return static_cast<const ScriptInnerClassSymbol*>(nullptr);
+        const auto name = std::string{identity};
+        if (const auto* inner = script_symbols_->find_inner_native(name))
+            return inner;
+        if (current_script_) {
+            if (const auto* inner = script_symbols_->find_inner(*current_script_, name))
+                return inner;
+        }
+        const auto native = inner_cpp_type(identity);
+        return native.empty() ? static_cast<const ScriptInnerClassSymbol*>(nullptr)
+                              : script_symbols_->find_inner_native(native);
+    };
+    const auto resource_path = [](const std::string& path) {
+        return path.rfind("res://", 0) == 0 ? path : "res://" + path;
+    };
+
+    if (const auto* script = find_script(type.name); script && script->attached)
+        return resource_path(script->path);
+    if (const auto* script = find_script(resolved_owner); script && script->attached)
+        return resource_path(script->path);
+
+    const auto* inner = find_inner(type.name);
+    if (!inner)
+        inner = find_inner(resolved_owner);
+    if (!inner)
+        return {};
+    const auto* owner = script_symbols_->owner_of(*inner);
+    return owner ? resource_path(owner->path) + "::" + inner->name : std::string{};
+}
+
+std::string CodeGenerator::emit_attached_script_cast(const Type& target,
+                                                      std::string value) const {
+    const auto source_path = attached_script_source_path(target);
+    if (source_path.empty())
+        return value;
+    auto object = "gdpp::runtime::cast_attached_script(gdpp::runtime::to_variant(" +
+                  std::move(value) + "), " + godot_string(source_path) + ")";
+    const auto target_cpp = cpp_type(target);
+    if (target_cpp.rfind("godot::Ref<", 0) == 0) {
+        return target_cpp + "(godot::Object::cast_to<godot::RefCounted>(" + object + "))";
+    }
+    return object;
 }
 
 bool CodeGenerator::is_ref_counted_object(const Type& type) const noexcept {
@@ -1710,14 +1797,16 @@ std::string CodeGenerator::emit_conversion(const Type& target, const Type& sourc
         return "(static_cast<void>(" + value + "))";
     if (target.is_dynamic())
         return source.is_dynamic() ? value : "gdpp::runtime::to_variant(" + value + ")";
+    if (target == source)
+        return value;
+    if (!attached_script_source_path(target).empty())
+        return emit_attached_script_cast(target, std::move(value));
     const bool target_external = target.kind == TypeKind::object && script_symbols_ &&
                                  script_symbols_->find_external(target.name);
     const bool source_external = source.kind == TypeKind::object && script_symbols_ &&
                                  script_symbols_->find_external(source.name);
     if (target_external)
         return "gdpp::runtime::to_variant(" + value + ")";
-    if (target == source)
-        return value;
     // Project symbol refinement can express the same nested enum through its source-qualified
     // name on a declaration and its collision-safe native-qualified name in typed container
     // storage. Semantic analysis has already rejected unrelated enum assignments; the native
@@ -2307,7 +2396,9 @@ std::string CodeGenerator::emit_dynamic_assignment(const ir::Statement& statemen
                     converted = emit_api_argument(argument->type, argument->meta, root->type,
                                                   std::move(converted));
             }
-            result += nested_prefix + root->setter + "(" + index + converted + ");\n";
+            result += nested_prefix +
+                      (attached_script_ ? godot_owner_expression() + "->" : std::string{}) +
+                      root->setter + "(" + index + converted + ");\n";
         } else {
             result += nested_prefix + emit_expression(*root) + " = " + converted + ";\n";
         }
@@ -2375,6 +2466,8 @@ std::string CodeGenerator::emit_truthy(const ir::Expression& expression) const {
         const bool ref_counted = is_ref_counted_object(expression.type);
         if (value == "this")
             return "true";
+        if (attached_script_ && value == self_object_expression())
+            return "(" + value + " != nullptr)";
         return ref_counted ? "(" + value + ").is_valid()" : "(" + value + " != nullptr)";
     }
     return "(gdpp::runtime::to_variant(" + value + ")).booleanize()";
@@ -2501,8 +2594,7 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             return "godot::Signal(" + self_object_expression() + ", " +
                    godot_string_name(expression.value) + ")";
         if (expression.resolution == ir::ResolutionKind::script_autoload)
-            return "godot::Object::cast_to<" + expression.resolved_owner +
-                   ">(gdpp::runtime::find_autoload(" + godot_string_name(expression.getter) + "))";
+            return "gdpp::runtime::find_autoload(" + godot_string_name(expression.getter) + ")";
         if (expression.resolution == ir::ResolutionKind::script_callable)
             return "godot::Callable(" + self_object_expression() + ", " +
                    godot_string_name(expression.value) + ")";
@@ -2599,9 +2691,13 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         if (expression.resolution == ir::ResolutionKind::godot_method)
             return (attached_script_ ? godot_owner_expression() + "->" : std::string{}) +
                    sanitize_identifier(expression.value);
-        if (expression.resolution == ir::ResolutionKind::dynamic_property)
-            return "gdpp::runtime::get_named(gdpp::runtime::to_variant(" +
-                   self_object_expression() + "), " + godot_string_name(expression.value) + ")";
+        if (expression.resolution == ir::ResolutionKind::dynamic_property) {
+            auto value = "gdpp::runtime::get_named(gdpp::runtime::to_variant(" +
+                         self_object_expression() + "), " +
+                         godot_string_name(expression.value) + ")";
+            return emit_conversion(expression.type, {TypeKind::variant, "Variant"},
+                                   std::move(value));
+        }
         if (expression.resolution == ir::ResolutionKind::global_constant ||
             expression.resolution == ir::ResolutionKind::global_enum_value ||
             expression.resolution == ir::ResolutionKind::global_enum_type)
@@ -2739,6 +2835,14 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                                      emitted_value + "), " +
                                      godot_string_name(target.resolved_owner) + ")");
                 }
+                if (const auto source_path =
+                        attached_script_source_path(target.type, target.resolved_owner);
+                    !source_path.empty()) {
+                    return type_test("gdpp::runtime::is_attached_script_instance(("
+                                     "gdpp::runtime::to_variant(" +
+                                     emitted_value + ")).get_validated_object(), " +
+                                     godot_string(source_path) + ")");
+                }
                 const auto target_cpp =
                     target.resolution == ir::ResolutionKind::script_type ? target.resolved_owner
                     : target.resolution == ir::ResolutionKind::inner_type
@@ -2794,6 +2898,21 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                        "); return gdpp::runtime::is_external_instance(" + temporary + ", " +
                        godot_string_name(target.resolved_owner) + ") ? " + temporary +
                        " : godot::Variant(); }())";
+            }
+            if (target.type.kind == TypeKind::object) {
+                if (const auto source_path =
+                        attached_script_source_path(target.type, target.resolved_owner);
+                    !source_path.empty()) {
+                    auto object =
+                        "gdpp::runtime::cast_attached_script(gdpp::runtime::to_variant(" +
+                        emitted_value + "), " + godot_string(source_path) + ")";
+                    const auto target_cpp = cpp_type(expression.type);
+                    if (target_cpp.rfind("godot::Ref<", 0) == 0) {
+                        return target_cpp +
+                               "(godot::Object::cast_to<godot::RefCounted>(" + object + "))";
+                    }
+                    return object;
+                }
             }
             if (target.type.kind == TypeKind::object &&
                 (target.resolution == ir::ResolutionKind::godot_type ||
@@ -3390,7 +3509,21 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             }
             return result + "); }())";
         }
-        if (callee.resolution == ir::ResolutionKind::dynamic_method) {
+        const bool explicit_self_script_call =
+            callee.kind == ir::ExpressionKind::member && !callee.operands.empty() &&
+            callee.operands.at(0)->kind == ir::ExpressionKind::identifier &&
+            callee.operands.at(0)->value == "self";
+        const bool attached_instance_script_call =
+            script_method && callee.kind == ir::ExpressionKind::member &&
+            !script_method->is_static && !callee.operands.empty() &&
+            !explicit_self_script_call &&
+            callee.resolution != ir::ResolutionKind::script_super &&
+            callee.operands.at(0)->resolution != ir::ResolutionKind::script_type &&
+            callee.operands.at(0)->resolution != ir::ResolutionKind::inner_type &&
+            !attached_script_source_path(callee.operands.at(0)->type, callee.resolved_owner)
+                 .empty();
+        if (callee.resolution == ir::ResolutionKind::dynamic_method ||
+            attached_instance_script_call) {
             const auto identity = temporary_counter_++;
             const auto suffix = std::to_string(identity);
             const auto target_name = "_gdpp_dynamic_target_" + suffix;
@@ -3504,6 +3637,8 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         } else if (callee.resolution == ir::ResolutionKind::script_static_callable &&
                    !callee.resolved_owner.empty()) {
             invocation = callee.resolved_owner + "::" + script_native_name;
+        } else if (explicit_self_script_call && script_method) {
+            invocation = "this->" + script_native_name;
         } else if (callee.kind == ir::ExpressionKind::member &&
                    callee.resolution != ir::ResolutionKind::script_super &&
                    callee.operands.at(0)->resolution != ir::ResolutionKind::godot_type &&
@@ -3636,14 +3771,14 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
         if (expression.resolution == ir::ResolutionKind::script_signal) {
             auto object = emit_expression(*expression.operands.at(0));
             const bool ref_counted = is_ref_counted_object(expression.operands.at(0)->type);
-            if (ref_counted && object != "this")
+            if (ref_counted && object != self_object_expression())
                 object = "(" + object + ").ptr()";
             return "godot::Signal(" + object + ", " + godot_string_name(expression.value) + ")";
         }
         if (expression.resolution == ir::ResolutionKind::script_callable) {
             auto object = emit_expression(*expression.operands.at(0));
             const bool ref_counted = is_ref_counted_object(expression.operands.at(0)->type);
-            if (ref_counted && object != "this")
+            if (ref_counted && object != self_object_expression())
                 object = "(" + object + ").ptr()";
             return "godot::Callable(" + object + ", " + godot_string_name(expression.value) + ")";
         }
@@ -3670,8 +3805,10 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
                        " = " + godot_string_name(expression.value) + "; return " + key +
                        "; }()), godot::Variant())";
             }
-            return "gdpp::runtime::get_named(" + object + ", " +
-                   godot_string_name(expression.value) + ")";
+            auto value = "gdpp::runtime::get_named(" + object + ", " +
+                         godot_string_name(expression.value) + ")";
+            return emit_conversion(expression.type, {TypeKind::variant, "Variant"},
+                                   std::move(value));
         }
         const auto& receiver = *expression.operands.at(0);
         const bool checked_object_access = receiver.type.kind == TypeKind::object &&
@@ -3725,6 +3862,25 @@ std::string CodeGenerator::emit_expression(const ir::Expression& expression) con
             if (expression.operands.at(0)->type.kind == TypeKind::script_resource &&
                 !expression.resolved_owner.empty()) {
                 return expression.resolved_owner + "::" + expression.getter + "()";
+            }
+            if (expression.operands.at(0)->resolution == ir::ResolutionKind::script_type ||
+                expression.operands.at(0)->resolution == ir::ResolutionKind::inner_type) {
+                return emit_expression(*expression.operands.at(0)) + "::" +
+                       expression.getter + "()";
+            }
+            const bool explicit_self =
+                attached_script_ &&
+                expression.operands.at(0)->kind == ir::ExpressionKind::identifier &&
+                expression.operands.at(0)->value == "self";
+            if (explicit_self)
+                return expression.getter + "()";
+            if (!attached_script_source_path(expression.operands.at(0)->type,
+                                             expression.resolved_owner)
+                     .empty()) {
+                auto value = "gdpp::runtime::get_named(gdpp::runtime::to_variant(" + object +
+                             "), " + godot_string_name(expression.value) + ")";
+                return emit_conversion(expression.type, {TypeKind::variant, "Variant"},
+                                       std::move(value));
             }
             return finish_object_access(receiver_name + connector + expression.getter + "()");
         }
@@ -4787,6 +4943,9 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                               emit_expression(*root->operands.at(0)) + ";\n";
                     receiver = receiver_name;
                     connector = root->operands.at(0)->type.kind == TypeKind::object ? "->" : ".";
+                } else if (attached_script_) {
+                    receiver = godot_owner_expression();
+                    connector = "->";
                 }
                 result += nested_prefix + cpp_type(root->type) + " " + root_name + " = " +
                           receiver + connector + root->getter + "(";
@@ -4857,6 +5016,20 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                     owner.resolution == ir::ResolutionKind::inner_type) {
                     return prefix + emit_expression(owner) + "::" + target.setter + "(" + value +
                            ");\n";
+                }
+                const bool explicit_self =
+                    attached_script_ && owner.kind == ir::ExpressionKind::identifier &&
+                    owner.value == "self";
+                if (explicit_self)
+                    return prefix + target.setter + "(" + value + ");\n";
+                if (!attached_script_source_path(owner.type, target.resolved_owner).empty()) {
+                    const auto suffix = std::to_string(temporary_counter_++);
+                    const auto object = "_gdpp_attached_property_target_" + suffix;
+                    return prefix + "{\n" + indent(indentation + 1) + "godot::Variant " + object +
+                           " = gdpp::runtime::to_variant(" + emit_expression(owner) + ");\n" +
+                           indent(indentation + 1) + "gdpp::runtime::set_named(" + object + ", " +
+                           godot_string_name(target.value) + ", gdpp::runtime::to_variant(" +
+                           value + "));\n" + prefix + "}\n";
                 }
                 const auto object = emit_expression(owner);
                 const auto connector = owner.type.kind == TypeKind::object ? "->" : ".";
@@ -5245,6 +5418,134 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
     return {};
 }
 
+void CodeGenerator::emit_attached_descriptor_definition(
+    std::ostringstream& source, const std::string& native_name,
+    const std::string& source_path, const std::string& global_name,
+    const std::string& native_base_type, const std::string& base_script_path,
+    const std::string& contract_hash, const bool tool_mode, const bool is_abstract,
+    const std::vector<ir::Field>& fields, const std::vector<ir::Function>& functions,
+    const std::vector<ir::Signal>& signals, const std::vector<ir::Enum>& enums) const {
+    source << "gdpp::runtime::AttachedScriptDescriptor " << native_name
+           << "::_gdpp_descriptor() {\n"
+           << "    gdpp::runtime::AttachedScriptDescriptor descriptor;\n"
+           << "    descriptor.source_path = " << godot_string(source_path) << ";\n"
+           << "    descriptor.global_name = " << godot_string_name(global_name) << ";\n"
+           << "    descriptor.native_base_type = " << godot_string_name(native_base_type)
+           << ";\n"
+           << "    descriptor.contract_hash = " << godot_string(contract_hash) << ";\n"
+           << "    descriptor.base_script_path = " << godot_string(base_script_path) << ";\n"
+           << "    descriptor.behavior_class = " << godot_string_name(native_name) << ";\n"
+           << "    descriptor.tool = " << (tool_mode ? "true" : "false") << ";\n"
+           << "    descriptor.abstract = " << (is_abstract ? "true" : "false") << ";\n";
+    if (!is_abstract)
+        source << "    descriptor.factory = []() -> "
+                  "godot::Ref<gdpp::runtime::AttachedScriptBehavior> { return memnew("
+               << native_name << "); };\n";
+    for (const auto& variable : fields) {
+        if (!is_bound_property(variable))
+            continue;
+        source << "    {\n"
+               << "        gdpp::runtime::AttachedScriptProperty property;\n"
+               << "        property.info = "
+               << property_info(variable, api_, script_symbols_, cpp_type(variable.type))
+               << ";\n";
+        if (!variable.initializer || editor_safe_initializer(*variable.initializer)) {
+            source << "        property.has_default = true;\n"
+                   << "        property.default_value = gdpp::runtime::to_variant(";
+            if (variable.initializer) {
+                source << emit_conversion(variable.type, variable.initializer->type,
+                                          emit_expression(*variable.initializer));
+            } else {
+                const auto native_type = cpp_type(variable.type);
+                source << (!native_type.empty() && native_type.back() == '*'
+                               ? "static_cast<" + native_type + ">(nullptr)"
+                               : native_type + "{}");
+            }
+            source << ");\n";
+        }
+        source << "        descriptor.properties.push_back(std::move(property));\n"
+               << "    }\n";
+    }
+    for (const auto& function : functions) {
+        if (function.name == "_static_init")
+            continue;
+        source << "    {\n"
+               << "        godot::MethodInfo method("
+               << native_property_info(function.return_type, "") << ", "
+               << godot_string_name(function.name);
+        for (const auto& parameter : function.parameters)
+            source << ", " << native_property_info(parameter.type, parameter.name);
+        source << ");\n";
+        if (function.is_static)
+            source << "        method.flags |= GDEXTENSION_METHOD_FLAG_STATIC;\n";
+        if (function.rest_parameter)
+            source << "        method.flags |= GDEXTENSION_METHOD_FLAG_VARARG;\n";
+        for (const auto& parameter : function.parameters) {
+            if (parameter.default_value)
+                source << "        method.default_arguments.push_back("
+                          "gdpp::runtime::default_argument());\n";
+        }
+        source << "        descriptor.methods.push_back(std::move(method));\n"
+               << "    }\n";
+    }
+    for (const auto& signal : signals) {
+        source << "    descriptor.signals.emplace_back(" << godot_string_name(signal.name);
+        for (const auto& parameter : signal.parameters)
+            source << ", " << native_property_info(parameter.type, parameter.name);
+        source << ");\n";
+    }
+    for (const auto& variable : fields) {
+        if (!variable.is_constant)
+            continue;
+        const auto name = sanitize_identifier(variable.name);
+        source << "    descriptor.constants[" << godot_string_name(variable.name)
+               << "] = gdpp::runtime::to_variant("
+               << (managed_constant_field(variable) ? name + "()" : name) << ");\n";
+    }
+    for (const auto& enumeration : enums) {
+        for (const auto& entry : enumeration.entries) {
+            const auto value = enumeration.name.empty()
+                                   ? enum_identifier(entry.name)
+                                   : sanitize_identifier(enumeration.name) +
+                                         "::" + enum_identifier(entry.name);
+            source << "    descriptor.constants[" << godot_string_name(entry.name)
+                   << "] = int64_t{" << value << "};\n";
+        }
+    }
+    if (has_rpc_configuration(functions)) {
+        source << "    {\n        godot::Dictionary rpc;\n";
+        for (const auto& function : functions) {
+            if (!function.rpc)
+                continue;
+            const auto& rpc = *function.rpc;
+            source << "        {\n            godot::Dictionary config;\n"
+                   << "            config[\"rpc_mode\"] = godot::MultiplayerAPI::"
+                   << (rpc.permission == RpcPermission::any_peer ? "RPC_MODE_ANY_PEER"
+                                                                 : "RPC_MODE_AUTHORITY")
+                   << ";\n"
+                   << "            config[\"transfer_mode\"] = godot::MultiplayerPeer::";
+            switch (rpc.transfer_mode) {
+            case RpcTransferMode::unreliable:
+                source << "TRANSFER_MODE_UNRELIABLE";
+                break;
+            case RpcTransferMode::unreliable_ordered:
+                source << "TRANSFER_MODE_UNRELIABLE_ORDERED";
+                break;
+            case RpcTransferMode::reliable:
+                source << "TRANSFER_MODE_RELIABLE";
+                break;
+            }
+            source << ";\n            config[\"call_local\"] = "
+                   << (rpc.call_local ? "true" : "false") << ";\n"
+                   << "            config[\"channel\"] = int64_t{" << rpc.channel
+                   << "};\n            rpc[" << godot_string_name(function.name)
+                   << "] = config;\n        }\n";
+        }
+        source << "        descriptor.rpc_config = rpc;\n    }\n";
+    }
+    source << "    return descriptor;\n}\n\n";
+}
+
 void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
                                                  std::ostringstream& header,
                                                  const std::string& native_name,
@@ -5255,6 +5556,7 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
     const auto previous_functions = local_functions_;
     const auto previous_native_class_name = current_native_class_name_;
     const auto previous_godot_base_type = current_godot_base_type_;
+    const auto previous_attached_godot_base_type = attached_godot_base_type_;
     local_function_parameters_.clear();
     local_functions_.clear();
     current_native_class_name_ = native_name;
@@ -5277,13 +5579,13 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
     const auto base_cpp = !native_inner_base.empty() ? native_inner_base
                           : native_script_base
                               ? native_script_base->native_class_name
-                              : "godot::" + godot_cpp_class_name(declaration.base_type);
+                              : "gdpp::runtime::AttachedScriptBehavior";
     const auto godot_base = inner_godot_base_type(source_name);
     current_godot_base_type_ = godot_base;
+    attached_godot_base_type_ = godot_base;
     const auto engine_virtual_for = [&](const ir::Function& function) {
-        const auto* method =
-            function.is_static ? nullptr : api_.find_method(godot_base, function.name);
-        return method && method->is_virtual ? method : nullptr;
+        static_cast<void>(function);
+        return static_cast<const GodotMethodRecord*>(nullptr);
     };
     const auto coroutine_abi_for = [&](const ir::Function& function) {
         return function.is_coroutine && !function.is_static && !engine_virtual_for(function);
@@ -5322,22 +5624,21 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
                    ? "_gdpp_virtual_impl_" + source_symbol
                    : "_gdpp_native_override__gdpp_virtual_impl_" + source_symbol;
     };
-    const auto initializer =
-        std::find_if(declaration.functions.begin(), declaration.functions.end(),
-                     [](const auto& function) { return function.name == "_init"; });
-    const bool has_instance_initializers =
-        std::any_of(declaration.fields.begin(), declaration.fields.end(), [](const auto& field) {
-            return !field.is_constant && !field.is_static && !field.onready && field.initializer;
-        });
     const bool has_static_initialization =
         requires_static_initialization(declaration.fields, declaration.functions);
-    const bool has_native_rpc = has_rpc_configuration(declaration.functions) &&
-                                (godot_base == "Node" || api_.inherits(godot_base, "Node"));
     header << "class " << native_name << " : public " << base_cpp << " {\n"
            << "    GDCLASS(" << native_name << ", " << base_cpp << ")\n\n"
            << "public:\n"
            << "    inline static constexpr bool _gdpp_tool_mode = "
-           << (tool_mode ? "true" : "false") << ";\n";
+           << (tool_mode ? "true" : "false") << ";\n"
+           << "    inline static constexpr bool _gdpp_attached = true;\n"
+           << "    inline static constexpr bool _gdpp_attached_ref_counted = "
+           << (api_.inherits(godot_base, "RefCounted") ? "true" : "false") << ";\n"
+           << "    inline static constexpr const char *_gdpp_source_path = "
+           << escaped_string("res://" + current_source_path_ + "::" + source_name) << ";\n"
+           << "    " << native_name << "();\n"
+           << "    void initialize_instance() override;\n"
+           << "    void dispatch_notification(std::int32_t what, bool reversed) override;\n";
     for (const auto& enumeration : declaration.enums) {
         if (enumeration.name.empty()) {
             for (const auto& entry : enumeration.entries)
@@ -5360,38 +5661,9 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
         else
             header << ' ' << sanitize_identifier(field.name) << ";\n";
     }
-    if (initializer != declaration.functions.end()) {
-        const auto required =
-            std::count_if(initializer->parameters.begin(), initializer->parameters.end(),
-                          [](const auto& parameter) { return !parameter.default_value; });
-        if (required != 0 || initializer->rest_parameter)
-            header << "    " << native_name
-                   << (has_instance_initializers || has_static_initialization || has_native_rpc ||
-                               (initializer->rest_parameter && required == 0)
-                           ? "();\n"
-                           : "() = default;\n");
-        header << "    " << native_name << '(';
-        for (std::size_t index = 0; index < initializer->parameters.size(); ++index) {
-            if (index != 0)
-                header << ", ";
-            const auto& parameter = initializer->parameters[index];
-            header << parameter_native_type(parameter) << ' ' << parameter_native_name(parameter);
-            if (parameter.default_value && !initializer->rest_parameter)
-                header << " = " << emit_parameter_default(parameter);
-        }
-        if (initializer->rest_parameter) {
-            if (!initializer->parameters.empty())
-                header << ", ";
-            header << "godot::Array " << sanitize_identifier(initializer->rest_parameter->name);
-        }
-        header << ");\n";
-    } else if (has_instance_initializers || has_static_initialization || has_native_rpc) {
-        header << "    " << native_name << "();\n";
-    }
     header << "\nprotected:\n    static void _bind_methods();\n";
     for (const auto& function : declaration.functions) {
-        if (function.name != "_init" && function.name != "_static_init" &&
-            !engine_virtual_for(function)) {
+        if (function.name != "_static_init" && !engine_virtual_for(function)) {
             header << emit_method_callback_declaration(function);
         }
     }
@@ -5438,7 +5710,8 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
         header << "    // No internal class fields.\n";
     header << "\npublic:\n"
            << "    static void _gdpp_preload_resources();\n"
-           << "    static void _gdpp_release_preloaded_resources();\n";
+           << "    static void _gdpp_release_preloaded_resources();\n"
+           << "    static gdpp::runtime::AttachedScriptDescriptor _gdpp_descriptor();\n";
     for (const auto& field : declaration.fields) {
         if (field.is_constant)
             continue;
@@ -5504,6 +5777,7 @@ void CodeGenerator::emit_inner_class_declaration(const ir::Class& declaration,
     local_functions_ = previous_functions;
     current_native_class_name_ = previous_native_class_name;
     current_godot_base_type_ = previous_godot_base_type;
+    attached_godot_base_type_ = previous_attached_godot_base_type;
     current_inner_script_ = previous_inner_script;
 }
 
@@ -5517,6 +5791,7 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
     const auto previous_functions = local_functions_;
     const auto previous_native_class_name = current_native_class_name_;
     const auto previous_godot_base_type = current_godot_base_type_;
+    const auto previous_attached_godot_base_type = attached_godot_base_type_;
     local_function_parameters_.clear();
     local_functions_.clear();
     current_native_class_name_ = native_name;
@@ -5531,13 +5806,26 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                                 : nullptr;
     const auto godot_base = inner_godot_base_type(source_name);
     current_godot_base_type_ = godot_base;
+    attached_godot_base_type_ = godot_base;
     const auto resolved_base = inner_base_names_.find(source_name);
     const auto source_base =
         resolved_base == inner_base_names_.end() ? declaration.base_type : resolved_base->second;
+    const auto native_inner_base = inner_cpp_type(source_base);
+    const auto* native_script_base = current_inner_script_ && script_symbols_
+                                         ? script_symbols_->base_of(*current_inner_script_)
+                                         : nullptr;
+    const auto base_cpp = !native_inner_base.empty() ? native_inner_base
+                          : native_script_base
+                              ? native_script_base->native_class_name
+                              : "gdpp::runtime::AttachedScriptBehavior";
+    const auto base_script_path =
+        !native_inner_base.empty()
+            ? "res://" + current_source_path_ + "::" + source_base
+        : native_script_base ? "res://" + native_script_base->path : std::string{};
+    const auto native_base_type = inner_attached_native_base_type(source_name);
     const auto engine_virtual_for = [&](const ir::Function& function) {
-        const auto* method =
-            function.is_static ? nullptr : api_.find_method(godot_base, function.name);
-        return method && method->is_virtual ? method : nullptr;
+        static_cast<void>(function);
+        return static_cast<const GodotMethodRecord*>(nullptr);
     };
     const auto coroutine_abi_for = [&](const ir::Function& function) {
         return function.is_coroutine && !function.is_static && !engine_virtual_for(function);
@@ -5576,16 +5864,11 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
                    ? "_gdpp_virtual_impl_" + source_symbol
                    : "_gdpp_native_override__gdpp_virtual_impl_" + source_symbol;
     };
-    const auto initializer =
-        std::find_if(declaration.functions.begin(), declaration.functions.end(),
-                     [](const auto& function) { return function.name == "_init"; });
     const bool has_static_initialization =
         requires_static_initialization(declaration.fields, declaration.functions);
     const bool has_static_initializer =
         std::any_of(declaration.functions.begin(), declaration.functions.end(),
                     [](const auto& function) { return function.name == "_static_init"; });
-    const bool has_native_rpc = has_rpc_configuration(declaration.functions) &&
-                                (godot_base == "Node" || api_.inherits(godot_base, "Node"));
     if (has_static_initialization) {
         source << "std::atomic<std::uint8_t>& " << native_name
                << "::_gdpp_static_initialization_state() {\n"
@@ -5713,10 +5996,6 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
             }
         }
     };
-    const bool has_instance_initializers =
-        std::any_of(declaration.fields.begin(), declaration.fields.end(), [](const auto& field) {
-            return !field.is_constant && !field.is_static && !field.onready && field.initializer;
-        });
     const bool needs_editor_hint =
         !tool_mode &&
         (std::any_of(declaration.fields.begin(), declaration.fields.end(), cached_preload_field) ||
@@ -5724,86 +6003,33 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
              return !field.is_constant && !field.is_static && !field.onready && field.initializer &&
                     !editor_safe_initializer(*field.initializer);
          }));
-    const auto required =
-        initializer == declaration.functions.end()
-            ? std::ptrdiff_t{0}
-            : std::count_if(initializer->parameters.begin(), initializer->parameters.end(),
-                            [](const auto& parameter) { return !parameter.default_value; });
-    const bool default_calls_initializer =
-        initializer != declaration.functions.end() && initializer->rest_parameter && required == 0;
-    if (((has_instance_initializers || has_static_initialization || has_native_rpc) &&
-         (initializer == declaration.functions.end() || required != 0)) ||
-        default_calls_initializer) {
-        in_function_body_ = true;
-        source << native_name << "::" << native_name << "() {\n";
-        if (has_static_initialization)
-            source << "    _gdpp_ensure_static_initialized();\n";
-        if (needs_editor_hint || (default_calls_initializer && !tool_mode))
-            source << "    const bool gdpp_editor_hint = gdpp::runtime::is_editor_hint();\n";
-        if (std::any_of(declaration.fields.begin(), declaration.fields.end(), cached_preload_field))
-            source << (tool_mode ? "    _gdpp_preload_resources();\n"
-                                 : "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n");
-        emit_instance_initializers();
-        if (has_native_rpc)
-            emit_rpc_configurations(source, declaration.functions, 1);
-        if (default_calls_initializer) {
-            if (!tool_mode)
-                source << "    if (gdpp_editor_hint) return;\n";
-            source << "    _init(";
-            for (std::size_t index = 0; index < initializer->parameters.size(); ++index) {
-                if (index != 0)
-                    source << ", ";
-                source << "gdpp::runtime::default_argument()";
-            }
-            if (!initializer->parameters.empty())
-                source << ", ";
-            source << "godot::Array());\n";
-        }
-        source << "}\n\n";
-        in_function_body_ = false;
-    }
-    if (initializer != declaration.functions.end()) {
-        in_function_body_ = true;
-        source << native_name << "::" << native_name << '(';
-        for (std::size_t index = 0; index < initializer->parameters.size(); ++index) {
-            if (index != 0)
-                source << ", ";
-            const auto& parameter = initializer->parameters[index];
-            source << parameter_native_type(parameter) << ' ' << parameter_native_name(parameter);
-        }
-        if (initializer->rest_parameter) {
-            if (!initializer->parameters.empty())
-                source << ", ";
-            source << "godot::Array " << sanitize_identifier(initializer->rest_parameter->name);
-        }
-        source << ") {\n";
-        if (has_static_initialization)
-            source << "    _gdpp_ensure_static_initialized();\n";
-        if (!tool_mode)
-            source << "    const bool gdpp_editor_hint = gdpp::runtime::is_editor_hint();\n";
-        if (std::any_of(declaration.fields.begin(), declaration.fields.end(), cached_preload_field))
-            source << (tool_mode ? "    _gdpp_preload_resources();\n"
-                                 : "    if (!gdpp_editor_hint) _gdpp_preload_resources();\n");
-        emit_instance_initializers();
-        if (has_native_rpc)
-            emit_rpc_configurations(source, declaration.functions, 1);
-        if (!tool_mode)
-            source << "    if (gdpp_editor_hint) return;\n";
-        source << "    _init(";
-        for (std::size_t index = 0; index < initializer->parameters.size(); ++index) {
-            if (index != 0)
-                source << ", ";
-            source << parameter_native_name(initializer->parameters[index]);
-        }
-        if (initializer->rest_parameter) {
-            if (!initializer->parameters.empty())
-                source << ", ";
-            source << sanitize_identifier(initializer->rest_parameter->name);
-        }
-        source << ");\n";
-        source << "}\n\n";
-        in_function_body_ = false;
-    }
+    in_function_body_ = true;
+    source << native_name << "::" << native_name << "() {\n";
+    if (has_static_initialization)
+        source << "    _gdpp_ensure_static_initialized();\n";
+    if (std::any_of(declaration.fields.begin(), declaration.fields.end(), cached_preload_field))
+        source << "    _gdpp_preload_resources();\n";
+    source << "}\n\n"
+           << "void " << native_name << "::initialize_instance() {\n"
+           << "    " << base_cpp << "::initialize_instance();\n";
+    if (needs_editor_hint)
+        source << "    const bool gdpp_editor_hint = gdpp::runtime::is_editor_hint();\n";
+    emit_instance_initializers();
+    source << "}\n\n";
+
+    const auto notification = std::find_if(
+        declaration.functions.begin(), declaration.functions.end(),
+        [](const ir::Function& function) {
+            return !function.is_static && function.name == "_notification";
+        });
+    source << "void " << native_name
+           << "::dispatch_notification(std::int32_t what, bool reversed) {\n"
+           << "    if (reversed) " << base_cpp << "::dispatch_notification(what, true);\n";
+    if (notification != declaration.functions.end())
+        source << "    " << function_native_name(*notification) << "(what);\n";
+    source << "    if (!reversed) " << base_cpp << "::dispatch_notification(what, false);\n"
+           << "}\n\n";
+    in_function_body_ = false;
     for (const auto& field : declaration.fields) {
         if (cached_preload_field(field) && !field.is_static) {
             source << cpp_type(field.type) << "& " << native_name << "::_gdpp_preloaded_"
@@ -5901,7 +6127,7 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         }
     }
     for (const auto& function : declaration.functions) {
-        if (function.name == "_init" || function.name == "_static_init" ||
+        if (function.name == "_static_init" ||
             (!function.is_static && engine_virtual_for(function)))
             continue;
         source << emit_method_registration(function, native_name,
@@ -6067,17 +6293,22 @@ void CodeGenerator::emit_inner_class_definition(const ir::Class& declaration,
         current_coroutine_state_.clear();
     }
     for (const auto& function : declaration.functions) {
-        if (function.name == "_init" || function.name == "_static_init" ||
-            engine_virtual_for(function)) {
+        if (function.name == "_static_init" || engine_virtual_for(function)) {
             continue;
         }
         source << emit_method_callback_definition(
             function, native_name, function_native_name(function), function_return_type(function));
     }
+    emit_attached_descriptor_definition(
+        source, native_name, "res://" + current_source_path_ + "::" + source_name, {},
+        native_base_type, base_script_path, current_script_contract_hash_, tool_mode,
+        declaration.is_abstract, declaration.fields, declaration.functions, declaration.signals,
+        declaration.enums);
     local_function_parameters_ = previous_function_parameters;
     local_functions_ = previous_functions;
     current_native_class_name_ = previous_native_class_name;
     current_godot_base_type_ = previous_godot_base_type;
+    attached_godot_base_type_ = previous_attached_godot_base_type;
     current_inner_script_ = previous_inner_script;
 }
 
@@ -6086,7 +6317,9 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
                                       const std::string& native_base_class,
                                       const std::string& native_base_header,
                                       const bool attached_script,
-                                      const std::string& attached_native_base) const {
+                                      const std::string& attached_native_base,
+                                      const std::string& attached_base_script_path,
+                                      const std::string& script_contract_hash) const {
     if (!mir_module.hir) {
         diagnostics_.error("GDS5108", "C++ backend received a detached MIR module", {});
         return {};
@@ -6107,6 +6340,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     in_function_body_ = false;
     attached_script_ = attached_script;
     attached_godot_base_type_.clear();
+    current_script_contract_hash_ = script_contract_hash;
     current_script_ = script_symbols_ ? script_symbols_->find_path(source_path) : nullptr;
     unit.script_class_name = current_script_
                                  ? current_script_->script_name
@@ -6118,6 +6352,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     current_native_class_name_ = unit.class_name;
     inner_native_names_.clear();
     inner_godot_base_types_.clear();
+    inner_attached_native_base_types_.clear();
     inner_base_names_.clear();
     inner_declarations_.clear();
     inner_ref_types_.clear();
@@ -6220,6 +6455,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
             if (const auto* symbol = script_symbols_->find_inner(*current_script_, qualified);
                 symbol && !symbol->godot_base_type.empty()) {
                 inner_godot_base_types_.emplace(qualified, symbol->godot_base_type);
+                inner_attached_native_base_types_.emplace(
+                    qualified, symbol->attached_native_base.empty()
+                                   ? symbol->godot_base_type
+                                   : symbol->attached_native_base);
                 continue;
             }
         }
@@ -6238,6 +6477,9 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         inner_godot_base_types_.emplace(qualified, api_.find_class(current->base_type)
                                                        ? current->base_type
                                                        : std::string{"RefCounted"});
+        inner_attached_native_base_types_.emplace(
+            qualified, api_.find_class(current->base_type) ? current->base_type
+                                                           : std::string{"RefCounted"});
     }
     std::vector<std::pair<std::string, const ir::Class*>> ordered_inner_classes;
     std::unordered_set<std::string> ordered_inner_names;
@@ -6327,6 +6569,18 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
             return false;
         }
         if (attached_script) {
+            const auto local_inner_prefix = "res://" + current_source_path_ + "::";
+            if (attached_base_script_path.rfind(local_inner_prefix, 0) == 0) {
+                const auto local_base = attached_base_script_path.substr(local_inner_prefix.size());
+                std::string declaration_owner;
+                const auto* inherited =
+                    find_inherited_inner_function(local_base, function.name, &declaration_owner);
+                return inherited &&
+                       same_native_function_abi(
+                           function, godot_base_type, *inherited,
+                           inner_godot_base_type(declaration_owner.empty() ? local_base
+                                                                           : declaration_owner));
+            }
             auto* base_script = script_symbols_->base_of(*current_script_);
             bool generated_base_declares_method = false;
             while (base_script && !generated_base_declares_method) {
@@ -6387,9 +6641,11 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     header << "// Generated by GDPP. Do not edit.\n"
            << "#pragma once\n\n"
            << "#include <gdpp/runtime/attached_script.hpp>\n";
-    if (native_base_class.empty() && !attached_script)
+    if (attached_script)
+        header << "#include <" << header_for_base(godot_base_type) << ">\n";
+    if (!attached_script && native_base_class.empty())
         header << "#include <" << header_for_base(base) << ">\n";
-    else if (!native_base_header.empty()) {
+    if (!native_base_header.empty()) {
         header << "#include \"" << native_base_header << "\"\n";
         included_script_headers.insert(native_base_header);
     }
@@ -6519,10 +6775,19 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
            << "};\n"
            << "template <typename T> struct InternalClassResource {\n"
            << "    template <typename... Args>\n"
-           << "    static godot::Ref<T> instantiate(Args &&...args) {\n"
-           << "        if (!T::_gdpp_tool_mode && gdpp::runtime::is_editor_hint()) "
-              "return {};\n"
-           << "        return godot::Ref<T>(memnew(T(std::forward<Args>(args)...)));\n"
+           << "    static auto instantiate(Args &&...args) {\n"
+           << "        godot::Array gdpp_arguments;\n"
+           << "        (gdpp_arguments.push_back("
+              "gdpp::runtime::to_variant(std::forward<Args>(args))), ...);\n"
+           << "        godot::Variant instance = gdpp::runtime::instantiate_attached_script("
+              "godot::String(T::_gdpp_source_path), gdpp_arguments);\n"
+           << "        if constexpr (T::_gdpp_attached_ref_counted) {\n"
+           << "            godot::Object *object = instance;\n"
+           << "            return godot::Ref<godot::RefCounted>("
+              "godot::Object::cast_to<godot::RefCounted>(object));\n"
+           << "        } else {\n"
+           << "            return static_cast<godot::Object *>(instance);\n"
+           << "        }\n"
            << "    }\n"
            << "};\n"
            << "inline godot::Dictionary make_dictionary(\n"
@@ -6533,7 +6798,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
            << "}\n"
            << "} // namespace " << detail_namespace_ << "\n\n";
     const auto root_attached_script = attached_script_;
-    attached_script_ = false;
+    attached_script_ = true;
     for (const auto& [qualified, declaration] : ordered_inner_classes) {
         emit_inner_class_declaration(*declaration, header, inner_native_names_.at(qualified),
                                      qualified, module.is_tool);
@@ -6734,9 +6999,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     }
     if (has_onready_fields && ready == module.functions.end()) {
         header << "    virtual void _ready()";
-        if (const auto* method = api_.find_method(godot_base_type, "_ready");
-            method && method->is_virtual) {
-            header << " override";
+        if (!attached_script) {
+            const auto* method = api_.find_method(godot_base_type, "_ready");
+            if (method && method->is_virtual)
+                header << " override";
         }
         header << ";\n";
     }
@@ -6746,7 +7012,13 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     std::ostringstream source;
     source << "// Generated by GDPP. Do not edit.\n"
            << "#include \"" << unit.header_file_name << "\"\n";
-    if (has_rpc_configuration(module)) {
+    const bool has_any_rpc =
+        has_rpc_configuration(module) ||
+        std::any_of(ordered_inner_classes.begin(), ordered_inner_classes.end(),
+                    [](const auto& entry) {
+                        return has_rpc_configuration(entry.second->functions);
+                    });
+    if (has_any_rpc) {
         source << "#include <godot_cpp/classes/multiplayer_api.hpp>\n"
                << "#include <godot_cpp/classes/multiplayer_peer.hpp>\n";
     }
@@ -6788,7 +7060,7 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
             source << "#include \"" << header_file << "\"\n";
     }
     source << '\n';
-    attached_script_ = false;
+    attached_script_ = true;
     for (const auto& [qualified, declaration] : ordered_inner_classes) {
         emit_inner_class_definition(*declaration, source, inner_native_names_.at(qualified),
                                     qualified, module.is_tool);
@@ -7217,132 +7489,12 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     }
     source << "}\n\n";
     if (attached_script) {
-        source << "gdpp::runtime::AttachedScriptDescriptor " << unit.class_name
-               << "::_gdpp_descriptor() {\n"
-               << "    gdpp::runtime::AttachedScriptDescriptor descriptor;\n"
-               << "    descriptor.source_path = " << godot_string("res://" + current_source_path_)
-               << ";\n"
-               << "    descriptor.global_name = "
-               << godot_string_name(current_script_ && current_script_->globally_named
-                                        ? current_script_->script_name
-                                        : std::string{})
-               << ";\n"
-               << "    descriptor.native_base_type = " << godot_string_name(attached_native_base)
-               << ";\n"
-               << "    descriptor.base_script_path = "
-               << godot_string(current_script_ && !current_script_->base_script_path.empty()
-                                   ? "res://" + current_script_->base_script_path
-                                   : std::string{})
-               << ";\n"
-               << "    descriptor.behavior_class = " << godot_string_name(unit.class_name) << ";\n"
-               << "    descriptor.tool = " << (module.is_tool ? "true" : "false") << ";\n"
-               << "    descriptor.abstract = " << (module.is_abstract ? "true" : "false") << ";\n";
-        if (!module.is_abstract)
-            source << "    descriptor.factory = []() -> "
-                      "godot::Ref<gdpp::runtime::AttachedScriptBehavior> "
-                      "{ return memnew("
-                   << unit.class_name << "); };\n";
-        for (const auto& variable : module.fields) {
-            if (!is_bound_property(variable))
-                continue;
-            source << "    {\n"
-                   << "        gdpp::runtime::AttachedScriptProperty property;\n"
-                   << "        property.info = "
-                   << property_info(variable, api_, script_symbols_, cpp_type(variable.type))
-                   << ";\n";
-            if (!variable.initializer || editor_safe_initializer(*variable.initializer)) {
-                source << "        property.has_default = true;\n"
-                       << "        property.default_value = gdpp::runtime::to_variant(";
-                if (variable.initializer) {
-                    source << emit_conversion(variable.type, variable.initializer->type,
-                                              emit_expression(*variable.initializer));
-                } else {
-                    source << cpp_type(variable.type) << "{}";
-                }
-                source << ");\n";
-            }
-            source << "        descriptor.properties.push_back(std::move(property));\n"
-                   << "    }\n";
-        }
-        for (const auto& function : module.functions) {
-            if (function.name == "_static_init")
-                continue;
-            source << "    {\n"
-                   << "        godot::MethodInfo method("
-                   << native_property_info(function.return_type, "") << ", "
-                   << godot_string_name(function.name);
-            for (const auto& parameter : function.parameters)
-                source << ", " << native_property_info(parameter.type, parameter.name);
-            source << ");\n";
-            if (function.is_static)
-                source << "        method.flags |= GDEXTENSION_METHOD_FLAG_STATIC;\n";
-            if (function.rest_parameter)
-                source << "        method.flags |= GDEXTENSION_METHOD_FLAG_VARARG;\n";
-            for (const auto& parameter : function.parameters) {
-                if (parameter.default_value)
-                    source << "        method.default_arguments.push_back("
-                              "gdpp::runtime::to_variant("
-                           << emit_expression(*parameter.default_value) << "));\n";
-            }
-            source << "        descriptor.methods.push_back(std::move(method));\n"
-                   << "    }\n";
-        }
-        for (const auto& signal : module.signals) {
-            source << "    descriptor.signals.emplace_back(" << godot_string_name(signal.name);
-            for (const auto& parameter : signal.parameters)
-                source << ", " << native_property_info(parameter.type, parameter.name);
-            source << ");\n";
-        }
-        for (const auto& variable : module.fields) {
-            if (!variable.is_constant)
-                continue;
-            const auto name = sanitize_identifier(variable.name);
-            source << "    descriptor.constants[" << godot_string_name(variable.name)
-                   << "] = gdpp::runtime::to_variant("
-                   << (managed_constant_field(variable) ? name + "()" : name) << ");\n";
-        }
-        for (const auto& enumeration : module.enums) {
-            for (const auto& entry : enumeration.entries) {
-                const auto value = enumeration.name.empty()
-                                       ? enum_identifier(entry.name)
-                                       : sanitize_identifier(enumeration.name) +
-                                             "::" + enum_identifier(entry.name);
-                source << "    descriptor.constants[" << godot_string_name(entry.name)
-                       << "] = int64_t{" << value << "};\n";
-            }
-        }
-        if (has_rpc_configuration(module.functions)) {
-            source << "    {\n        godot::Dictionary rpc;\n";
-            for (const auto& function : module.functions) {
-                if (!function.rpc)
-                    continue;
-                const auto& rpc = *function.rpc;
-                source << "        {\n            godot::Dictionary config;\n"
-                       << "            config[\"rpc_mode\"] = godot::MultiplayerAPI::"
-                       << (rpc.permission == RpcPermission::any_peer ? "RPC_MODE_ANY_PEER"
-                                                                     : "RPC_MODE_AUTHORITY")
-                       << ";\n"
-                       << "            config[\"transfer_mode\"] = godot::MultiplayerPeer::";
-                switch (rpc.transfer_mode) {
-                case RpcTransferMode::unreliable:
-                    source << "TRANSFER_MODE_UNRELIABLE";
-                    break;
-                case RpcTransferMode::unreliable_ordered:
-                    source << "TRANSFER_MODE_UNRELIABLE_ORDERED";
-                    break;
-                case RpcTransferMode::reliable:
-                    source << "TRANSFER_MODE_RELIABLE";
-                    break;
-                }
-                source << ";\n            config[\"call_local\"] = "
-                       << (rpc.call_local ? "true" : "false") << ";\n"
-                       << "            config[\"channel\"] = int64_t{" << rpc.channel
-                       << "};\n            rpc[" << godot_string_name(function.name)
-                       << "] = config;\n        }\n";
-            }
-            source << "        descriptor.rpc_config = rpc;\n    }\n";
-        }
-        source << "    return descriptor;\n}\n\n";
+        emit_attached_descriptor_definition(
+            source, unit.class_name, "res://" + current_source_path_,
+            current_script_ && current_script_->globally_named ? current_script_->script_name
+                                                                : std::string{},
+            attached_native_base, attached_base_script_path, script_contract_hash, module.is_tool,
+            module.is_abstract, module.fields, module.functions, module.signals, module.enums);
     }
     for (const auto& variable : module.fields) {
         if (variable.is_constant)

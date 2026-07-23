@@ -206,7 +206,9 @@ CompileResult Compiler::compile(std::string path, std::string source_text,
             const auto codegen_begin = Clock::now();
             result.unit = generator.generate(mir, source.path(), options.native_class_suffix,
                                              options.native_base_class, options.native_base_header,
-                                             options.attached_script, options.attached_native_base);
+                                             options.attached_script, options.attached_native_base,
+                                             options.attached_base_script_path,
+                                             options.script_contract_hash);
             result.metrics.codegen_ns = elapsed_ns(codegen_begin, Clock::now());
         }
         if (diagnostics.has_errors()) {

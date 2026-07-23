@@ -42,7 +42,9 @@ class CodeGenerator final {
                                          const std::string& native_base_class = {},
                                          const std::string& native_base_header = {},
                                          bool attached_script = false,
-                                         const std::string& attached_native_base = {}) const;
+                                         const std::string& attached_native_base = {},
+                                         const std::string& attached_base_script_path = {},
+                                         const std::string& script_contract_hash = {}) const;
 
   private:
     struct StatementSlice {
@@ -162,6 +164,11 @@ class CodeGenerator final {
     [[nodiscard]] std::string container_object_runtime_name(std::string_view type_name) const;
     [[nodiscard]] std::string inner_cpp_type(std::string_view name) const;
     [[nodiscard]] std::string inner_godot_base_type(std::string_view name) const;
+    [[nodiscard]] std::string inner_attached_native_base_type(std::string_view name) const;
+    [[nodiscard]] std::string attached_script_source_path(
+        const Type& type, std::string_view resolved_owner = {}) const;
+    [[nodiscard]] std::string emit_attached_script_cast(const Type& target,
+                                                        std::string value) const;
     [[nodiscard]] bool is_ref_counted_object(const Type& type) const noexcept;
     [[nodiscard]] std::string native_super_owner(std::string_view owner) const;
     struct InnerMethodDeclaration {
@@ -206,6 +213,13 @@ class CodeGenerator final {
     void emit_inner_class_definition(const ir::Class& declaration, std::ostringstream& source,
                                      const std::string& native_name, const std::string& source_name,
                                      bool tool_mode) const;
+    void emit_attached_descriptor_definition(
+        std::ostringstream& source, const std::string& native_name,
+        const std::string& source_path, const std::string& global_name,
+        const std::string& native_base_type, const std::string& base_script_path,
+        const std::string& contract_hash, bool tool_mode, bool is_abstract,
+        const std::vector<ir::Field>& fields, const std::vector<ir::Function>& functions,
+        const std::vector<ir::Signal>& signals, const std::vector<ir::Enum>& enums) const;
     [[nodiscard]] static std::string sanitize_identifier(const std::string& value);
     [[nodiscard]] static std::string sanitize_qualified_identifier(std::string_view value);
     [[nodiscard]] static std::string enum_identifier(const std::string& value);
@@ -225,8 +239,10 @@ class CodeGenerator final {
     mutable bool in_async_continuation_{false};
     mutable bool attached_script_{false};
     mutable std::string attached_godot_base_type_;
+    mutable std::string current_script_contract_hash_;
     mutable std::unordered_map<std::string, std::string> inner_native_names_;
     mutable std::unordered_map<std::string, std::string> inner_godot_base_types_;
+    mutable std::unordered_map<std::string, std::string> inner_attached_native_base_types_;
     mutable std::unordered_map<std::string, std::string> inner_base_names_;
     mutable std::unordered_map<std::string, const ir::Class*> inner_declarations_;
     mutable std::unordered_set<std::string> inner_ref_types_;
