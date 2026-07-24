@@ -1,3 +1,8 @@
+## 1.7.9
+
+- Replace the Node.js 20-based `ilammy/msvc-dev-cmd` dependency with a repository-owned, zero-dependency Node.js 24 Action that discovers Visual Studio through `vswhere`, initializes the supported MSVC x64 toolchain, exports only changed environment variables, preserves values containing `=`, deduplicates Windows tool paths, and fails closed on incomplete or mismatched toolchain state.
+- Upgrade the workflow semantic validator to actionlint 1.7.12 with native Node.js 24 action-metadata support, and gate all compiler-core, native-integration, and commercial Windows host builds against the local Node.js 24 bootstrap contract.
+
 ## 1.7.8
 
 - Keep attached-script descriptor registration strictly metadata-only: script constants, including nested resource containers and otherwise pure values, are represented by captureless deferred resolvers instead of being evaluated while GDExtension classes are registered.
