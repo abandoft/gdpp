@@ -119,9 +119,13 @@ jobs:
             2>&1 | tee "$root/warmup.log"
           "$GODOT" --headless --editor --path example --import \
             2>&1 | tee "$root/import.log"
+          python3 tools/verify_export_immutability.py snapshot \
+            --project example --state "$root/extension-state.json"
           "$GODOT" --headless --editor --path example \
             --export-release 'Android arm64' "$root/GDPPExample.apk" \
             2>&1 | tee "$root/export.log"
+          python3 tools/verify_export_immutability.py verify \
+            --project example --state "$root/extension-state.json"
           apk="$root/GDPPExample.apk"
           test -f "$apk"
           unzip -Z1 "$apk" | LC_ALL=C sort > "$root/contents.txt"

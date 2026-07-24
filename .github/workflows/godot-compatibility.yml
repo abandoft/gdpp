@@ -75,10 +75,14 @@ jobs:
 
           "$GODOT" --headless --editor --path "$fixture" --import \
             2>&1 | tee "$output/gdpp-attached-import.log"
+          python3 tools/verify_export_immutability.py snapshot \
+            --project "$fixture" --state "$output/extension-state.json"
           "$GODOT" --headless --editor --path "$fixture" \
             --export-release 'Linux x86_64' \
             "$GITHUB_WORKSPACE/$output/gdpp-attached.x86_64" \
             2>&1 | tee "$output/gdpp-attached-export.log"
+          python3 tools/verify_export_immutability.py verify \
+            --project "$fixture" --state "$output/extension-state.json"
 
           test -x "$output/gdpp-attached.x86_64"
           test -f "$output/gdpp-attached.pck"
@@ -161,6 +165,9 @@ jobs:
             2>&1 | tee example/addons/gdpp/build/export/gdpp-warmup.log
           "$GODOT" --headless --editor --path example --import \
             2>&1 | tee example/addons/gdpp/build/export/gdpp-preflight.log
+          mkdir -p build/ci
+          python3 tools/verify_export_immutability.py snapshot \
+            --project example --state build/ci/example-extension-state.json
           if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|Parse Error:|WARNING:|Unable to open' \
               example/addons/gdpp/build/export/gdpp-preflight.log; then
             echo 'Godot project or export plugin failed its parse/load preflight.'
@@ -177,6 +184,8 @@ jobs:
             --export-release 'Linux x86_64' \
             "$GITHUB_WORKSPACE/$output/aot/gdpp-runtime.x86_64" \
             2>&1 | tee "$output/gdpp-aot-export.log"
+          python3 tools/verify_export_immutability.py verify \
+            --project example --state build/ci/example-extension-state.json
           project=example/addons/gdpp/binary/libgdpp.release.linux.x86_64.so
           test -x "$output/aot/gdpp-runtime.x86_64"
           test -f "$project"
@@ -224,6 +233,8 @@ jobs:
             --export-debug 'Linux x86_64' \
             "$GITHUB_WORKSPACE/$output/debug/gdpp-runtime-debug.x86_64" \
             2>&1 | tee "$output/gdpp-debug-export.log"
+          python3 tools/verify_export_immutability.py verify \
+            --project example --state build/ci/example-extension-state.json
           project=example/addons/gdpp/binary/libgdpp.debug.linux.x86_64.so
           test -x "$output/debug/gdpp-runtime-debug.x86_64"
           test -f "$project"
@@ -254,6 +265,8 @@ jobs:
             --export-release 'Linux GDScript Fallback' \
             "$GITHUB_WORKSPACE/$output/gds/gdpp-runtime-gds.x86_64" \
             2>&1 | tee "$output/gdpp-gds-export.log"
+          python3 tools/verify_export_immutability.py verify \
+            --project example --state build/ci/example-extension-state.json
           if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|WARNING:|Unable to open' \
               "$output/gdpp-gds-export.log"; then
             echo 'GDScript comparison export emitted a forbidden diagnostic.'
@@ -298,6 +311,8 @@ jobs:
               example/addons/gdpp/build/export/gdpp-must-fail.log
           grep -q 'binary-only export is blocked to prevent source disclosure' \
             example/addons/gdpp/build/export/gdpp-must-fail.log
+          python3 tools/verify_export_immutability.py verify \
+            --project example --state build/ci/example-extension-state.json
       - name: Upload compatibility evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

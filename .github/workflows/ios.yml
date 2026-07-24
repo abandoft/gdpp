@@ -126,11 +126,15 @@ jobs:
             2>&1 | tee "$root/warmup.log"
           "$GODOT" --headless --editor --path example --import \
             2>&1 | tee "$root/import.log"
+          python3 tools/verify_export_immutability.py snapshot \
+            --project example --state "$root/extension-state.json"
           "$GODOT" --headless --editor --path example \
             --export-release 'iOS AOT' "$root/GDPPExample" \
             2>&1 | tee "$root/export.log"
+          python3 tools/verify_export_immutability.py verify \
+            --project example --state "$root/extension-state.json"
           grep -q 'GDPP_AOT_SUMMARY scenes=' "$root/export.log"
-          if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|Unable to open' \
+          if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|WARNING:|Unable to open' \
               "$root/import.log" "$root/export.log"; then
             echo 'Godot reported an iOS import/export failure.'
             exit 1
