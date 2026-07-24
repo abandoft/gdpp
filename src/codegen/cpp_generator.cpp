@@ -1114,16 +1114,28 @@ std::string CodeGenerator::cpp_type(const Type& type) const {
         if (const auto container = describe_container_type(type)) {
             if (!container->has_runtime_constraint())
                 return "godot::Array";
-            return "godot::TypedArray<" + container_cpp_argument(container->arguments.front()) +
-                   ">";
+            const auto argument = container_cpp_argument(container->arguments.front());
+            const auto argument_type = container_argument_type(container->arguments.front());
+            const auto script_typed = argument_type.kind == TypeKind::object &&
+                                      !attached_script_source_path(argument_type).empty();
+            return (script_typed ? "gdpp::runtime::ScriptTypedArray<" : "godot::TypedArray<") +
+                   argument + ">";
         }
         return "godot::Array";
     case TypeKind::dictionary:
         if (const auto container = describe_container_type(type)) {
             if (!container->has_runtime_constraint())
                 return "godot::Dictionary";
-            return "godot::TypedDictionary<" + container_cpp_argument(container->arguments.at(0)) +
-                   ", " + container_cpp_argument(container->arguments.at(1)) + ">";
+            const auto key_type = container_argument_type(container->arguments.at(0));
+            const auto value_type = container_argument_type(container->arguments.at(1));
+            const auto script_typed = (key_type.kind == TypeKind::object &&
+                                       !attached_script_source_path(key_type).empty()) ||
+                                      (value_type.kind == TypeKind::object &&
+                                       !attached_script_source_path(value_type).empty());
+            return (script_typed ? "gdpp::runtime::ScriptTypedDictionary<"
+                                 : "godot::TypedDictionary<") +
+                   container_cpp_argument(container->arguments.at(0)) + ", " +
+                   container_cpp_argument(container->arguments.at(1)) + ">";
         }
         return "godot::Dictionary";
     case TypeKind::enumeration:
@@ -1345,6 +1357,20 @@ std::string CodeGenerator::container_cpp_argument(const std::string_view type_na
 }
 
 std::string CodeGenerator::container_object_runtime_name(const std::string_view type_name) const {
+    const Type type{TypeKind::object, std::string{type_name}};
+    if (!attached_script_source_path(type).empty()) {
+        if (const auto inner = inner_cpp_type(type_name); !inner.empty())
+            return inner_attached_native_base_type(type_name);
+        if (script_symbols_) {
+            auto* script = script_symbols_->find_class(std::string{type_name});
+            if (!script)
+                script = script_symbols_->find_native_class(std::string{type_name});
+            if (script) {
+                return script->attached_native_base.empty() ? script->godot_base_type
+                                                            : script->attached_native_base;
+            }
+        }
+    }
     if (const auto inner = inner_cpp_type(type_name); !inner.empty())
         return inner;
     if (script_symbols_) {
@@ -1421,7 +1447,26 @@ std::string CodeGenerator::inner_attached_native_base_type(std::string_view name
 std::string
 CodeGenerator::attached_script_source_path(const Type& type,
                                            const std::string_view resolved_owner) const {
-    if (type.kind != TypeKind::object || !script_symbols_)
+    if (type.kind != TypeKind::object)
+        return {};
+
+    const auto current_inner_path = [&](const std::string_view identity) {
+        if (identity.empty())
+            return std::string{};
+        const auto native = inner_cpp_type(identity);
+        if (native.empty())
+            return std::string{};
+        const auto found = std::find_if(inner_native_names_.begin(), inner_native_names_.end(),
+                                        [&](const auto& entry) { return entry.second == native; });
+        return found == inner_native_names_.end()
+                   ? std::string{}
+                   : "res://" + current_source_path_ + "::" + found->first;
+    };
+    if (auto path = current_inner_path(type.name); !path.empty())
+        return path;
+    if (auto path = current_inner_path(resolved_owner); !path.empty())
+        return path;
+    if (!script_symbols_)
         return {};
 
     const auto find_script = [&](const std::string_view identity) {
@@ -6759,6 +6804,10 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
         header << "struct ContainerObjectTag_" << sanitize_identifier(type_name) << " {\n"
                << "    static godot::StringName get_class_static() { return "
                << godot_string_name(container_object_runtime_name(type_name)) << "; }\n"
+               << "    inline static constexpr const char *_gdpp_attached_script_path = "
+               << escaped_string(
+                      attached_script_source_path({TypeKind::object, std::string{type_name}}))
+               << ";\n"
                << "};\n";
     }
     header << "template <typename T> struct ScriptResource {\n"
