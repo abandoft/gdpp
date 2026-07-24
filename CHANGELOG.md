@@ -19,6 +19,10 @@
 - Decouple canonical typed-container Script resources from generated descriptor registration order, allowing cross-script defaults to reserve their exact identity before the referenced descriptor is registered and bind its contract later without startup errors or untyped fallback.
 - Exhaustively validate every polymorphic resource-property accessor contract in the Godot 4.4–4.7 metadata set, including all ShaderMaterial-compatible canvas, particle, fog, sky, geometry, CSG, mesh, and tile material slots.
 - Extend the independent exported-runtime fixture with dynamically assigned `ShaderMaterial`, per-frame shader-uniform updates, loopback HTTP image delivery, response-header validation, PNG decoding, and `ImageTexture` assignment.
+- Model Godot property getter-return and setter-argument ABIs as separate semantic and HIR contracts; assignment diagnostics, compound writeback, and C++ argument materialization now use the actual write-side type instead of assuming current engine accessors are permanently symmetric.
+- Automatically validate both accessors for every Godot 4.4–4.7 property record and gate generated code across the complete Canvas, Tile, 2D/3D particle, fog, sky, geometry, CSG, and mesh material families.
+- Cover scene-inline `ShaderMaterial`, external `.tres` material resources, `.gdshader` dependencies, serialized uniforms, and runtime uniform writes in the independent binary-export fixture so AOT scene/resource rewriting preserves prebound and dynamically bound resource contracts alike.
+- Extend network-image regression coverage to PNG, JPEG, and WebP, including Content-Type dispatch, file-signature fallback, `PackedByteArray` decoding, static asynchronous callbacks, and `ImageTexture` creation.
 
 ## 1.7.7
 

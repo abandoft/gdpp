@@ -19,6 +19,10 @@
 - 规范强类型容器 Script 资源不再依赖生成描述符的登记先后顺序；跨脚本默认值可在目标描述符登记前预留精确身份，随后在同一资源上绑定契约，不产生启动错误，也不退化为无类型容器。
 - 穷举校验 Godot 4.4～4.7 元数据中的全部多态资源属性访问器契约，覆盖所有兼容 ShaderMaterial 的 Canvas、粒子、雾、天空、几何体、CSG、Mesh 与 Tile 材质槽位。
 - 独立导出运行夹具增加动态 `ShaderMaterial` 赋值、逐帧 Shader uniform 更新、本机回环 HTTP 图片传输、响应头校验、PNG 解码及 `ImageTexture` 节点赋值的端到端验证。
+- 将 Godot 属性 getter 返回 ABI 与 setter 参数 ABI 拆分为独立的语义及 HIR 契约；赋值诊断、复合写回和 C++ 参数实体化均使用写入侧真实类型，不再假定当前引擎的读写访问器永远对称。
+- 对 Godot 4.4～4.7 的每一条属性元数据自动核验读写访问器，并增加 Canvas、Tile、2D/3D 粒子、雾、天空、几何体、CSG 与 Mesh 全部材质家族的生成代码门禁。
+- 独立二进制导出夹具覆盖场景内联 `ShaderMaterial`、外部 `.tres` 材质、`.gdshader` 依赖、序列化 uniform 和运行期 uniform 写入，确保 AOT 场景/资源重写保留预绑定与动态绑定的同一资源契约。
+- 网络图片回归扩展至 PNG、JPEG 与 WebP，验证 Content-Type 分派、文件签名回退、`PackedByteArray` 解码、静态异步回调及 `ImageTexture` 创建的完整路径。
 
 ## 1.7.7
 
