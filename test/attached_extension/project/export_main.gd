@@ -1,6 +1,8 @@
 extends "res://vendor_grandchild.gd"
 
 const DEFERRED_PHYSICS_SCENE := preload("res://deferred_shape.tscn")
+const CONTAINER_OWNER := preload("res://a_container_owner.gd")
+const CONTAINER_VALUE := preload("res://z_container_value.gd")
 const INNER_DATA := preload("res://inner_data.gd")
 const NETWORK_IMAGE := preload("res://network_image.gd")
 const RUNTIME_SHADER := preload("res://runtime_shader.gdshader")
@@ -114,6 +116,18 @@ func _verify_export_runtime() -> void:
         or _script_lookup.get_typed_value_script() != item.get_script()
     ):
         _fail("attached script objects lost exact typed-container metadata")
+        return
+
+    var cross_owner := CONTAINER_OWNER.new()
+    var cross_value := CONTAINER_VALUE.new(91)
+    cross_owner.store(cross_value)
+    if (
+        cross_owner.values.size() != 1
+        or cross_owner.values[0].value != 91
+        or cross_owner.values.get_typed_class_name() != &"RefCounted"
+        or cross_owner.values.get_typed_script() != cross_value.get_script()
+    ):
+        _fail("cross-script typed-container identity depended on descriptor registration order")
         return
 
     var image := Image.create(2, 2, false, Image.FORMAT_RGBA8)
