@@ -122,7 +122,7 @@ bool commit_xcframework(const std::filesystem::path& pending,
                         const std::filesystem::path& destination, std::string& diagnostic) {
     const auto filename = destination.filename().string();
     if (!is_xcframework(pending) || pending.filename() != destination.filename() ||
-        filename.rfind("libgdpp_project.", 0) != 0 ||
+        filename.rfind("libgdpp.", 0) != 0 ||
         destination.parent_path().filename() != "binary" ||
         !has_path_component(pending, "native-direct") ||
         !has_path_component(pending, "xcframework-staging")) {

@@ -20,7 +20,7 @@
 namespace gdpp {
 namespace {
 
-constexpr std::string_view native_build_revision{"13"};
+constexpr std::string_view native_build_revision{"14"};
 
 struct BridgeBuildInputs {
     std::vector<std::filesystem::path> include_directories;
@@ -854,7 +854,7 @@ NativeBuildCommand ios_link_command(const NativeBuildOptions& options, const IOS
     for (const auto& library : libraries)
         arguments.push_back(path_to_utf8(library));
     arguments.push_back("-Wl,-exported_symbols_list," + path_to_utf8(export_map));
-    arguments.emplace_back("-Wl,-install_name,@rpath/libgdpp_project.dylib");
+    arguments.emplace_back("-Wl,-install_name,@rpath/libgdpp.dylib");
     arguments.emplace_back("-Wl,-dead_strip");
     arguments.emplace_back("-Wl,-x");
     arguments.emplace_back("-o");
@@ -954,7 +954,7 @@ std::optional<NativeBuildCommand> link_command(const NativeBuildOptions& options
         std::filesystem::path linker = options.compiler_executable;
         linker.replace_filename("link.exe");
         command.executable = linker.u8string();
-        const auto import_library = response_file.parent_path() / "gdpp_project.lib";
+        const auto import_library = response_file.parent_path() / "gdpp.lib";
         std::vector<std::string> response_arguments{
             "/DLL", options.architecture == "arm64" ? "/MACHINE:ARM64" : "/MACHINE:X64"};
         for (const auto& object : objects)
@@ -1064,7 +1064,7 @@ bool native_architecture_supported(const NativePlatform platform,
 std::string native_library_name(NativeBuildProfile profile, NativePlatform platform,
                                 std::string_view architecture,
                                 NativeWebThreadMode web_thread_mode) {
-    std::string stem = "gdpp_project." + std::string{native_build_profile_name(profile)} + "." +
+    std::string stem = "gdpp." + std::string{native_build_profile_name(profile)} + "." +
                        platform_name(platform) + "." + std::string{architecture};
     if (platform == NativePlatform::web)
         stem += "." + web_thread_mode_name(web_thread_mode);
@@ -1347,7 +1347,7 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
                     compiled = true;
                 }
             }
-            const auto slice_library = slice_directory / "libgdpp_project.dylib";
+            const auto slice_library = slice_directory / "libgdpp.dylib";
             slice_libraries.push_back(slice_library);
             auto link_inputs = objects;
             link_inputs.push_back(slice.binding_library);
@@ -1370,7 +1370,7 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
                                          error.message());
             return result;
         }
-        const auto simulator_library = simulator_directory / "libgdpp_project.dylib";
+        const auto simulator_library = simulator_directory / "libgdpp.dylib";
         const bool relipo = slice_relinked[1] || slice_relinked[2] ||
                             older_than(simulator_library, {slice_libraries[1], slice_libraries[2]});
         if (relipo) {

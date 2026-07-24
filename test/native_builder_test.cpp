@@ -474,7 +474,7 @@ TEST_CASE("native builder creates release macOS commands and reuses fresh object
     REQUIRE(contains(first.commands.front().arguments, "-std=c++17"));
     REQUIRE(contains(first.commands.back().arguments, "-dynamiclib"));
     REQUIRE_EQ(first.output_library.filename().string(),
-               std::string{"libgdpp_project.release.macos.arm64.dylib"});
+               std::string{"libgdpp.release.macos.arm64.dylib"});
     REQUIRE_EQ(first.output_library.parent_path(), options.binary_output_directory);
 
     const auto future = std::filesystem::file_time_type::clock::now() + std::chrono::seconds{5};
@@ -636,9 +636,11 @@ TEST_CASE("native builder emits MSVC compile and link arguments") {
     REQUIRE(contains_utf16le_ascii(response_file, "/DLL"));
     REQUIRE(contains_utf16le_ascii(response_file, "/MACHINE:X64"));
     REQUIRE(contains_utf16le_ascii(response_file, "/IMPLIB:"));
+    REQUIRE(contains_utf16le_ascii(response_file, "gdpp.lib"));
+    REQUIRE(!contains_utf16le_ascii(response_file, "gdpp_project.lib"));
     REQUIRE(contains_utf16le_ascii(response_file, "/OUT:"));
     REQUIRE_EQ(plan.output_library.filename().string(),
-               std::string{"gdpp_project.release.windows.x86_64.dll"});
+               std::string{"gdpp.release.windows.x86_64.dll"});
     REQUIRE_EQ(plan.output_library.parent_path(), options.binary_output_directory);
 }
 
@@ -658,7 +660,7 @@ TEST_CASE("native builder creates a stable release library with release bindings
 
     REQUIRE(plan.success);
     REQUIRE_EQ(plan.output_library.filename().string(),
-               std::string{"libgdpp_project.release.macos.arm64.dylib"});
+               std::string{"libgdpp.release.macos.arm64.dylib"});
     REQUIRE(contains(plan.commands.front().arguments, "-DNDEBUG"));
     REQUIRE(contains(plan.commands.front().arguments, "-fvisibility=hidden"));
     REQUIRE(contains(plan.commands.front().arguments, "-mmacosx-version-min=11.0"));
@@ -741,7 +743,7 @@ TEST_CASE("native builder keeps optimized debug exports in an isolated object ca
 
     REQUIRE(plan.success);
     REQUIRE_EQ(plan.output_library.filename().string(),
-               std::string{"libgdpp_project.debug.macos.arm64.dylib"});
+               std::string{"libgdpp.debug.macos.arm64.dylib"});
     REQUIRE(contains(plan.commands.front().arguments, "-O3"));
     REQUIRE(contains(plan.commands.front().arguments, "-DNDEBUG"));
     REQUIRE(contains(plan.commands.front().arguments, "-DGDPP_SCRIPT_DEBUG_ENABLED"));
@@ -791,7 +793,7 @@ TEST_CASE("native builder emits Android NDK compile and hardened release link ar
     REQUIRE(contains(plan.commands.back().arguments, "-Wl,-z,now"));
     REQUIRE(contains(plan.commands.back().arguments, "-Wl,--exclude-libs,ALL"));
     REQUIRE_EQ(plan.output_library.filename().string(),
-               std::string{"libgdpp_project.release.android.arm64.so"});
+               std::string{"libgdpp.release.android.arm64.so"});
 }
 
 TEST_CASE("native builder selects an Android manifest and library from a shared SDK") {
@@ -841,7 +843,7 @@ TEST_CASE("native builder emits a transactional device and Universal Simulator X
     REQUIRE(plan.success);
     REQUIRE_EQ(plan.commands.size(), std::size_t{14});
     REQUIRE_EQ(plan.output_library.filename().string(),
-               std::string{"libgdpp_project.release.ios.arm64.xcframework"});
+               std::string{"libgdpp.release.ios.arm64.xcframework"});
     REQUIRE_EQ(plan.pending_output_library.filename(), plan.output_library.filename());
     REQUIRE(plan.pending_output_library.generic_string().find("xcframework-staging") !=
             std::string::npos);
@@ -861,6 +863,22 @@ TEST_CASE("native builder emits a transactional device and Universal Simulator X
     REQUIRE(std::count_if(plan.commands.begin(), plan.commands.end(), [](const auto& command) {
                 return command.stage == 2 && contains(command.arguments, "lipo");
             }) == 1);
+    REQUIRE(std::all_of(plan.commands.begin(), plan.commands.end(), [](const auto& command) {
+        return command.stage != 1 ||
+               contains(command.arguments, "-Wl,-install_name,@rpath/libgdpp.dylib");
+    }));
+    REQUIRE(std::any_of(plan.commands.begin(), plan.commands.end(), [&](const auto& command) {
+        return command.stage == 1 &&
+               contains_path(command.arguments, root /
+                                                    "project/native-direct/4.4/ios/arm64/release/"
+                                                    "device-arm64/libgdpp.dylib");
+    }));
+    REQUIRE(std::none_of(plan.commands.begin(), plan.commands.end(), [](const auto& command) {
+        return std::any_of(command.arguments.begin(), command.arguments.end(),
+                           [](const auto& argument) {
+                               return argument.find("libgdpp_project.dylib") != std::string::npos;
+                           });
+    }));
     REQUIRE(std::any_of(plan.commands.begin(), plan.commands.end(), [&](const auto& command) {
         return command.stage == 1 &&
                contains_path(command.arguments,
@@ -959,7 +977,7 @@ TEST_CASE("native builder emits a single-threaded WebAssembly side module") {
     REQUIRE(plan.success);
     REQUIRE_EQ(plan.commands.size(), std::size_t{4});
     REQUIRE_EQ(plan.output_library.filename().string(),
-               std::string{"libgdpp_project.release.web.wasm32.nothreads.wasm"});
+               std::string{"libgdpp.release.web.wasm32.nothreads.wasm"});
     REQUIRE(contains(plan.commands.front().arguments, "-sSIDE_MODULE=1"));
     REQUIRE(contains(plan.commands.front().arguments, "-sSUPPORT_LONGJMP=wasm"));
     REQUIRE(contains(plan.commands.front().arguments, "-DWEB_ENABLED"));
@@ -1000,7 +1018,7 @@ TEST_CASE("native builder isolates threaded WebAssembly flags and artifacts") {
 
     REQUIRE(plan.success);
     REQUIRE_EQ(plan.output_library.filename().string(),
-               std::string{"libgdpp_project.debug.web.wasm32.threads.wasm"});
+               std::string{"libgdpp.debug.web.wasm32.threads.wasm"});
     REQUIRE(contains(plan.commands.front().arguments, "-DTHREADS_ENABLED"));
     REQUIRE(contains(plan.commands.front().arguments, "-sUSE_PTHREADS=1"));
     REQUIRE(contains(plan.commands.front().arguments, "-O3"));
@@ -1140,7 +1158,7 @@ TEST_CASE("native builder emits a macOS universal compile and link plan") {
 
     REQUIRE(plan.success);
     REQUIRE_EQ(plan.output_library.filename().string(),
-               std::string{"libgdpp_project.release.macos.universal.dylib"});
+               std::string{"libgdpp.release.macos.universal.dylib"});
     REQUIRE(contains(plan.commands.front().arguments, "arm64"));
     REQUIRE(contains(plan.commands.front().arguments, "x86_64"));
     REQUIRE(contains(plan.commands.back().arguments, "arm64"));
@@ -1175,7 +1193,7 @@ TEST_CASE("macOS universal SDK can build a thin host release library") {
 
     REQUIRE(plan.success);
     REQUIRE_EQ(plan.output_library.filename().string(),
-               std::string{"libgdpp_project.release.macos.arm64.dylib"});
+               std::string{"libgdpp.release.macos.arm64.dylib"});
     REQUIRE(contains(plan.commands.front().arguments, "arm64"));
     REQUIRE(!contains(plan.commands.front().arguments, "x86_64"));
 }
