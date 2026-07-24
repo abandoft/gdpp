@@ -2586,6 +2586,53 @@ TEST_CASE("compiler assigns shader resources through the property accessor base 
     REQUIRE(result.unit.source.find("godot::Ref<godot::Material>") != std::string::npos);
 }
 
+TEST_CASE("compiler applies Material ABI across every shader-capable property family") {
+    const gdpp::Compiler compiler;
+    const auto result = compiler.compile(
+        "shader_property_families.gd",
+        "func install(\n"
+        "    canvas: CanvasItem,\n"
+        "    tile: TileData,\n"
+        "    particles_2d: GPUParticles2D,\n"
+        "    particles_3d: GPUParticles3D,\n"
+        "    fog: FogVolume,\n"
+        "    sky: Sky,\n"
+        "    geometry: GeometryInstance3D,\n"
+        "    csg: CSGBox3D,\n"
+        "    mesh: PrimitiveMesh,\n"
+        "    effect: ShaderMaterial,\n"
+        ") -> void:\n"
+        "    canvas.material = effect\n"
+        "    tile.material = effect\n"
+        "    particles_2d.process_material = effect\n"
+        "    particles_3d.process_material = effect\n"
+        "    fog.material = effect\n"
+        "    sky.sky_material = effect\n"
+        "    geometry.material_override = effect\n"
+        "    geometry.material_overlay = effect\n"
+        "    csg.material = effect\n"
+        "    mesh.material = effect\n"
+        "    (canvas.material as ShaderMaterial).set_shader_parameter(&\"pulse\", 1.0)\n"
+        "    canvas.material.set(\"shader_parameter/pulse\", 2.0)\n");
+
+    REQUIRE(result.success);
+    REQUIRE(result.unit.source.find("cast_to<godot::CanvasItemMaterial>") == std::string::npos);
+    REQUIRE(result.unit.source.find("cast_to<godot::FogMaterial>") == std::string::npos);
+    REQUIRE(result.unit.source.find("cast_to<godot::PanoramaSkyMaterial>") ==
+            std::string::npos);
+    REQUIRE(result.unit.source.find("set_process_material(godot::Ref<godot::Material>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("set_material(godot::Ref<godot::Material>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("set_material_override(godot::Ref<godot::Material>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("set_material_overlay(godot::Ref<godot::Material>") !=
+            std::string::npos);
+    REQUIRE(result.unit.source.find("set_shader_parameter") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::String(\"shader_parameter/pulse\")") !=
+            std::string::npos);
+}
+
 TEST_CASE("compiler applies Godot-compatible numeric and builtin conversions") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("commercial_conversions.gd",
