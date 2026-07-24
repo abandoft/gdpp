@@ -2,6 +2,10 @@
 
 - 移除仍声明 Node.js 20 的 `ilammy/msvc-dev-cmd` 依赖，改用仓库自有、零第三方运行依赖的 Node.js 24 Action：通过 `vswhere` 定位 Visual Studio，初始化受支持的 MSVC x64 工具链，仅导出发生变化的环境变量，保留包含 `=` 的值，去重 Windows 工具路径，并对不完整或架构不匹配的工具链状态实施失败关闭。
 - 工作流语义校验器升级至原生支持 Node.js 24 Action 元数据的 actionlint 1.7.12，并对编译器核心、原生集成和商业 Windows 宿主构建统一执行本地 Node.js 24 初始化契约门禁。
+- Node.js 24 的 MSVC 初始化命令改为不经通用 Windows 参数二次转义、原样交给 `cmd.exe`，确保 `Program Files` 下带引号的 Visual Studio 路径可正确执行；新增回归测试锁定精确 `/c` 载荷与 verbatim 进程契约。
+- Windows、macOS、Linux、Android、iOS 与 Web 的客户运行库文件名前缀由 `gdpp_project` 统一缩短为 `gdpp`，同步覆盖 Windows 导入库、Mach-O install name、iOS 切片动态库及 XCFramework 内部布局；GDExtension 入口 ABI `gdpp_project_library_init` 保持稳定。
+- 原生构建与导出转换修订号同步推进；下一次 AOT 导出前事务式清除旧命名产物（包括目录型 iOS XCFramework），无法清理时失败关闭，避免旧库残留或误入客户包。
+- 桌面运行、APK、XCFramework、Wasm、PCK、插件组包、清理及工作流门禁全部切换为新命名；商业插件包同时拒绝当前客户构建产物与旧命名产物，并通过精确分类保留编译器和 fallback 库。
 
 ## 1.7.8
 

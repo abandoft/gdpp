@@ -2,6 +2,10 @@
 
 - Replace the Node.js 20-based `ilammy/msvc-dev-cmd` dependency with a repository-owned, zero-dependency Node.js 24 Action that discovers Visual Studio through `vswhere`, initializes the supported MSVC x64 toolchain, exports only changed environment variables, preserves values containing `=`, deduplicates Windows tool paths, and fails closed on incomplete or mismatched toolchain state.
 - Upgrade the workflow semantic validator to actionlint 1.7.12 with native Node.js 24 action-metadata support, and gate all compiler-core, native-integration, and commercial Windows host builds against the local Node.js 24 bootstrap contract.
+- Pass the Node.js 24 MSVC initialization payload to `cmd.exe` without generic Windows argument re-quoting, preserving quoted Visual Studio paths under `Program Files`; add a regression that validates the exact `/c` payload and verbatim-spawn contract.
+- Shorten every generated customer runtime artifact from the `gdpp_project` filename prefix to `gdpp` across Windows, macOS, Linux, Android, iOS, and Web, including the Windows import library, Mach-O install name, iOS slice library, and XCFramework layout, while retaining the stable `gdpp_project_library_init` GDExtension entry ABI.
+- Advance the native-build and export-transform revisions and transactionally remove artifacts generated with the retired filename before the next AOT export, including directory-form iOS XCFrameworks; fail closed if a stale product cannot be removed.
+- Update desktop runtime, APK, XCFramework, Wasm, PCK, plugin-package, cleanup, and workflow gates to require the shortened names, reject both current generated products and retired products from commercial plugin archives, and preserve compiler/fallback binaries through exact product classification.
 
 ## 1.7.8
 
