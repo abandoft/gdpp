@@ -2,6 +2,7 @@
 
 #include "gdpp/semantic/godot_api.hpp"
 
+#include <string>
 #include <string_view>
 
 TEST_CASE("Godot API metadata exposes the 4.4 commercial baseline") {
@@ -119,24 +120,65 @@ TEST_CASE("Godot API lookup resolves properties and builtin value methods") {
     REQUIRE_EQ(gdpp::type_from_godot_api("enum::Error").kind, gdpp::TypeKind::integer);
 }
 
-TEST_CASE("Godot API properties use accessor ABI instead of inspector resource alternatives") {
+TEST_CASE("Godot API properties use accessor ABI for every inspector resource alternative") {
+    struct Alternative {
+        std::string_view owner;
+        std::string_view property;
+        std::string_view accessor_type;
+    };
+    constexpr Alternative alternatives[]{
+        {"World3D", "camera_attributes", "CameraAttributes"},
+        {"TileData", "material", "Material"},
+        {"PointLight2D", "texture", "Texture2D"},
+        {"GPUParticles2D", "process_material", "Material"},
+        {"VisualShaderNodeCubemap", "cube_map", "TextureLayered"},
+        {"VisualShaderNodeTexture2DArray", "texture_array", "TextureLayered"},
+        {"FogVolume", "material", "Material"},
+        {"WorldEnvironment", "camera_attributes", "CameraAttributes"},
+        {"GPUParticles3D", "process_material", "Material"},
+        {"Sky", "sky_material", "Material"},
+        {"LightmapGI", "camera_attributes", "CameraAttributes"},
+        {"VoxelGI", "camera_attributes", "CameraAttributes"},
+        {"Decal", "texture_albedo", "Texture2D"},
+        {"Decal", "texture_normal", "Texture2D"},
+        {"Decal", "texture_orm", "Texture2D"},
+        {"Decal", "texture_emission", "Texture2D"},
+        {"Light3D", "light_projector", "Texture2D"},
+        {"Environment", "adjustment_color_correction", "Texture"},
+        {"Camera3D", "attributes", "CameraAttributes"},
+        {"GeometryInstance3D", "material_override", "Material"},
+        {"GeometryInstance3D", "material_overlay", "Material"},
+        {"CSGTorus3D", "material", "Material"},
+        {"CSGSphere3D", "material", "Material"},
+        {"CSGPolygon3D", "material", "Material"},
+        {"CSGMesh3D", "mesh", "Mesh"},
+        {"CSGMesh3D", "material", "Material"},
+        {"CSGCylinder3D", "material", "Material"},
+        {"CSGBox3D", "material", "Material"},
+        {"PrimitiveMesh", "material", "Material"},
+        {"ParticleProcessMaterial", "orbit_velocity_curve", "Texture2D"},
+        {"ParticleProcessMaterial", "scale_curve", "Texture2D"},
+        {"ParticleProcessMaterial", "scale_over_velocity_curve", "Texture2D"},
+        {"CanvasItem", "material", "Material"},
+    };
+
     for (const auto version : {gdpp::GodotVersion::v4_4, gdpp::GodotVersion::v4_5,
                                gdpp::GodotVersion::v4_6, gdpp::GodotVersion::v4_7}) {
         const auto& api = gdpp::GodotApi::for_version(version);
-        const auto* canvas_material = api.find_property("TextureRect", "material");
-        const auto* particles_material = api.find_property("GPUParticles2D", "process_material");
-        const auto* light_texture = api.find_property("PointLight2D", "texture");
-
-        REQUIRE(canvas_material != nullptr);
-        REQUIRE(particles_material != nullptr);
-        REQUIRE(light_texture != nullptr);
-        REQUIRE_EQ(api.property_value_type(*canvas_material),
-                   (gdpp::Type{gdpp::TypeKind::object, "Material"}));
-        REQUIRE_EQ(api.property_value_type(*particles_material),
-                   (gdpp::Type{gdpp::TypeKind::object, "Material"}));
-        REQUIRE_EQ(api.property_value_type(*light_texture),
-                   (gdpp::Type{gdpp::TypeKind::object, "Texture2D"}));
+        for (const auto& alternative : alternatives) {
+            const auto* property = api.find_property(alternative.owner, alternative.property);
+            REQUIRE(property != nullptr);
+            REQUIRE_EQ(
+                api.property_value_type(*property),
+                (gdpp::Type{gdpp::TypeKind::object, std::string{alternative.accessor_type}}));
+        }
     }
+
+    const auto& api_4_7 = gdpp::GodotApi::for_version(gdpp::GodotVersion::v4_7);
+    const auto* area_texture = api_4_7.find_property("AreaLight3D", "area_texture");
+    REQUIRE(area_texture != nullptr);
+    REQUIRE_EQ(api_4_7.property_value_type(*area_texture),
+               (gdpp::Type{gdpp::TypeKind::object, "Texture2D"}));
 }
 
 TEST_CASE("Godot API metadata resolves global engine singletons") {
