@@ -11,9 +11,13 @@ endif()
 
 file(REMOVE_RECURSE "${addon_directory}/build")
 file(GLOB project_products
+    "${addon_directory}/binary/libgdpp.debug.*"
+    "${addon_directory}/binary/libgdpp.release.*"
+    "${addon_directory}/binary/gdpp.debug.*"
+    "${addon_directory}/binary/gdpp.release.*"
     "${addon_directory}/binary/libgdpp_project.*"
     "${addon_directory}/binary/gdpp_project.*"
 )
 if(project_products)
-    file(REMOVE ${project_products})
+    file(REMOVE_RECURSE ${project_products})
 endif()

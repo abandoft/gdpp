@@ -22,7 +22,7 @@ const PROVIDER_DESCRIPTORS_BACKUP := (
 )
 const SCRIPT_CLASS_CACHE := "res://.godot/global_script_class_cache.cfg"
 const GODOT_EXPORT_CACHE_DIRECTORY := "res://.godot/exported"
-const EXPORT_TRANSFORM_REVISION := 21
+const EXPORT_TRANSFORM_REVISION := 22
 
 var _compiler: Object
 var _build_progress: CanvasLayer
@@ -480,6 +480,9 @@ func _prepare_export(features: PackedStringArray, is_debug: bool) -> bool:
 func _prepare_export_impl(features: PackedStringArray, is_debug: bool) -> bool:
     if _compiler == null:
         _fail_export("compiler service is not available; keeping GDScript sources")
+        return false
+    if not _remove_legacy_project_artifacts():
+        _fail_export("cannot remove project libraries generated with the retired filename")
         return false
 
     _target_platform = _platform_from_features(features)
@@ -1750,6 +1753,35 @@ func _clear_godot_export_cache() -> bool:
     if not DirAccess.dir_exists_absolute(absolute):
         return true
     return _remove_directory_contents(absolute)
+
+
+func _remove_legacy_project_artifacts() -> bool:
+    var binary_absolute := ProjectSettings.globalize_path(BINARY_DIRECTORY)
+    if not DirAccess.dir_exists_absolute(binary_absolute):
+        return true
+    var directory := DirAccess.open(binary_absolute)
+    if directory == null:
+        return false
+    var legacy_paths: PackedStringArray = []
+    directory.list_dir_begin()
+    while true:
+        var name := directory.get_next()
+        if name.is_empty():
+            break
+        var lower := name.to_lower()
+        if (
+            lower.begins_with("gdpp_project.")
+            or lower.begins_with("libgdpp_project.")
+        ):
+            legacy_paths.append(binary_absolute.path_join(name))
+    directory.list_dir_end()
+    for path in legacy_paths:
+        if DirAccess.dir_exists_absolute(path):
+            if not _remove_directory_contents(path):
+                return false
+        if DirAccess.remove_absolute(path) != OK:
+            return false
+    return true
 
 
 func _remove_directory_contents(absolute: String) -> bool:

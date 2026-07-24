@@ -79,6 +79,8 @@ foreach(required_runtime_export IN ITEMS
         "add_file(COMPILER_DESCRIPTOR, _runtime_descriptor.to_utf8_buffer(), false)"
         "add_file(EXTENSION_REGISTRY, _export_extension_registry.to_utf8_buffer(), false)"
         "func _clear_godot_export_cache() -> bool:"
+        "func _remove_legacy_project_artifacts() -> bool:"
+        "if not _remove_legacy_project_artifacts():"
         "func _restore_compiler_descriptor() -> void:")
     string(FIND "${export_plugin}" "${required_runtime_export}" runtime_export_offset)
     if(runtime_export_offset EQUAL -1)
