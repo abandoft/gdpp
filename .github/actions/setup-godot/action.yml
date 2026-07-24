@@ -1,12 +1,12 @@
 name: Setup official Godot
-description: Download a pinned Linux editor and an optional minimal export-template set.
+description: Download a pinned host editor and an optional minimal export-template set.
 
 inputs:
   version:
     description: Exact stable Godot version, for example 4.5.2.
     required: true
   templates:
-    description: "Export templates to install: none, linux, android, or web."
+    description: "Export templates to install: none, host, linux, android, or web."
     required: false
     default: none
 
@@ -28,23 +28,44 @@ runs:
         set -euo pipefail
         root="$GITHUB_WORKSPACE/build/ci/godot/$GODOT_VERSION"
         mkdir -p "$root"
-        editor="$root/Godot_v${GODOT_VERSION}-stable_linux.x86_64"
-        if [[ ! -x "$editor" ]]; then
+        case "$RUNNER_OS" in
+          Linux)
+            editor_archive="Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+            editor="$root/Godot_v${GODOT_VERSION}-stable_linux.x86_64"
+            ;;
+          macOS)
+            editor_archive="Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
+            editor="$root/Godot.app/Contents/MacOS/Godot"
+            ;;
+          Windows)
+            editor_archive="Godot_v${GODOT_VERSION}-stable_win64.exe.zip"
+            editor="$root/Godot_v${GODOT_VERSION}-stable_win64.exe"
+            ;;
+          *)
+            echo "Unsupported Godot editor host: $RUNNER_OS" >&2
+            exit 2
+            ;;
+        esac
+        if [[ ! -f "$editor" ]]; then
           bash "$GITHUB_WORKSPACE/tools/download_with_retry.sh" \
-            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/$editor_archive" \
             "$root/editor.zip"
           unzip -q "$root/editor.zip" -d "$root"
+        fi
+        if [[ "$RUNNER_OS" != Windows ]]; then
           chmod +x "$editor"
         fi
+        test -f "$editor"
         echo "executable=$editor" >> "$GITHUB_OUTPUT"
 
         if [[ "$GODOT_TEMPLATES" == "none" ]]; then
           exit 0
         fi
-        if [[ "$GODOT_TEMPLATES" != "linux" && "$GODOT_TEMPLATES" != "android" && \
+        if [[ "$GODOT_TEMPLATES" != "host" && "$GODOT_TEMPLATES" != "linux" && \
+              "$GODOT_TEMPLATES" != "android" && \
               "$GODOT_TEMPLATES" != "web" ]]; then
           echo "Unsupported template set: $GODOT_TEMPLATES" >&2
-          exit 2
+          exit 3
         fi
         archive="$root/export_templates.tpz"
         bash "$GITHUB_WORKSPACE/tools/download_with_retry.sh" \
@@ -53,10 +74,21 @@ runs:
         extracted="$root/export-templates"
         rm -rf "$extracted"
         mkdir -p "$extracted"
-        if [[ "$GODOT_TEMPLATES" == "linux" ]]; then
+        template_set="$GODOT_TEMPLATES"
+        if [[ "$template_set" == host ]]; then
+          template_set="$(printf '%s' "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')"
+        fi
+        if [[ "$template_set" == "linux" ]]; then
           unzip -q "$archive" templates/linux_debug.x86_64 templates/linux_release.x86_64 \
             templates/version.txt -d "$extracted"
-        elif [[ "$GODOT_TEMPLATES" == "android" ]]; then
+        elif [[ "$template_set" == "macos" ]]; then
+          unzip -q "$archive" templates/macos.zip templates/version.txt -d "$extracted"
+        elif [[ "$template_set" == "windows" ]]; then
+          unzip -q "$archive" \
+            templates/windows_debug_x86_64.exe \
+            templates/windows_release_x86_64.exe \
+            templates/version.txt -d "$extracted"
+        elif [[ "$template_set" == "android" ]]; then
           unzip -q "$archive" templates/android_debug.apk templates/android_release.apk \
             templates/version.txt -d "$extracted"
         else
@@ -66,10 +98,21 @@ runs:
           if [[ ${#web_templates[@]} -lt 4 ]]; then
             echo "Expected threaded/unthreaded Web templates with and without GDExtension; found ${#web_templates[@]}" >&2
             printf '%s\n' "${web_templates[@]}" >&2
-            exit 3
+            exit 4
           fi
           unzip -q "$archive" "${web_templates[@]}" templates/version.txt -d "$extracted"
         fi
-        destination="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+        case "$RUNNER_OS" in
+          Linux)
+            template_root="$HOME/.local/share/godot"
+            ;;
+          macOS)
+            template_root="$HOME/Library/Application Support/Godot"
+            ;;
+          Windows)
+            template_root="$(cygpath -u "$APPDATA")/Godot"
+            ;;
+        esac
+        destination="$template_root/export_templates/${GODOT_VERSION}.stable"
         mkdir -p "$destination"
         cp "$extracted"/templates/* "$destination/"
