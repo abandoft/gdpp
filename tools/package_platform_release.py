@@ -63,6 +63,23 @@ def require_no_symlinks(root: Path) -> None:
             fail(f"release component contains a symbolic link: {path}")
 
 
+def is_generated_project_product(name: str) -> bool:
+    lower = name.lower()
+    return (
+        lower in {"gdpp.lib", "gdpp_project.lib"}
+        or lower.startswith(
+            (
+                "gdpp.debug.",
+                "gdpp.release.",
+                "libgdpp.debug.",
+                "libgdpp.release.",
+                "gdpp_project.",
+                "libgdpp_project.",
+            )
+        )
+    )
+
+
 def require_runtime_contract(
     sdk: Path,
     fields: dict[str, str],
@@ -575,7 +592,7 @@ def validate_platform_stage(addon: Path, package_name: str, gdpp_version: str) -
         or path.suffix == ".zip"
         or path.name == ".DS_Store"
         or path.name.startswith("._")
-        or "gdpp_project" in path.name
+        or is_generated_project_product(path.name)
         or path.name == "build"
     ]
     if forbidden:

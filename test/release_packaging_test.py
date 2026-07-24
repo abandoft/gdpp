@@ -290,7 +290,14 @@ class ReleasePackagingTest(unittest.TestCase):
         self.assertFalse(any(path.endswith(".zip") for path in names))
         self.assertFalse(any("template_debug" in path for path in names))
         self.assertFalse(any(".editor." in path for path in names))
-        self.assertFalse(any("gdpp_project" in path for path in names))
+        self.assertFalse(
+            any(
+                package_platform_release.is_generated_project_product(
+                    Path(path.rstrip("/")).name
+                )
+                for path in names
+            )
+        )
         self.assertIn("gdpp/build_progress.gd", names)
         self.assertIn("gdpp/native_build_job.gd", names)
         self.assertFalse(any(path.startswith("addons/") for path in names))
@@ -304,6 +311,28 @@ class ReleasePackagingTest(unittest.TestCase):
         second_archive = self.temporary / "second.zip"
         package_release.create_zip(second_stage, second_archive)
         self.assertEqual(first_hash, package_release.sha256(second_archive))
+
+    def test_generated_project_product_names_are_rejected_without_blocking_plugin_binaries(
+        self,
+    ) -> None:
+        for name in (
+            "gdpp.release.windows.x86_64.dll",
+            "libgdpp.debug.linux.x86_64.so",
+            "libgdpp.release.web.wasm32.nothreads.wasm",
+            "libgdpp.release.ios.arm64.xcframework",
+            "gdpp.lib",
+            "gdpp_project.release.windows.x86_64.dll",
+            "libgdpp_project.release.macos.arm64.dylib",
+            "gdpp_project.lib",
+        ):
+            self.assertTrue(package_platform_release.is_generated_project_product(name))
+        for name in (
+            "gdpp.gdextension",
+            "gdpp_compiler.windows.x86_64.dll",
+            "libgdpp_compiler.macos.universal.dylib",
+            "libgdpp_fallback.linux.x86_64.so",
+        ):
+            self.assertFalse(package_platform_release.is_generated_project_product(name))
 
     def test_missing_godot_version_fails_closed(self) -> None:
         shutil.rmtree(
@@ -379,6 +408,31 @@ class ReleasePackagingTest(unittest.TestCase):
         )
         self.assertNotIn("complete-packages:", orchestrator)
         self.assertNotIn("16-archive matrix", packages)
+
+    def test_platform_workflows_audit_short_project_product_names(self) -> None:
+        workflow_root = SOURCE_ROOT / ".github/workflows"
+        expected_names = {
+            "godot-compatibility.yml": (
+                "libgdpp.release.linux.x86_64.so",
+                "libgdpp.debug.linux.x86_64.so",
+            ),
+            "android.yml": ("libgdpp\\.release\\.android\\.arm64\\.so",),
+            "ios.yml": (
+                "libgdpp.release.ios.arm64.xcframework",
+                "libgdpp.framework/libgdpp",
+            ),
+            "web.yml": ("libgdpp.release.web.wasm32",),
+        }
+        for workflow_name, expected in expected_names.items():
+            workflow = (workflow_root / workflow_name).read_text(encoding="utf-8")
+            for value in expected:
+                self.assertIn(value, workflow)
+            self.assertNotIn("libgdpp_project.", workflow)
+            self.assertNotIn("gdpp_project.release.", workflow)
+            self.assertNotIn("gdpp_project.debug.", workflow)
+
+        packages = (workflow_root / "package-release.yml").read_text(encoding="utf-8")
+        self.assertIn("(lib)?gdpp\\.(debug|release)\\.", packages)
 
     def test_godot_44_diagnostic_allowlist_tracks_the_fixture_source(self) -> None:
         workflow = (
