@@ -108,6 +108,23 @@ enum class ApiResolutionKind {
 };
 
 struct ApiResolution {
+    ApiResolution() = default;
+    ApiResolution(ApiResolutionKind resolution_kind, std::string resolution_owner,
+                  std::string resolution_getter, std::string resolution_setter,
+                  Type resolution_type, std::uint16_t resolution_required_arguments = 0,
+                  std::uint16_t resolution_maximum_arguments = 0,
+                  bool resolution_is_vararg = false, bool resolution_direct = false,
+                  std::int64_t resolution_indexed_argument = -1,
+                  IntrinsicKind resolution_intrinsic = IntrinsicKind::none,
+                  bool resolution_read_only = false, Type resolution_assignment_type = {})
+        : kind(resolution_kind), owner(std::move(resolution_owner)),
+          getter(std::move(resolution_getter)), setter(std::move(resolution_setter)),
+          type(std::move(resolution_type)), required_arguments(resolution_required_arguments),
+          maximum_arguments(resolution_maximum_arguments), is_vararg(resolution_is_vararg),
+          direct(resolution_direct), indexed_argument(resolution_indexed_argument),
+          intrinsic(resolution_intrinsic), read_only(resolution_read_only),
+          assignment_type(std::move(resolution_assignment_type)) {}
+
     ApiResolutionKind kind{ApiResolutionKind::none};
     std::string owner;
     std::string getter;
@@ -120,6 +137,9 @@ struct ApiResolution {
     std::int64_t indexed_argument{-1};
     IntrinsicKind intrinsic{IntrinsicKind::none};
     bool read_only{false};
+    // Godot property metadata can describe inspector alternatives while the native setter
+    // accepts a common base class. Keep the write contract separate from the getter result.
+    Type assignment_type;
 };
 
 struct ResolvedCallContract {

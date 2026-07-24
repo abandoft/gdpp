@@ -2298,7 +2298,7 @@ std::string CodeGenerator::emit_direct_builtin_member(std::string_view owner, st
     else
         result = object + "." + sanitize_identifier(std::string{member});
     if (const auto* property = api_.find_property(owner, member))
-        return emit_api_return(api_.property_value_type(*property), std::move(result));
+        return emit_api_return(api_.property_getter_type(*property), std::move(result));
     return result;
 }
 
@@ -5008,7 +5008,7 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
             return prefix + "if (!gdpp::runtime::is_editor_hint()) " + target.resolved_owner +
                    "::" + target.setter + "(" + value + ");\n";
         }
-        value = emit_conversion(target.type, assigned_source_type, std::move(value));
+        value = emit_conversion(target.assignment_type, assigned_source_type, std::move(value));
         if (target.resolution == ir::ResolutionKind::godot_property && target.direct_access &&
             target.kind == ir::ExpressionKind::member) {
             std::vector<const ir::Expression*> direct_chain;
@@ -5146,7 +5146,8 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                 if (setter) {
                     const auto value_index = target.indexed_argument >= 0 ? 1U : 0U;
                     if (const auto* argument = api_.argument(*setter, value_index)) {
-                        value = emit_api_argument(argument->type, argument->meta, target.type,
+                        value = emit_api_argument(argument->type, argument->meta,
+                                                  target.assignment_type,
                                                   std::move(value));
                     }
                 }
@@ -5175,7 +5176,8 @@ std::string CodeGenerator::emit_statement(const ir::Statement& statement,
                 if (setter) {
                     const auto value_index = target.indexed_argument >= 0 ? 1U : 0U;
                     if (const auto* argument = api_.argument(*setter, value_index)) {
-                        value = emit_api_argument(argument->type, argument->meta, target.type,
+                        value = emit_api_argument(argument->type, argument->meta,
+                                                  target.assignment_type,
                                                   std::move(value));
                     }
                 }

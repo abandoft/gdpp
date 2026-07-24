@@ -419,6 +419,7 @@ ir::ExpressionPtr IrLowerer::lower_expression(const ast::Expression& expression)
     lowered->literal_kind = lower_literal_kind(expression.literal_kind());
     lowered->type = semantic_.type_of(expression);
     lowered->storage_type = semantic_.storage_type_of(expression);
+    lowered->assignment_type = lowered->type;
     lowered->non_null = semantic_.is_non_null(expression);
     lowered->span = expression.span;
     lowered->value = expression.value();
@@ -515,6 +516,8 @@ ir::ExpressionPtr IrLowerer::lower_expression(const ast::Expression& expression)
         lowered->direct_access = resolution->direct;
         lowered->indexed_argument = resolution->indexed_argument;
         lowered->intrinsic = resolution->intrinsic;
+        if (resolution->assignment_type.kind != TypeKind::unknown)
+            lowered->assignment_type = resolution->assignment_type;
     }
     lowered->operands.reserve(expression.operand_count());
     for (std::size_t index = 0; index < expression.operand_count(); ++index)

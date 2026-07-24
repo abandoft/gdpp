@@ -1445,6 +1445,22 @@ Type SemanticAnalyzer::analyze_binary_tree(const ast::Expression& expression) {
 
 Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
     Type result = unknown_type;
+    const auto property_resolution =
+        [this](const ApiResolutionKind kind,
+               const GodotPropertyRecord& property) -> ApiResolution {
+        ApiResolution resolution{kind,
+                                 property.owner,
+                                 property.getter,
+                                 property.setter,
+                                 api_.property_getter_type(property),
+                                 0,
+                                 0,
+                                 false,
+                                 property.direct,
+                                 property.index};
+        resolution.assignment_type = api_.property_setter_type(property);
+        return resolution;
+    };
     switch (expression.kind()) {
     case ast::ExpressionKind::literal:
         switch (expression.literal_kind()) {
@@ -1753,11 +1769,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     &expression, ApiResolution{ApiResolutionKind::type_reference, engine_type->name,
                                                "", "", result, 0, 0, false, true});
             } else if (const auto* property = api_.find_property(base_type_, expression.value())) {
-                result = api_.property_value_type(*property);
-                model_.api_resolutions_.emplace(
-                    &expression, ApiResolution{ApiResolutionKind::property, property->owner,
-                                               property->getter, property->setter, result, 0, 0,
-                                               false, property->direct, property->index});
+                auto resolution = property_resolution(ApiResolutionKind::property, *property);
+                result = resolution.type;
+                model_.api_resolutions_.emplace(&expression, std::move(resolution));
             }
         } else if (api_.find_signal(base_type_, expression.value())) {
             result = {TypeKind::builtin, "Signal"};
@@ -1775,11 +1789,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 &expression, ApiResolution{ApiResolutionKind::type_reference, type->name, "", "",
                                            result, 0, 0, false, true});
         } else if (const auto* property = api_.find_property(base_type_, expression.value())) {
-            result = api_.property_value_type(*property);
-            model_.api_resolutions_.emplace(
-                &expression, ApiResolution{ApiResolutionKind::property, property->owner,
-                                           property->getter, property->setter, result, 0, 0, false,
-                                           property->direct, property->index});
+            auto resolution = property_resolution(ApiResolutionKind::property, *property);
+            result = resolution.type;
+            model_.api_resolutions_.emplace(&expression, std::move(resolution));
         }
         // GDExtensions may register named engine singletons that are intentionally absent from
         // Godot's official extension_api.json (for example GodotSteam's `Steam`). Offline AOT
@@ -3361,14 +3373,12 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     }
                     if (const auto* property =
                             api_.find_property(script_owner->godot_base_type, expression.value())) {
-                        result = api_.property_value_type(*property);
-                        model_.api_resolutions_.emplace(
-                            &expression,
-                            ApiResolution{script_owner->attached
-                                              ? ApiResolutionKind::dynamic_property
-                                              : ApiResolutionKind::property,
-                                          property->owner, property->getter, property->setter,
-                                          result, 0, 0, false, property->direct, property->index});
+                        auto resolution = property_resolution(
+                            script_owner->attached ? ApiResolutionKind::dynamic_property
+                                                   : ApiResolutionKind::property,
+                            *property);
+                        result = resolution.type;
+                        model_.api_resolutions_.emplace(&expression, std::move(resolution));
                         break;
                     }
                 }
@@ -3609,11 +3619,9 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                             ApiResolution{ApiResolutionKind::script_signal, owner,
                                                           "", "", result, 0, 0, false, false});
         } else if (const auto* property = api_.find_property(owner, expression.value())) {
-            result = api_.property_value_type(*property);
-            model_.api_resolutions_.emplace(
-                &expression, ApiResolution{ApiResolutionKind::property, property->owner,
-                                           property->getter, property->setter, result, 0, 0, false,
-                                           property->direct, property->index});
+            auto resolution = property_resolution(ApiResolutionKind::property, *property);
+            result = resolution.type;
+            model_.api_resolutions_.emplace(&expression, std::move(resolution));
         } else if (object_type.kind == TypeKind::dictionary) {
             // GDScript supports dictionary.key as syntax sugar for dictionary["key"].
             result = variant_type;
@@ -4057,6 +4065,11 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
         suppress_flow_refinements_ = previous_suppression;
         await_expression_allowed_ = previous_await_context;
         const auto value = analyze_expression(*statement.expression());
+        auto assignment_target = target;
+        if (const auto* resolution = model_.api_resolution_of(*statement.condition());
+            resolution && resolution->assignment_type.kind != TypeKind::unknown) {
+            assignment_target = resolution->assignment_type;
+        }
         if (!is_assignment_target(*statement.condition())) {
             diagnostics_.error("GDS4110", "assignment target is not writable",
                                statement.condition()->span);
@@ -4096,10 +4109,10 @@ SemanticAnalyzer::FlowResult SemanticAnalyzer::analyze_statement(const ast::Stat
             }
         }
         if (statement.operation() == "=") {
-            require_expression_assignable(target, *statement.expression(), assigned, statement.span,
-                                          "invalid assignment");
+            require_expression_assignable(assignment_target, *statement.expression(), assigned,
+                                          statement.span, "invalid assignment");
         } else {
-            require_assignable(target, assigned, statement.span, "invalid assignment");
+            require_assignable(assignment_target, assigned, statement.span, "invalid assignment");
         }
         if (const auto* symbol = model_.symbol_of(*statement.condition());
             symbol &&

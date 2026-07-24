@@ -87,6 +87,7 @@ struct Expression {
     ExpressionKind kind{ExpressionKind::literal};
     Type type;
     Type storage_type;
+    Type assignment_type;
     bool non_null{false};
     SourceSpan span{};
     std::string value;

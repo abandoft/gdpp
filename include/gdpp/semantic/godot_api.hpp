@@ -143,11 +143,16 @@ class GodotApi final {
     [[nodiscard]] const GodotPropertyRecord*
     find_property(std::string_view owner, std::string_view name,
                   bool include_inherited = true) const noexcept;
+    [[nodiscard]] const GodotPropertyRecord* property(std::size_t index) const noexcept;
     // Property metadata may list several inspector-compatible concrete resources
     // (for example CanvasItemMaterial,ShaderMaterial) even though the generated
-    // getter/setter ABI uses their common Material base. Semantic analysis and
-    // code generation must use that accessor contract, not the first hint entry.
-    [[nodiscard]] Type property_value_type(const GodotPropertyRecord& property) const noexcept;
+    // getter/setter ABI uses their common Material base. Reads and writes are
+    // resolved independently so code generation never assumes that both accessors
+    // have the same contract merely because current engine metadata usually does.
+    [[nodiscard]] Type
+    property_getter_type(const GodotPropertyRecord& property) const noexcept;
+    [[nodiscard]] Type
+    property_setter_type(const GodotPropertyRecord& property) const noexcept;
     [[nodiscard]] const GodotSignalRecord*
     find_signal(std::string_view owner, std::string_view name,
                 bool include_inherited = true) const noexcept;
