@@ -651,7 +651,7 @@ TEST_CASE("native builder pins the MSVC linker beside an absolute compiler") {
     options.project_output_directory = root / "project";
     options.binary_output_directory = root / "addons/gdpp/binary";
     options.sdk_root = root / "sdk";
-    options.compiler_executable = root / "toolchain/Hostx64/x64/cl.exe";
+    options.compiler_executable = (root / "toolchain/Hostx64/x64/cl.exe").string();
     options.platform = gdpp::NativePlatform::windows;
     options.architecture = "x86_64";
 
