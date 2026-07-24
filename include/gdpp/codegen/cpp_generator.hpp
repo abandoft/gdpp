@@ -161,6 +161,7 @@ class CodeGenerator final {
     [[nodiscard]] std::string native_property_info(const Type& type, std::string_view name) const;
     [[nodiscard]] Type container_argument_type(std::string_view type_name) const;
     [[nodiscard]] std::string container_cpp_argument(std::string_view type_name) const;
+    [[nodiscard]] std::string container_object_tag_identity(std::string_view type_name) const;
     [[nodiscard]] std::string container_object_runtime_name(std::string_view type_name) const;
     [[nodiscard]] std::string inner_cpp_type(std::string_view name) const;
     [[nodiscard]] std::string inner_godot_base_type(std::string_view name) const;

@@ -1347,13 +1347,28 @@ std::string CodeGenerator::container_cpp_argument(const std::string_view type_na
         return "godot::" + type.name;
     case TypeKind::object:
         return detail_namespace_ + "::ContainerObjectTag_" +
-               sanitize_identifier(std::string{type_name});
+               sanitize_identifier(container_object_tag_identity(type_name));
     case TypeKind::nil:
     case TypeKind::script_resource:
     case TypeKind::void_type:
         return "godot::Variant";
     }
     return "godot::Variant";
+}
+
+std::string CodeGenerator::container_object_tag_identity(const std::string_view type_name) const {
+    const auto type = container_argument_type(type_name);
+    if (type.kind != TypeKind::object)
+        return std::string{type_name};
+    if (const auto inner = inner_cpp_type(type.name); !inner.empty())
+        return inner;
+    if (script_symbols_) {
+        if (const auto* script = script_symbols_->find_class(type.name))
+            return script->native_class_name;
+        if (const auto* script = script_symbols_->find_native_class(type.name))
+            return script->native_class_name;
+    }
+    return type.name.empty() ? std::string{type_name} : type.name;
 }
 
 std::string CodeGenerator::container_object_runtime_name(const std::string_view type_name) const {
@@ -1387,6 +1402,10 @@ std::string CodeGenerator::inner_cpp_type(std::string_view name) const {
         exact != inner_native_names_.end()) {
         return exact->second;
     }
+    const auto native_match = std::find_if(inner_native_names_.begin(), inner_native_names_.end(),
+                                           [&](const auto& entry) { return entry.second == name; });
+    if (native_match != inner_native_names_.end())
+        return native_match->second;
     if (script_symbols_) {
         if (const auto* inner = script_symbols_->find_inner_native(std::string{name}))
             return inner->native_class_name;
@@ -1414,6 +1433,14 @@ std::string CodeGenerator::inner_godot_base_type(std::string_view name) const {
         exact != inner_godot_base_types_.end()) {
         return exact->second;
     }
+    const auto native_match = std::find_if(inner_native_names_.begin(), inner_native_names_.end(),
+                                           [&](const auto& entry) { return entry.second == name; });
+    if (native_match != inner_native_names_.end()) {
+        if (const auto base = inner_godot_base_types_.find(native_match->first);
+            base != inner_godot_base_types_.end()) {
+            return base->second;
+        }
+    }
     if (script_symbols_) {
         if (const auto* inner = script_symbols_->find_inner_native(std::string{name}))
             return inner->godot_base_type;
@@ -1429,6 +1456,14 @@ std::string CodeGenerator::inner_attached_native_base_type(std::string_view name
     if (const auto exact = inner_attached_native_base_types_.find(std::string{name});
         exact != inner_attached_native_base_types_.end()) {
         return exact->second;
+    }
+    const auto native_match = std::find_if(inner_native_names_.begin(), inner_native_names_.end(),
+                                           [&](const auto& entry) { return entry.second == name; });
+    if (native_match != inner_native_names_.end()) {
+        if (const auto base = inner_attached_native_base_types_.find(native_match->first);
+            base != inner_attached_native_base_types_.end()) {
+            return base->second;
+        }
     }
     if (script_symbols_) {
         if (const auto* inner = script_symbols_->find_inner_native(std::string{name})) {
@@ -6800,13 +6835,17 @@ GeneratedUnit CodeGenerator::generate(const mir::Module& mir_module, const std::
     if (!ordered_inner_classes.empty())
         header << '\n';
     header << "namespace " << detail_namespace_ << " {\n";
+    std::set<std::string> emitted_container_object_tags;
     for (const auto& type_name : native_types.container_objects) {
-        header << "struct ContainerObjectTag_" << sanitize_identifier(type_name) << " {\n"
+        const auto identity = container_object_tag_identity(type_name);
+        if (!emitted_container_object_tags.insert(identity).second)
+            continue;
+        header << "struct ContainerObjectTag_" << sanitize_identifier(identity) << " {\n"
                << "    static godot::StringName get_class_static() { return "
-               << godot_string_name(container_object_runtime_name(type_name)) << "; }\n"
+               << godot_string_name(container_object_runtime_name(identity)) << "; }\n"
                << "    inline static constexpr const char *_gdpp_attached_script_path = "
                << escaped_string(
-                      attached_script_source_path({TypeKind::object, std::string{type_name}}))
+                      attached_script_source_path({TypeKind::object, std::string{identity}}))
                << ";\n"
                << "};\n";
     }
