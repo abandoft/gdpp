@@ -84,7 +84,9 @@ func _run() -> void:
         push_error("GDPP accepted a deliberately failing toolchain command: %s" % result)
         quit(1)
         return
-    var sequence := FileAccess.get_file_as_string(sequence_path).strip_edges().split("\n")
+    var sequence_text := FileAccess.get_file_as_string(sequence_path)
+    sequence_text = sequence_text.replace("\r\n", "\n").replace("\r", "\n")
+    var sequence := sequence_text.strip_edges().split("\n")
     if sequence != PackedStringArray(["first", "done", "second"]):
         push_error("GDPP native toolchain commands were not strictly serialized: %s" % sequence)
         quit(1)
