@@ -88,10 +88,9 @@ func _init() -> void:
                     "ilk", "lib", "o", "obj", "pdb"
                 ]:
                     violations.append("完整导出目录包含原生源码或中间产物：%s" % native_path)
-                if (
-                    filename.contains("gdpp_project.")
-                    and extension in ["dll", "so", "dylib", "wasm"]
-                ):
+                if _is_legacy_project_library(filename):
+                    violations.append("完整导出目录包含旧命名的项目原生库：%s" % native_path)
+                if _is_project_library(filename):
                     native_library_count += 1
             if native_library_count != 1:
                 violations.append(
@@ -121,7 +120,7 @@ func _clear_staged_runtime_libraries() -> void:
         if directory.current_is_dir():
             continue
         var lower := name.to_lower()
-        if lower.contains("gdpp_project.") and lower.get_extension() in ["dll", "dylib", "so"]:
+        if _is_project_library(lower) or _is_legacy_project_library(lower):
             DirAccess.remove_absolute(binary_directory.path_join(name))
     directory.list_dir_end()
 
@@ -160,10 +159,7 @@ func _allowed_runtime_path(path: String) -> bool:
         return path.ends_with(".res")
     if path.begins_with("res://addons/gdpp/binary/"):
         var filename := path.get_file().to_lower()
-        return (
-            filename.contains("gdpp_project.release.")
-            and filename.get_extension() in ["dll", "dylib", "so", "wasm"]
-        )
+        return _is_project_library(filename, true)
     return false
 
 
@@ -191,6 +187,8 @@ func _validate_and_load_runtime_extension(
     if runtime_library_path.is_empty():
         violations.append("项目运行时描述符没有可审计的原生库条目")
         return
+    if not _is_project_library(runtime_library_path.get_file()):
+        violations.append("项目运行时描述符引用了非标准命名的原生库")
     if native_library_path.is_empty():
         violations.append("未提供项目原生动态库，无法执行资源加载审计")
         return
@@ -270,6 +268,31 @@ func _runtime_library_path() -> String:
         var value := line.get_slice("=", 1).strip_edges()
         return value.trim_prefix("\"").trim_suffix("\"")
     return ""
+
+
+func _is_project_library(filename: String, release_only := false) -> bool:
+    var lower := filename.to_lower()
+    if lower.get_extension() not in ["dll", "dylib", "so", "wasm"]:
+        return false
+    if release_only:
+        return lower.begins_with("gdpp.release.") or lower.begins_with("libgdpp.release.")
+    return (
+        lower.begins_with("gdpp.debug.")
+        or lower.begins_with("gdpp.release.")
+        or lower.begins_with("libgdpp.debug.")
+        or lower.begins_with("libgdpp.release.")
+    )
+
+
+func _is_legacy_project_library(filename: String) -> bool:
+    var lower := filename.to_lower()
+    return (
+        lower.get_extension() in ["dll", "dylib", "so", "wasm"]
+        and (
+            lower.begins_with("gdpp_project.")
+            or lower.begins_with("libgdpp_project.")
+        )
+    )
 
 
 func _collect_native_files(directory_path: String, output: PackedStringArray) -> bool:
