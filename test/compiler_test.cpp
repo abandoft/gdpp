@@ -834,17 +834,21 @@ TEST_CASE("typed containers preserve internal class runtime identity without inc
                                          "    return payloads\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.header.find("struct ContainerObjectTag_Payload") != std::string::npos);
+    REQUIRE(result.unit.header.find(
+                "struct ContainerObjectTag_GDPPNative_InnerTypedContainers__Payload") !=
+            std::string::npos);
     REQUIRE(result.unit.header.find("godot::StringName(\"RefCounted\")") != std::string::npos);
     REQUIRE(result.unit.header.find("_gdpp_attached_script_path = "
                                     "\"res://inner_typed_containers.gd::Payload\"") !=
             std::string::npos);
     REQUIRE(result.unit.header.find(
                 "gdpp::runtime::ScriptTypedArray<inner_typed_containers_gdpp_detail::"
-                "ContainerObjectTag_Payload> payloads") != std::string::npos);
+                "ContainerObjectTag_GDPPNative_InnerTypedContainers__Payload> payloads") !=
+            std::string::npos);
     REQUIRE(result.unit.header.find(
                 "gdpp::runtime::ScriptTypedDictionary<godot::String, "
-                "inner_typed_containers_gdpp_detail::ContainerObjectTag_Payload> by_name") !=
+                "inner_typed_containers_gdpp_detail::"
+                "ContainerObjectTag_GDPPNative_InnerTypedContainers__Payload> by_name") !=
             std::string::npos);
     REQUIRE(result.unit.header.find(
                 "godot::StringName(\"GDPPNative_InnerTypedContainers__Payload\")") ==

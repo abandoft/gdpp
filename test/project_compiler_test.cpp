@@ -684,6 +684,37 @@ TEST_CASE("project compiler registers internal classes and includes complete enu
     REQUIRE_EQ(cached_consumer->inner_class_names, consumer->inner_class_names);
 }
 
+TEST_CASE("project compiler canonicalizes internal class aliases in typed containers") {
+    const auto root = fixture_root("project-internal-container-aliases");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "queue.gd", "extends Node\n"
+                                  "class Task extends RefCounted:\n"
+                                  "    var value: int\n"
+                                  "var pending: Array[Task] = []\n"
+                                  "func get_pending() -> Array[Task]:\n"
+                                  "    return pending\n"
+                                  "func enqueue(task: Task) -> void:\n"
+                                  "    get_pending().push_back(task)\n");
+
+    const auto options = project_options(root);
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.scripts.size(), std::size_t{1});
+    REQUIRE_EQ(result.scripts.front().inner_class_names.size(), std::size_t{1});
+    const auto canonical_tag =
+        "ContainerObjectTag_" + result.scripts.front().inner_class_names.front();
+    const auto header =
+        read_text(options.output_directory / "generated" / result.scripts.front().header_file_name);
+    const auto source =
+        read_text(options.output_directory / "generated" / result.scripts.front().source_file_name);
+    REQUIRE(header.find("struct " + canonical_tag) != std::string::npos);
+    REQUIRE(header.find("struct ContainerObjectTag_Task") == std::string::npos);
+    REQUIRE(source.find(canonical_tag) != std::string::npos);
+    REQUIRE(source.find("ContainerObjectTag_Task") == std::string::npos);
+}
+
 TEST_CASE("project compiler resolves script and nested internal enum identities") {
     const auto root = fixture_root("project-nested-internal-enums");
     std::error_code error;
@@ -2449,7 +2480,7 @@ TEST_CASE("typed container object arguments participate in precise dependency in
     REQUIRE(initial_header.find("godot::StringName(\"RefCounted\")") != std::string::npos);
     REQUIRE(initial_header.find("_gdpp_attached_script_path = \"res://item.gd\"") !=
             std::string::npos);
-    REQUIRE(initial_header.find(initial_item_class) == std::string::npos);
+    REQUIRE(initial_header.find(initial_item_class) != std::string::npos);
 
     write_text(root / "item.gd", "extends RefCounted\nclass_name ContainerItem\n"
                                  "func value() -> float:\n    return 1.0\n");
@@ -2469,7 +2500,7 @@ TEST_CASE("typed container object arguments participate in precise dependency in
     REQUIRE(changed_header.find("gdpp::runtime::ScriptTypedArray<") != std::string::npos);
     REQUIRE(changed_header.find("_gdpp_attached_script_path = \"res://item.gd\"") !=
             std::string::npos);
-    REQUIRE(changed_header.find(native_class_for(changed, "item.gd")) == std::string::npos);
+    REQUIRE(changed_header.find(native_class_for(changed, "item.gd")) != std::string::npos);
     REQUIRE(changed_header.find(initial_item_class) == std::string::npos);
 }
 
