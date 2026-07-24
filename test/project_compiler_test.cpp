@@ -166,6 +166,39 @@ TEST_CASE("project compiler incrementally generates a unified native extension")
     REQUIRE_EQ(fourth.scripts.size(), std::size_t{1});
 }
 
+TEST_CASE("attached descriptors defer every script constant until Godot requests its value") {
+    const auto root = fixture_root("project-deferred-attached-constants");
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    write_text(root / "game_map.gd", "extends Node\n"
+                                     "const BALL_SCENE = preload(\"res://component/ball.tscn\")\n"
+                                     "const PURE_VALUE = Vector2(2.0, 4.0)\n"
+                                     "func scene_resource():\n"
+                                     "    return BALL_SCENE\n");
+
+    const auto options = project_options(root);
+    const auto result = gdpp::ProjectCompiler{}.compile(options);
+
+    REQUIRE(result.success);
+    REQUIRE_EQ(result.scripts.size(), std::size_t{1});
+    const auto source =
+        read_text(options.output_directory / "generated" / result.scripts.front().source_file_name);
+    const auto descriptor_begin = source.find("::_gdpp_descriptor() {");
+    const auto descriptor_end = source.find("    return descriptor;", descriptor_begin);
+    REQUIRE(descriptor_begin != std::string::npos);
+    REQUIRE(descriptor_end != std::string::npos);
+    const auto descriptor = source.substr(descriptor_begin, descriptor_end - descriptor_begin);
+    REQUIRE(descriptor.find(
+                "descriptor.deferred_constants.push_back({godot::StringName(\"BALL_SCENE\"), "
+                "[]() -> godot::Variant") != std::string::npos);
+    REQUIRE(descriptor.find(
+                "descriptor.deferred_constants.push_back({godot::StringName(\"PURE_VALUE\"), "
+                "[]() -> godot::Variant") != std::string::npos);
+    REQUIRE(descriptor.find("descriptor.constants[godot::StringName(\"BALL_SCENE\")]") ==
+            std::string::npos);
+    REQUIRE(descriptor.find("gdpp::runtime::load_resource(") == std::string::npos);
+}
+
 TEST_CASE("project compiler publishes normalized extension class icons") {
     const auto root = fixture_root("project-icons");
     std::error_code error;

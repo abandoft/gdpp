@@ -5504,9 +5504,10 @@ void CodeGenerator::emit_attached_descriptor_definition(
         if (!variable.is_constant)
             continue;
         const auto name = sanitize_identifier(variable.name);
-        source << "    descriptor.constants[" << godot_string_name(variable.name)
-               << "] = gdpp::runtime::to_variant("
-               << (managed_constant_field(variable) ? name + "()" : name) << ");\n";
+        source << "    descriptor.deferred_constants.push_back({"
+               << godot_string_name(variable.name)
+               << ", []() -> godot::Variant { return gdpp::runtime::to_variant("
+               << (managed_constant_field(variable) ? name + "()" : name) << "); }});\n";
     }
     for (const auto& enumeration : enums) {
         for (const auto& entry : enumeration.entries) {
