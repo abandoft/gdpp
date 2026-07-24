@@ -22,6 +22,7 @@
 - `gdpp-mac.zip` 从仅 arm64 的宿主契约升级为真正的 Universal 2 compiler、fallback 及 Godot 4.4～4.7 桌面 SDK；Apple Silicon 与 Intel 编辑器现可加载同一插件，标准官方 Universal 2 导出模板无需自定义模板或改写预设即可工作。
 - macOS 发行组件新增未修改 `macOS Universal` 预设的真实导出与运行门禁，并强制每套 compiler、fallback 及桌面 godot-cpp 归档同时包含 arm64、x86_64 切片与 macOS 11.0 最低部署版本。
 - 新增 macOS 与 Windows 组包后发布门禁：将最终 `gdpp-mac.zip`、`gdpp-win.zip` 安装到全新客户项目，使用官方 Godot 4.7.1 与官方模板完成导入、AOT 导出及成品运行，并审计 PCK 源码剥离、项目库单次登记和不可变状态；出现任何诊断或契约违规都会阻止 readiness 与发布。
+- 两处 macOS 部署目标审计均改为完整读取 `otool` 输出后再匹配 load command，在继续强制 Universal 2 与 macOS 11 基线的同时，避免 `pipefail` 将已成功的导出及运行误判为断管失败。
 
 ## 1.7.8
 
