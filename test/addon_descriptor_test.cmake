@@ -133,6 +133,17 @@ foreach(required_windows_process_contract IN ITEMS
             "${required_windows_process_contract}")
     endif()
 endforeach()
+foreach(forbidden_machine_specific_toolchain_path IN ITEMS
+        "windows_environment(L\"USERPROFILE\")"
+        "\"software/VS\"")
+    string(FIND "${compiler_service}" "${forbidden_machine_specific_toolchain_path}"
+        machine_specific_toolchain_offset)
+    if(NOT machine_specific_toolchain_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Production toolchain discovery contains a machine-specific path: "
+            "${forbidden_machine_specific_toolchain_path}")
+    endif()
+endforeach()
 string(FIND "${compiler_service}" "execute_with_vcvars(" repeated_vcvars_offset)
 if(NOT repeated_vcvars_offset EQUAL -1)
     message(FATAL_ERROR

@@ -829,8 +829,6 @@ std::optional<std::filesystem::path> find_vcvars_batch(const std::filesystem::pa
     };
     append_environment_root(L"VSINSTALLDIR");
     append_environment_root(L"VCINSTALLDIR");
-    if (const auto profile = windows_environment(L"USERPROFILE"))
-        roots.emplace_back(std::filesystem::path{*profile} / "software/VS");
 
     const auto append_visual_studio_roots = [&roots](const wchar_t* environment_name) {
         const auto value = windows_environment(environment_name);
