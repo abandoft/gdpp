@@ -6,6 +6,7 @@
 - Shorten every generated customer runtime artifact from the `gdpp_project` filename prefix to `gdpp` across Windows, macOS, Linux, Android, iOS, and Web, including the Windows import library, Mach-O install name, iOS slice library, and XCFramework layout, while retaining the stable `gdpp_project_library_init` GDExtension entry ABI.
 - Advance the native-build and export-transform revisions and transactionally remove artifacts generated with the retired filename before the next AOT export, including directory-form iOS XCFrameworks; fail closed if a stale product cannot be removed.
 - Update desktop runtime, APK, XCFramework, Wasm, PCK, plugin-package, cleanup, and workflow gates to require the shortened names, reject both current generated products and retired products from commercial plugin archives, and preserve compiler/fallback binaries through exact product classification.
+- Restore the standard `addons/gdpp/` root in all three desktop plugin ZIPs so extracting an archive directly into a Godot project produces a discoverable EditorPlugin instead of an inert `res://gdpp/` directory; advance the package manifest to schema 5 and gate the exact installation layout.
 
 ## 1.7.8
 

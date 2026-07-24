@@ -6,6 +6,7 @@
 - Windows、macOS、Linux、Android、iOS 与 Web 的客户运行库文件名前缀由 `gdpp_project` 统一缩短为 `gdpp`，同步覆盖 Windows 导入库、Mach-O install name、iOS 切片动态库及 XCFramework 内部布局；GDExtension 入口 ABI `gdpp_project_library_init` 保持稳定。
 - 原生构建与导出转换修订号同步推进；下一次 AOT 导出前事务式清除旧命名产物（包括目录型 iOS XCFramework），无法清理时失败关闭，避免旧库残留或误入客户包。
 - 桌面运行、APK、XCFramework、Wasm、PCK、插件组包、清理及工作流门禁全部切换为新命名；商业插件包同时拒绝当前客户构建产物与旧命名产物，并通过精确分类保留编译器和 fallback 库。
+- 三个桌面插件 ZIP 全部恢复标准 `addons/gdpp/` 根目录，用户直接解压到 Godot 项目根目录即可得到可发现的 EditorPlugin，不再误装为无效的 `res://gdpp/`；发行包清单升级至 schema 5，并对精确安装目录执行门禁。
 
 ## 1.7.8
 
