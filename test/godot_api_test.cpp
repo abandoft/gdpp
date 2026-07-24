@@ -106,12 +106,10 @@ TEST_CASE("Godot API lookup resolves properties and builtin value methods") {
     REQUIRE(length != nullptr);
     REQUIRE_EQ(gdpp::type_from_godot_api(length->return_type).kind, gdpp::TypeKind::floating);
     const auto typed_array = gdpp::type_from_godot_api("typedarray::Node");
-    const auto typed_dictionary =
-        gdpp::type_from_godot_api("typeddictionary::String;Variant");
+    const auto typed_dictionary = gdpp::type_from_godot_api("typeddictionary::String;Variant");
     const auto encoded_resource_array =
         gdpp::type_from_godot_api("typedarray::24/17:CompositorEffect");
-    const auto encoded_dictionary_array =
-        gdpp::type_from_godot_api("typedarray::27/0:");
+    const auto encoded_dictionary_array = gdpp::type_from_godot_api("typedarray::27/0:");
     REQUIRE_EQ(typed_array.kind, gdpp::TypeKind::array);
     REQUIRE_EQ(typed_array.name, std::string{"Array[Node]"});
     REQUIRE_EQ(typed_dictionary.kind, gdpp::TypeKind::dictionary);
@@ -119,6 +117,26 @@ TEST_CASE("Godot API lookup resolves properties and builtin value methods") {
     REQUIRE_EQ(encoded_resource_array.name, std::string{"Array[CompositorEffect]"});
     REQUIRE_EQ(encoded_dictionary_array.name, std::string{"Array[Dictionary]"});
     REQUIRE_EQ(gdpp::type_from_godot_api("enum::Error").kind, gdpp::TypeKind::integer);
+}
+
+TEST_CASE("Godot API properties use accessor ABI instead of inspector resource alternatives") {
+    for (const auto version : {gdpp::GodotVersion::v4_4, gdpp::GodotVersion::v4_5,
+                               gdpp::GodotVersion::v4_6, gdpp::GodotVersion::v4_7}) {
+        const auto& api = gdpp::GodotApi::for_version(version);
+        const auto* canvas_material = api.find_property("TextureRect", "material");
+        const auto* particles_material = api.find_property("GPUParticles2D", "process_material");
+        const auto* light_texture = api.find_property("PointLight2D", "texture");
+
+        REQUIRE(canvas_material != nullptr);
+        REQUIRE(particles_material != nullptr);
+        REQUIRE(light_texture != nullptr);
+        REQUIRE_EQ(api.property_value_type(*canvas_material),
+                   (gdpp::Type{gdpp::TypeKind::object, "Material"}));
+        REQUIRE_EQ(api.property_value_type(*particles_material),
+                   (gdpp::Type{gdpp::TypeKind::object, "Material"}));
+        REQUIRE_EQ(api.property_value_type(*light_texture),
+                   (gdpp::Type{gdpp::TypeKind::object, "Texture2D"}));
+    }
 }
 
 TEST_CASE("Godot API metadata resolves global engine singletons") {

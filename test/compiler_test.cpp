@@ -351,17 +351,15 @@ TEST_CASE("compiler defers packed array typed storage failures to the runtime bo
 
 TEST_CASE("compiler stores packed arrays with GDScript shared identity") {
     const gdpp::Compiler compiler;
-    const auto result =
-        compiler.compile("packed_reference.gd",
-                         "extends RefCounted\n"
-                         "var bytes: PackedByteArray = PackedByteArray([1])\n"
-                         "func forward(values: PackedByteArray) -> PackedByteArray:\n"
-                         "    var alias: PackedByteArray = values\n"
-                         "    return alias\n");
+    const auto result = compiler.compile(
+        "packed_reference.gd", "extends RefCounted\n"
+                               "var bytes: PackedByteArray = PackedByteArray([1])\n"
+                               "func forward(values: PackedByteArray) -> PackedByteArray:\n"
+                               "    var alias: PackedByteArray = values\n"
+                               "    return alias\n");
 
     REQUIRE(result.success);
-    const std::string storage =
-        "gdpp::runtime::SharedPackedArray<godot::PackedByteArray>";
+    const std::string storage = "gdpp::runtime::SharedPackedArray<godot::PackedByteArray>";
     REQUIRE(result.unit.header.find(storage + " bytes") != std::string::npos);
     REQUIRE(result.unit.header.find(storage + " forward(" + storage + " values)") !=
             std::string::npos);
@@ -370,53 +368,52 @@ TEST_CASE("compiler stores packed arrays with GDScript shared identity") {
 
 TEST_CASE("compiler converts Variant storage at typed PackedArray call boundaries") {
     const gdpp::Compiler compiler;
-    const auto result = compiler.compile(
-        "packed_variant_calls.gd",
-        "extends RefCounted\n"
-        "class Sink:\n"
-        "    func bytes(value: PackedByteArray): value.append(1)\n"
-        "    func i32(value: PackedInt32Array): value.append(1)\n"
-        "    func i64(value: PackedInt64Array): value.append(1)\n"
-        "    func f32(value: PackedFloat32Array): value.append(1.0)\n"
-        "    func f64(value: PackedFloat64Array): value.append(1.0)\n"
-        "    func strings(value: PackedStringArray): value.append(\"x\")\n"
-        "    func vec2(value: PackedVector2Array): value.append(Vector2.ONE)\n"
-        "    func vec3(value: PackedVector3Array): value.append(Vector3.ONE)\n"
-        "    func colors(value: PackedColorArray): value.append(Color.WHITE)\n"
-        "    func vec4(value: PackedVector4Array): value.append(Vector4.ONE)\n"
-        "func forward(bytes: PackedByteArray, i32: PackedInt32Array,\n"
-        "        i64: PackedInt64Array, f32: PackedFloat32Array,\n"
-        "        f64: PackedFloat64Array, strings: PackedStringArray,\n"
-        "        vec2: PackedVector2Array, vec3: PackedVector3Array,\n"
-        "        colors: PackedColorArray, vec4: PackedVector4Array) -> void:\n"
-        "    var dynamic_bytes = bytes\n"
-        "    var dynamic_i32 = i32\n"
-        "    var dynamic_i64 = i64\n"
-        "    var dynamic_f32 = f32\n"
-        "    var dynamic_f64 = f64\n"
-        "    var dynamic_strings = strings\n"
-        "    var dynamic_vec2 = vec2\n"
-        "    var dynamic_vec3 = vec3\n"
-        "    var dynamic_colors = colors\n"
-        "    var dynamic_vec4 = vec4\n"
-        "    var sink := Sink.new()\n"
-        "    sink.bytes(dynamic_bytes)\n"
-        "    sink.i32(dynamic_i32)\n"
-        "    sink.i64(dynamic_i64)\n"
-        "    sink.f32(dynamic_f32)\n"
-        "    sink.f64(dynamic_f64)\n"
-        "    sink.strings(dynamic_strings)\n"
-        "    sink.vec2(dynamic_vec2)\n"
-        "    sink.vec3(dynamic_vec3)\n"
-        "    sink.colors(dynamic_colors)\n"
-        "    sink.vec4(dynamic_vec4)\n");
+    const auto result =
+        compiler.compile("packed_variant_calls.gd",
+                         "extends RefCounted\n"
+                         "class Sink:\n"
+                         "    func bytes(value: PackedByteArray): value.append(1)\n"
+                         "    func i32(value: PackedInt32Array): value.append(1)\n"
+                         "    func i64(value: PackedInt64Array): value.append(1)\n"
+                         "    func f32(value: PackedFloat32Array): value.append(1.0)\n"
+                         "    func f64(value: PackedFloat64Array): value.append(1.0)\n"
+                         "    func strings(value: PackedStringArray): value.append(\"x\")\n"
+                         "    func vec2(value: PackedVector2Array): value.append(Vector2.ONE)\n"
+                         "    func vec3(value: PackedVector3Array): value.append(Vector3.ONE)\n"
+                         "    func colors(value: PackedColorArray): value.append(Color.WHITE)\n"
+                         "    func vec4(value: PackedVector4Array): value.append(Vector4.ONE)\n"
+                         "func forward(bytes: PackedByteArray, i32: PackedInt32Array,\n"
+                         "        i64: PackedInt64Array, f32: PackedFloat32Array,\n"
+                         "        f64: PackedFloat64Array, strings: PackedStringArray,\n"
+                         "        vec2: PackedVector2Array, vec3: PackedVector3Array,\n"
+                         "        colors: PackedColorArray, vec4: PackedVector4Array) -> void:\n"
+                         "    var dynamic_bytes = bytes\n"
+                         "    var dynamic_i32 = i32\n"
+                         "    var dynamic_i64 = i64\n"
+                         "    var dynamic_f32 = f32\n"
+                         "    var dynamic_f64 = f64\n"
+                         "    var dynamic_strings = strings\n"
+                         "    var dynamic_vec2 = vec2\n"
+                         "    var dynamic_vec3 = vec3\n"
+                         "    var dynamic_colors = colors\n"
+                         "    var dynamic_vec4 = vec4\n"
+                         "    var sink := Sink.new()\n"
+                         "    sink.bytes(dynamic_bytes)\n"
+                         "    sink.i32(dynamic_i32)\n"
+                         "    sink.i64(dynamic_i64)\n"
+                         "    sink.f32(dynamic_f32)\n"
+                         "    sink.f64(dynamic_f64)\n"
+                         "    sink.strings(dynamic_strings)\n"
+                         "    sink.vec2(dynamic_vec2)\n"
+                         "    sink.vec3(dynamic_vec3)\n"
+                         "    sink.colors(dynamic_colors)\n"
+                         "    sink.vec4(dynamic_vec4)\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.source.find(
                 "godot::Variant dynamic_bytes = gdpp::runtime::to_variant(bytes)") !=
             std::string::npos);
-    REQUIRE(result.unit.source.find(
-                "godot::Variant result_value = gdpp::runtime::to_variant(") !=
+    REQUIRE(result.unit.source.find("godot::Variant result_value = gdpp::runtime::to_variant(") !=
             std::string::npos);
     for (const std::string_view type :
          {"PackedByteArray", "PackedInt32Array", "PackedInt64Array", "PackedFloat32Array",
@@ -449,8 +446,7 @@ TEST_CASE("compiler applies internal call contracts to every native storage fami
         "    sink.vector(vector_value)\n");
 
     REQUIRE(result.success);
-    REQUIRE(result.unit.header.find("#include <godot_cpp/classes/node.hpp>") !=
-            std::string::npos);
+    REQUIRE(result.unit.header.find("#include <godot_cpp/classes/node.hpp>") != std::string::npos);
     REQUIRE(result.unit.header.find("#include <godot_cpp/variant/vector3.hpp>") !=
             std::string::npos);
     REQUIRE(result.unit.source.find(
@@ -459,8 +455,8 @@ TEST_CASE("compiler applies internal call contracts to every native storage fami
     REQUIRE(result.unit.source.find(
                 "gdpp::runtime::strict_typed_storage<godot::TypedDictionary<godot::String, "
                 "int64_t>>(gdpp::runtime::to_variant(_gdpp_call_argument_") != std::string::npos);
-    REQUIRE(result.unit.source.find(
-                "godot::Object::cast_to<godot::Node>((_gdpp_call_argument_") != std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Object::cast_to<godot::Node>((_gdpp_call_argument_") !=
+            std::string::npos);
     REQUIRE(result.unit.source.find(
                 "static_cast<godot::String>(gdpp::runtime::to_variant(_gdpp_call_argument_") !=
             std::string::npos);
@@ -2318,8 +2314,7 @@ TEST_CASE("compiler preserves owner-free static fields methods lambdas and super
             std::string::npos);
     REQUIRE(result.unit.source.find("GDPPNative_StaticContext__Child::_gdpp_get_total()") !=
             std::string::npos);
-    REQUIRE(result.unit.source.find(
-                "return GDPPNative_StaticContext__Child::_gdpp_get_total();") !=
+    REQUIRE(result.unit.source.find("return GDPPNative_StaticContext__Child::_gdpp_get_total();") !=
             std::string::npos);
 }
 
@@ -2559,6 +2554,24 @@ TEST_CASE("compiler lowers negated membership through the Variant operator") {
             std::string::npos);
 }
 
+TEST_CASE("compiler assigns shader resources through the property accessor base type") {
+    const gdpp::Compiler compiler;
+    const auto result =
+        compiler.compile("shader_material.gd", "extends TextureRect\n"
+                                               "func install(shader: Shader) -> Material:\n"
+                                               "    var effect := ShaderMaterial.new()\n"
+                                               "    effect.shader = shader\n"
+                                               "    material = effect\n"
+                                               "    return material\n");
+
+    REQUIRE(result.success);
+    REQUIRE(
+        result.unit.source.find("set_material(godot::Ref<godot::Material>(godot::Object::cast_to<"
+                                "godot::Material>((effect).ptr())))") != std::string::npos);
+    REQUIRE(result.unit.source.find("cast_to<godot::CanvasItemMaterial>") == std::string::npos);
+    REQUIRE(result.unit.source.find("godot::Ref<godot::Material>") != std::string::npos);
+}
+
 TEST_CASE("compiler applies Godot-compatible numeric and builtin conversions") {
     const gdpp::Compiler compiler;
     const auto result = compiler.compile("commercial_conversions.gd",
@@ -2746,8 +2759,7 @@ TEST_CASE("compiler infers native Godot virtual signatures and escapes C++ keywo
     REQUIRE(result.unit.source.find("D_METHOD(\"_process\"") == std::string::npos);
     REQUIRE(result.unit.source.find("D_METHOD(\"_input\"") == std::string::npos);
     REQUIRE(result.unit.source.find("godot::StringName(\"throw\")") != std::string::npos);
-    REQUIRE(result.unit.source.find("_gdpp_variant_call__gdpp_id_7468726f77") !=
-            std::string::npos);
+    REQUIRE(result.unit.source.find("_gdpp_variant_call__gdpp_id_7468726f77") != std::string::npos);
 }
 
 TEST_CASE("compiler adapts flexible GDScript virtual signatures to the exact engine ABI") {
