@@ -58,7 +58,7 @@ Release export -> 一次 frontend/codegen -> 一次 Release 目标编译/链接
 对象；所有命令按翻译单元串行执行。构建线程不占用 Godot 主循环，主线程只处理 UI、ClassDB
 快照和导出事务。
 
-成功游戏只携带当前 `gdpp_project.<debug|release>.<platform>.<arch>` 及同路径运行描述符。
+成功游戏只携带当前 `gdpp.<debug|release>.<platform>.<arch>` 及同路径运行描述符。
 compiler、fallback、SDK、静态库、生成 C++、对象缓存和客户 `.gd` 均不得进入包。
 
 ## 零改动第三方 GDExtension
@@ -99,7 +99,7 @@ compiler、fallback 与项目库分别只公开唯一的 GDExtension C 入口。
 归档门禁至少验证：
 
 - 每个客户 SDK 目录恰好一个 `template_release`，没有 editor/template_debug；
-- 插件包没有 `addons/gdpp/build` 或 `gdpp_project.*`；
+- 插件包没有 `addons/gdpp/build` 或 `gdpp.<debug|release>.*` 项目构建产物；
 - 成功游戏目录和 PCK 恰好一个匹配目标的项目库；
 - PCK 中 `.gd`/`.gdc`、compiler、fallback、SDK、静态库、生成 C++ 和对象文件泄漏数为零；
 - 项目库公开符号只有 `gdpp_project_library_init`；

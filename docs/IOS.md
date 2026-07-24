@@ -34,7 +34,7 @@ device 与 Universal Simulator 目录各包含一份优化后的 `template_relea
 项目库固定生成到：
 
 ```text
-addons/gdpp/binary/libgdpp_project.<debug|release>.ios.arm64.xcframework/
+addons/gdpp/binary/libgdpp.<debug|release>.ios.arm64.xcframework/
 ```
 
 对象、切片 dylib 和尚未提交的合包只存在于 `addons/gdpp/build/project/native-direct/`。只有三个

@@ -65,8 +65,8 @@ Godot Web 导出预设必须满足：
 
 | 模式 | GDPP 文件名 | Wasm 内存 | 适用场景 |
 |---|---|---|---|
-| `nothreads` | `libgdpp_project.release.web.wasm32.nothreads.wasm` | 普通导入内存 | 默认兼容路线、较简单部署 |
-| `threads` | `libgdpp_project.release.web.wasm32.threads.wasm` | `shared` 导入内存 | 明确需要 Web Worker 并完成隔离部署 |
+| `nothreads` | `libgdpp.release.web.wasm32.nothreads.wasm` | 普通导入内存 | 默认兼容路线、较简单部署 |
+| `threads` | `libgdpp.release.web.wasm32.threads.wasm` | `shared` 导入内存 | 明确需要 Web Worker 并完成隔离部署 |
 
 线程版必须由服务器返回 COOP/COEP 响应头，iframe 的父页面也必须满足隔离条件。GDPP 的测试
 服务器 `tools/serve_web.py` 固定返回：
