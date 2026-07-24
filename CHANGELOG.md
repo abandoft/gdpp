@@ -14,6 +14,8 @@
 - Advance the packaged runtime ABI to 11 so stale SDKs fail preflight instead of compiling against the old eager descriptor layout.
 - Resolve Godot properties through their getter/setter ABI instead of the first inspector resource alternative, preserving polymorphic assignments and reads for shader, particle, sky, fog, geometry, light, decal, camera-attribute, and related resource properties across Godot 4.4–4.7.
 - Treat owner-free static function Callables as valid signal targets for the lifetime of the Callable while retaining Object lifetime checks for instance-bound lambdas, restoring bound asynchronous callbacks such as `HTTPRequest.request_completed`.
+- Preserve the provider-owned native base and exact canonical Script resource for attached root and inner classes used by typed Arrays and Dictionaries, preventing valid compiled objects from being rejected as plain `RefCounted` or third-party GDExtension instances.
+- Exhaustively validate every polymorphic resource-property accessor contract in the Godot 4.4–4.7 metadata set, including all ShaderMaterial-compatible canvas, particle, fog, sky, geometry, CSG, mesh, and tile material slots.
 - Extend the independent exported-runtime fixture with dynamically assigned `ShaderMaterial`, per-frame shader-uniform updates, loopback HTTP image delivery, response-header validation, PNG decoding, and `ImageTexture` assignment.
 
 ## 1.7.7
