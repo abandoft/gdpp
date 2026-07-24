@@ -7,6 +7,10 @@
 - Guard the remaining editor-only Engine lookup during generated project registration so an unavailable mandatory singleton produces a bounded initialization error instead of a native null dereference.
 - Add generated-code purity coverage for resource constants, nested preload containers, resource-backed field defaults, service-backed instance fields, static preloads, and resource default arguments.
 - Add a real Godot 4.4–4.7 independent-GDExtension export/runtime regression with local and inherited preloads of a scene containing `CircleShape2D`, plus compiled Script constant-map reflection.
+- Restore runtime construction for root and inner attached classes by assigning the resolved descriptor contract to every generated Script before attachment; failed `.new()` construction now emits an actionable diagnostic instead of degrading into later null property failures.
+- Dispatch attached ScriptInstance fields through descriptor-owned typed getter/setter callbacks, preserving custom accessors, Variant conversion, inherited properties, and typed-container keys without depending on ClassDB property reflection for GDExtension behavior objects.
+- Extend the independent-provider runtime fixture with dynamically typed inner-class construction, reads, writes, and typed-Dictionary indexing, and add a Windows x86_64 export preset for the same binary-only test path.
+- Normalize native toolchain order output across LF and CRLF hosts so the Windows serialization gate verifies process order without line-ending false positives.
 - Advance the packaged runtime ABI to 11 so stale SDKs fail preflight instead of compiling against the old eager descriptor layout.
 
 ## 1.7.7
