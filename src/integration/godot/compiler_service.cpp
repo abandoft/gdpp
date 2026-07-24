@@ -709,6 +709,15 @@ struct NativeProcessResult {
 };
 
 #ifdef _WIN32
+struct WindowsProcessOptions {
+    const std::vector<wchar_t>* environment{nullptr};
+    const std::wstring* desktop_name{nullptr};
+    bool utf16_output{false};
+};
+
+NativeProcessResult execute_hidden_windows_process(
+    const std::vector<std::wstring>& arguments, const WindowsProcessOptions& options = {});
+
 std::wstring utf8_to_wide(const std::string& value) {
     if (value.empty() || value.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
         return {};
@@ -761,6 +770,55 @@ std::optional<std::filesystem::path> find_vcvars_batch(const std::filesystem::pa
             if (parent == directory)
                 break;
             directory = parent;
+        }
+    }
+
+    std::vector<std::filesystem::path> vswhere_candidates;
+    const auto append_vswhere_candidate = [&](const wchar_t* environment_name) {
+        if (const auto root = windows_environment(environment_name)) {
+            vswhere_candidates.emplace_back(std::filesystem::path{*root} /
+                                            "Microsoft Visual Studio/Installer/vswhere.exe");
+        }
+    };
+    append_vswhere_candidate(L"ProgramFiles(x86)");
+    append_vswhere_candidate(L"ProgramFiles");
+    std::sort(vswhere_candidates.begin(), vswhere_candidates.end());
+    vswhere_candidates.erase(std::unique(vswhere_candidates.begin(), vswhere_candidates.end()),
+                             vswhere_candidates.end());
+    for (const auto& vswhere : vswhere_candidates) {
+        if (!existing_file(vswhere))
+            continue;
+        const auto discovery = execute_hidden_windows_process(
+            {vswhere.wstring(), L"-latest", L"-prerelease", L"-products", L"*", L"-requires",
+             L"Microsoft.VisualStudio.Component.VC.Tools.x86.x64", L"-property",
+             L"installationPath", L"-utf8"});
+        if (discovery.exit_code != 0 || !discovery.launch_error.empty())
+            continue;
+        for (std::size_t begin = 0; begin <= discovery.output.size();) {
+            const auto end = discovery.output.find('\n', begin);
+            auto line = discovery.output.substr(
+                begin, end == std::string::npos ? std::string::npos : end - begin);
+            while (!line.empty() &&
+                   (line.back() == '\r' || std::isspace(static_cast<unsigned char>(line.back()))))
+                line.pop_back();
+            if (line.starts_with("\xef\xbb\xbf"))
+                line.erase(0, 3);
+            const auto first = std::find_if_not(line.begin(), line.end(), [](const char value) {
+                return std::isspace(static_cast<unsigned char>(value)) != 0;
+            });
+            line.erase(line.begin(), first);
+            if (!line.empty()) {
+                const auto installation = utf8_to_wide(line);
+                if (!installation.empty()) {
+                    const auto candidate =
+                        std::filesystem::path{installation} / "VC/Auxiliary/Build/vcvars64.bat";
+                    if (existing_file(candidate))
+                        return candidate;
+                }
+            }
+            if (end == std::string::npos)
+                break;
+            begin = end + 1;
         }
     }
 
@@ -920,12 +978,6 @@ HiddenToolchainDesktop& hidden_toolchain_desktop() {
     return desktop;
 }
 
-struct WindowsProcessOptions {
-    const std::vector<wchar_t>* environment{nullptr};
-    const std::wstring* desktop_name{nullptr};
-    bool utf16_output{false};
-};
-
 NativeProcessResult execute_hidden_windows_command_line(std::wstring command_line,
                                                         const WindowsProcessOptions& options = {}) {
     NativeProcessResult result;
@@ -1018,7 +1070,7 @@ NativeProcessResult execute_hidden_windows_command_line(std::wstring command_lin
 }
 
 NativeProcessResult execute_hidden_windows_process(const std::vector<std::wstring>& arguments,
-                                                   const WindowsProcessOptions& options = {}) {
+                                                   const WindowsProcessOptions& options) {
     if (arguments.empty() || arguments.front().empty())
         return {};
     std::wstring command_line;
@@ -1201,7 +1253,10 @@ NativeProcessResult execute_native_process(const std::string& executable,
             const auto vcvars = find_vcvars_batch(std::filesystem::path{wide_executable});
             if (!vcvars) {
                 NativeProcessResult result;
-                result.launch_error = "cannot locate vcvars64.bat for the requested MSVC toolchain";
+                result.launch_error =
+                    "cannot locate vcvars64.bat after checking GDPP_VCVARS_PATH, the configured "
+                    "compiler, vswhere, Visual Studio Build Tools, and standard installations; "
+                    "install the x64 C++ tools component or configure gdpp/build/cpp_compiler";
                 return result;
             }
             const auto environment = cached_msvc_environment(*vcvars);

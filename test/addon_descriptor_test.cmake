@@ -117,6 +117,9 @@ foreach(required_windows_process_contract IN ITEMS
         "CREATE_UNICODE_ENVIRONMENT"
         "VSCMD_SKIP_SENDTELEMETRY"
         "VSCMD_SKIP_VCPKG_ACTIVATION"
+        "vswhere.exe"
+        "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+        "GDPP_VCVARS_PATH"
         "cached_msvc_environment("
         "resolve_msvc_executable("
         "options.environment = &environment->block;"
@@ -361,6 +364,14 @@ foreach(required_complete_package_sdk_probe IN ITEMS
     endif()
 endforeach()
 file(READ "${GDPP_TEST_SOURCE_DIR}/example/export_presets.cfg" export_presets)
+file(READ "${GDPP_TEST_SOURCE_DIR}/example/project.godot" example_project)
+string(FIND "${example_project}"
+    "gdscript/warnings/inference_on_variant=2"
+    strict_variant_warning_offset)
+if(strict_variant_warning_offset EQUAL -1)
+    message(FATAL_ERROR
+        "Godot compatibility project must treat Variant inference warnings as errors")
+endif()
 foreach(forbidden_export_minimum IN ITEMS
         "gradle_build/min_sdk="
         "application/min_ios_version="
