@@ -373,6 +373,18 @@ if(safe_ndk_probe EQUAL -1)
     message(FATAL_ERROR
         "Optional Android NDK discovery must not query a missing directory")
 endif()
+foreach(required_legacy_transaction_recovery IN ITEMS
+        "gdpp_provider_descriptors.export-backup.json"
+        "recovered = _restore_provider_descriptors() or recovered"
+        "func _restore_provider_descriptors() -> bool:")
+    string(FIND "${editor_plugin}" "${required_legacy_transaction_recovery}"
+        legacy_transaction_recovery_offset)
+    if(legacy_transaction_recovery_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Interrupted pre-1.7.9 descriptor recovery is missing: "
+            "${required_legacy_transaction_recovery}")
+    endif()
+endforeach()
 foreach(required_complete_package_sdk_probe IN ITEMS
         "var single_host_manifest := version_root.path_join(\"sdk.manifest\")"
         "var complete_host_manifest := version_root.path_join("

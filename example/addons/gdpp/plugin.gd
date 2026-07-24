@@ -10,6 +10,9 @@ const COMPILER_DESCRIPTOR := "res://addons/gdpp/gdpp.gdextension"
 const EXTENSION_REGISTRY := "res://.godot/extension_list.cfg"
 const EXTENSION_REGISTRY_BACKUP := "res://.godot/gdpp_extension_list.export-backup"
 const COMPILER_DESCRIPTOR_BACKUP := "res://.godot/gdpp_compiler_descriptor.export-backup"
+const PROVIDER_DESCRIPTORS_BACKUP := (
+    "res://.godot/gdpp_provider_descriptors.export-backup.json"
+)
 
 var _compiler: Object
 var _export_plugin: EditorExportPlugin
@@ -55,12 +58,36 @@ func _enter_tree() -> void:
 
 func _recover_interrupted_export() -> void:
     var recovered := false
+    recovered = _restore_provider_descriptors() or recovered
     recovered = _restore_export_file(COMPILER_DESCRIPTOR, COMPILER_DESCRIPTOR_BACKUP) or recovered
     recovered = _restore_export_file(EXTENSION_REGISTRY, EXTENSION_REGISTRY_BACKUP) or recovered
     if not recovered:
         return
     if not ClassDB.class_exists(&"GDPPCompiler"):
         GDExtensionManager.load_extension(COMPILER_DESCRIPTOR)
+
+
+func _restore_provider_descriptors() -> bool:
+    if not FileAccess.file_exists(PROVIDER_DESCRIPTORS_BACKUP):
+        return false
+    var recovered: Variant = JSON.parse_string(
+        FileAccess.get_file_as_string(PROVIDER_DESCRIPTORS_BACKUP)
+    )
+    if not recovered is Dictionary:
+        push_error("GDPP: cannot parse the interrupted provider descriptor backup")
+        return false
+    var originals: Dictionary = recovered
+    for path: String in originals:
+        var target := FileAccess.open(path, FileAccess.WRITE)
+        if target == null:
+            push_error("GDPP: cannot recover provider descriptor '%s'" % path)
+            return false
+        target.store_string(str(originals[path]))
+        if target.get_error() != OK:
+            push_error("GDPP: cannot recover provider descriptor '%s'" % path)
+            return false
+    DirAccess.remove_absolute(ProjectSettings.globalize_path(PROVIDER_DESCRIPTORS_BACKUP))
+    return true
 
 
 func _restore_export_file(path: String, backup_path: String) -> bool:
