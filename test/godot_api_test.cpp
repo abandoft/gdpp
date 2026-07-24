@@ -169,7 +169,10 @@ TEST_CASE("Godot API properties use accessor ABI for every inspector resource al
             const auto* property = api.find_property(alternative.owner, alternative.property);
             REQUIRE(property != nullptr);
             REQUIRE_EQ(
-                api.property_value_type(*property),
+                api.property_getter_type(*property),
+                (gdpp::Type{gdpp::TypeKind::object, std::string{alternative.accessor_type}}));
+            REQUIRE_EQ(
+                api.property_setter_type(*property),
                 (gdpp::Type{gdpp::TypeKind::object, std::string{alternative.accessor_type}}));
         }
     }
@@ -177,8 +180,56 @@ TEST_CASE("Godot API properties use accessor ABI for every inspector resource al
     const auto& api_4_7 = gdpp::GodotApi::for_version(gdpp::GodotVersion::v4_7);
     const auto* area_texture = api_4_7.find_property("AreaLight3D", "area_texture");
     REQUIRE(area_texture != nullptr);
-    REQUIRE_EQ(api_4_7.property_value_type(*area_texture),
+    REQUIRE_EQ(api_4_7.property_getter_type(*area_texture),
                (gdpp::Type{gdpp::TypeKind::object, "Texture2D"}));
+    REQUIRE_EQ(api_4_7.property_setter_type(*area_texture),
+               (gdpp::Type{gdpp::TypeKind::object, "Texture2D"}));
+}
+
+TEST_CASE("Godot API independently validates every property read and write contract") {
+    for (const auto version : {gdpp::GodotVersion::v4_4, gdpp::GodotVersion::v4_5,
+                               gdpp::GodotVersion::v4_6, gdpp::GodotVersion::v4_7}) {
+        const auto& api = gdpp::GodotApi::for_version(version);
+        std::size_t accessor_overrides = 0;
+        for (std::size_t index = 0; index < api.property_count(); ++index) {
+            const auto* property = api.property(index);
+            REQUIRE(property != nullptr);
+            const auto metadata_type = gdpp::type_from_godot_api(property->type);
+            const auto getter_type = api.property_getter_type(*property);
+            const auto setter_type = api.property_setter_type(*property);
+
+            if (!property->direct && property->getter[0] != '\0') {
+                const auto* getter = api.find_method(property->owner, property->getter);
+                if (getter && getter->return_type[0] != '\0') {
+                    REQUIRE_EQ(getter_type, gdpp::type_from_godot_api(getter->return_type));
+                } else {
+                    REQUIRE_EQ(getter_type, metadata_type);
+                }
+            } else {
+                REQUIRE_EQ(getter_type, metadata_type);
+            }
+
+            if (!property->direct && property->setter[0] != '\0') {
+                const auto* setter = api.find_method(property->owner, property->setter);
+                if (setter) {
+                    const auto value_index =
+                        property->index >= 0 ? std::size_t{1} : std::size_t{0};
+                    const auto* value = api.argument(*setter, value_index);
+                    REQUIRE(value != nullptr);
+                    REQUIRE_EQ(setter_type, gdpp::type_from_godot_api(value->type));
+                } else {
+                    REQUIRE_EQ(setter_type, metadata_type);
+                }
+            } else {
+                REQUIRE_EQ(setter_type, metadata_type);
+            }
+
+            if (getter_type != metadata_type || setter_type != metadata_type)
+                ++accessor_overrides;
+        }
+        REQUIRE(api.property(api.property_count()) == nullptr);
+        REQUIRE(accessor_overrides >= std::size_t{33});
+    }
 }
 
 TEST_CASE("Godot API metadata resolves global engine singletons") {
