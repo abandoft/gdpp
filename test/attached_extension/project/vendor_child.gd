@@ -1,6 +1,8 @@
 class_name VendorChild
 extends VendorBase
 
+const INHERITED_PHYSICS_SCENE := preload("res://deferred_shape.tscn")
+
 signal child_ping(value: int)
 
 @export var bonus: int = 7
