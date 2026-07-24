@@ -16,6 +16,7 @@
 - 无所有者的静态函数 Callable 在 Callable 生命周期内保持为有效信号目标，实例绑定 lambda 仍执行 Object 生命周期校验；由此恢复 `HTTPRequest.request_completed` 等异步信号的静态绑定回调。
 - 附着式根脚本及内部类进入强类型 Array/Dictionary 时同时保留 provider 持有的真实原生基类与唯一规范 Script 资源，避免有效编译对象被误判为普通 `RefCounted` 或第三方 GDExtension 实例而遭容器拒绝。
 - 强类型容器形成 C++ 身份前统一同一脚本类的短名、限定名及生成原生名，使字段、函数返回值、链式调用与局部变量始终使用同一个 ABI 稳定的 Array/Dictionary 特化。
+- 规范强类型容器 Script 资源不再依赖生成描述符的登记先后顺序；跨脚本默认值可在目标描述符登记前预留精确身份，随后在同一资源上绑定契约，不产生启动错误，也不退化为无类型容器。
 - 穷举校验 Godot 4.4～4.7 元数据中的全部多态资源属性访问器契约，覆盖所有兼容 ShaderMaterial 的 Canvas、粒子、雾、天空、几何体、CSG、Mesh 与 Tile 材质槽位。
 - 独立导出运行夹具增加动态 `ShaderMaterial` 赋值、逐帧 Shader uniform 更新、本机回环 HTTP 图片传输、响应头校验、PNG 解码及 `ImageTexture` 节点赋值的端到端验证。
 
