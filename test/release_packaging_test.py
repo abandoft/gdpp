@@ -54,7 +54,7 @@ RUNTIME_CONTENT = {
     ),
 }
 RUNTIME_FIELDS = {
-    "runtime_abi": "10",
+    "runtime_abi": "11",
     **{
         field: hashlib.sha256(content.encode("utf-8")).hexdigest()
         for field, (_, content) in RUNTIME_CONTENT.items()
@@ -63,7 +63,7 @@ RUNTIME_FIELDS = {
 COMMON_FIELDS = {
     "distribution_binding": "template_release",
     "distribution_optimization": "Release",
-    "gdpp_version": "1.7.7",
+    "gdpp_version": "1.7.8",
     "cxx_standard": "17",
     "exceptions": "disabled",
     **RUNTIME_FIELDS,
@@ -96,7 +96,7 @@ def create_host_component(root: Path, component_host: str) -> Path:
     addon = root / f"gdpp-host-{component_host}" / "addons/gdpp"
     for relative in package_release.STATIC_ADDON_FILES:
         write(addon / relative)
-    write(addon / "plugin.cfg", '[plugin]\nversion="1.7.7"\n')
+    write(addon / "plugin.cfg", '[plugin]\nversion="1.7.8"\n')
     write(addon / "gdpp.gdextension", '[configuration]\ncompatibility_minimum = "4.4"\n')
     write(addon / "binary" / host.compiler_library, f"compiler-{component_host}")
     write(addon / "binary" / host.fallback_library, f"fallback-{component_host}")
@@ -227,7 +227,7 @@ class ReleasePackagingTest(unittest.TestCase):
             self.temporary / f"release-{host}",
             host,
         )
-        self.assertEqual(version, "1.7.7")
+        self.assertEqual(version, "1.7.8")
         return stage, archive_name
 
     def test_three_packages_contain_all_versions_and_only_supported_targets(self) -> None:
@@ -316,7 +316,7 @@ class ReleasePackagingTest(unittest.TestCase):
         manifest = self.components / "gdpp-android-arm64-godot-4.7/sdk.manifest"
         manifest.write_text(
             manifest.read_text(encoding="utf-8").replace(
-                "runtime_abi 10", "runtime_abi 11"
+                "runtime_abi 11", "runtime_abi 12"
             ),
             encoding="utf-8",
         )
