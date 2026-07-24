@@ -103,7 +103,9 @@ jobs:
           destination="$HOME/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
           mkdir -p "$destination"
           unzip -p "$root/templates.tpz" templates/ios.zip > "$destination/ios.zip"
+          unzip -p "$root/templates.tpz" templates/macos.zip > "$destination/macos.zip"
           unzip -t "$destination/ios.zip"
+          unzip -t "$destination/macos.zip"
       - name: Build compiler plugin
         shell: bash
         env:
@@ -111,7 +113,8 @@ jobs:
         run: |
           cmake --preset plugin \
             -DGDPP_GODOT_EXECUTABLE="$GODOT" \
-            -DGDPP_PACKAGE_GODOT_VERSIONS=4.6
+            -DGDPP_PACKAGE_GODOT_VERSIONS=4.6 \
+            '-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64'
           cmake --build --preset plugin --parallel
           ctest --preset plugin --output-on-failure
       - name: Export binary-only Xcode project
@@ -175,13 +178,51 @@ jobs:
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             ARCHS="$simulator_arch" ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO build \
-            | tee "$root/xcodebuild.log"
+              | tee "$root/xcodebuild.log"
           grep -q '\*\* BUILD SUCCEEDED \*\*' "$root/xcodebuild.log"
+      - name: Export and run an immutable Universal 2 provider project
+        shell: bash
+        env:
+          GODOT: ${{ steps.godot.outputs.executable }}
+        run: |
+          set -euo pipefail
+          fixture=build/plugin/attached-extension-project
+          root="$GITHUB_WORKSPACE/build/ci/attached-macos"
+          state="$root/extension-state.json"
+          mkdir -p "$root"
+          cp "$fixture/extension_list.compiler.cfg" \
+            "$fixture/.godot/extension_list.cfg"
+          "$GODOT" --headless --editor --path "$fixture" --import \
+            2>&1 | tee "$root/import.log"
+          python3 tools/verify_export_immutability.py snapshot \
+            --project "$fixture" --state "$state"
+          "$GODOT" --headless --editor --path "$fixture" \
+            --export-release 'macOS Universal 2' "$root/GDPPAttached.app" \
+            2>&1 | tee "$root/export.log"
+          python3 tools/verify_export_immutability.py verify \
+            --project "$fixture" --state "$state"
+
+          frameworks="$root/GDPPAttached.app/Contents/Frameworks"
+          test "$(find "$frameworks" -maxdepth 1 -type f \
+            -name 'libgdpp.release.macos.universal.dylib' | wc -l)" -eq 1
+          test "$(find "$frameworks" -maxdepth 1 -type f \
+            -name 'libgdpp_test_vendor.release.macos.universal.dylib' | wc -l)" -eq 1
+          "$root/GDPPAttached.app/Contents/MacOS/GDPP Attached Extension Integration" \
+            --headless 2>&1 | tee "$root/runtime.log"
+          grep -q '^GDPP_ATTACHED_EXPORT_RUNTIME_OK$' "$root/runtime.log"
+          grep -q 'GDPP_AOT_SUMMARY scenes=' "$root/export.log"
+          if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|Parse Error:|WARNING:|Unable to open' \
+              "$root/import.log" "$root/export.log" "$root/runtime.log"; then
+            echo 'Universal 2 provider export emitted a forbidden diagnostic.'
+            exit 1
+          fi
       - name: Upload iOS integration evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gdpp-ios-xcode-godot-4.6.2
-          path: example/addons/gdpp/build/ios
+          path: |
+            example/addons/gdpp/build/ios
+            build/ci/attached-macos
           if-no-files-found: warn
           retention-days: 14
