@@ -365,6 +365,26 @@ const GodotPropertyRecord* GodotApi::find_property(std::string_view owner, std::
     return nullptr;
 }
 
+Type GodotApi::property_value_type(const GodotPropertyRecord& property) const noexcept {
+    if (!property.direct) {
+        if (property.getter[0] != '\0') {
+            if (const auto* getter = find_method(property.owner, property.getter);
+                getter && getter->return_type[0] != '\0' &&
+                std::string_view{getter->return_type} != "void") {
+                return type_from_godot_api(getter->return_type);
+            }
+        }
+        if (property.setter[0] != '\0') {
+            if (const auto* setter = find_method(property.owner, property.setter)) {
+                const auto value_index = property.index >= 0 ? std::size_t{1} : std::size_t{0};
+                if (const auto* value = argument(*setter, value_index))
+                    return type_from_godot_api(value->type);
+            }
+        }
+    }
+    return type_from_godot_api(property.type);
+}
+
 const GodotSignalRecord* GodotApi::find_signal(std::string_view owner, std::string_view name,
                                                bool include_inherited) const noexcept {
     for (std::size_t depth = 0; !owner.empty() && depth < class_count(); ++depth) {

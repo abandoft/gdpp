@@ -2218,7 +2218,7 @@ std::string CodeGenerator::emit_direct_builtin_member(std::string_view owner, st
     else
         result = object + "." + sanitize_identifier(std::string{member});
     if (const auto* property = api_.find_property(owner, member))
-        return emit_api_return(type_from_godot_api(property->type), std::move(result));
+        return emit_api_return(api_.property_value_type(*property), std::move(result));
     return result;
 }
 

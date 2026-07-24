@@ -1753,7 +1753,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     &expression, ApiResolution{ApiResolutionKind::type_reference, engine_type->name,
                                                "", "", result, 0, 0, false, true});
             } else if (const auto* property = api_.find_property(base_type_, expression.value())) {
-                result = type_from_godot_api(property->type);
+                result = api_.property_value_type(*property);
                 model_.api_resolutions_.emplace(
                     &expression, ApiResolution{ApiResolutionKind::property, property->owner,
                                                property->getter, property->setter, result, 0, 0,
@@ -1775,7 +1775,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                 &expression, ApiResolution{ApiResolutionKind::type_reference, type->name, "", "",
                                            result, 0, 0, false, true});
         } else if (const auto* property = api_.find_property(base_type_, expression.value())) {
-            result = type_from_godot_api(property->type);
+            result = api_.property_value_type(*property);
             model_.api_resolutions_.emplace(
                 &expression, ApiResolution{ApiResolutionKind::property, property->owner,
                                            property->getter, property->setter, result, 0, 0, false,
@@ -3361,7 +3361,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                     }
                     if (const auto* property =
                             api_.find_property(script_owner->godot_base_type, expression.value())) {
-                        result = type_from_godot_api(property->type);
+                        result = api_.property_value_type(*property);
                         model_.api_resolutions_.emplace(
                             &expression,
                             ApiResolution{script_owner->attached
@@ -3609,7 +3609,7 @@ Type SemanticAnalyzer::analyze_expression(const ast::Expression& expression) {
                                             ApiResolution{ApiResolutionKind::script_signal, owner,
                                                           "", "", result, 0, 0, false, false});
         } else if (const auto* property = api_.find_property(owner, expression.value())) {
-            result = type_from_godot_api(property->type);
+            result = api_.property_value_type(*property);
             model_.api_resolutions_.emplace(
                 &expression, ApiResolution{ApiResolutionKind::property, property->owner,
                                            property->getter, property->setter, result, 0, 0, false,
