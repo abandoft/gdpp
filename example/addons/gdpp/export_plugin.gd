@@ -20,6 +20,17 @@ const COMPILER_DESCRIPTOR_BACKUP := "res://.godot/gdpp_compiler_descriptor.expor
 const PROVIDER_DESCRIPTORS_BACKUP := (
     "res://.godot/gdpp_provider_descriptors.export-backup.json"
 )
+const ARCHITECTURE_FEATURES := [
+    "x86_32",
+    "x86_64",
+    "arm32",
+    "arm64",
+    "rv64",
+    "ppc64",
+    "wasm32",
+    "loongarch64",
+    "universal",
+]
 const SCRIPT_CLASS_CACHE := "res://.godot/global_script_class_cache.cfg"
 const GODOT_EXPORT_CACHE_DIRECTORY := "res://.godot/exported"
 const EXPORT_TRANSFORM_REVISION := 22
@@ -36,7 +47,7 @@ var _compiled_scripts: Dictionary = {}
 var _abstract_scripts: Dictionary = {}
 var _editor_only_scripts: Dictionary = {}
 var _runtime_descriptor := ""
-var _export_scan_descriptor := ""
+var _runtime_library_path := ""
 var _output_library := ""
 var _build_id := ""
 var _target_platform := ""
@@ -46,11 +57,12 @@ var _build_profile := ""
 var _export_extension_registry := ""
 var _export_script_class_cache := ""
 var _include_project_extension := false
+var _export_features: Dictionary = {}
 var _extension_registry_original := ""
 var _extension_registry_modified := false
-var _compiler_descriptor_original := ""
-var _compiler_descriptor_modified := false
-var _provider_descriptor_originals: Dictionary = {}
+var _provider_descriptor_overrides: Dictionary = {}
+var _registered_shared_objects: Dictionary = {}
+var _registered_apple_entries: Dictionary = {}
 var _has_resource_scripts := false
 var _export_output_path := ""
 var _autoload_files: Dictionary = {}
@@ -75,7 +87,10 @@ func _get_name() -> String:
     # that directory key. Include the transformation revision and native build
     # ID in the name as a compatibility workaround so a repaired compiler or
     # exporter can never reuse scenes cached by an older transformation.
-    return "GDPP AOT scene transformer r%d %s" % [
+    # This plugin must run before Godot's built-in "GDExtension" exporter. It
+    # virtualizes GDPP's editor-only descriptor and selected Universal 2
+    # provider descriptors before the built-in scanner can inspect them.
+    return "AOT GDPP scene transformer r%d %s" % [
         EXPORT_TRANSFORM_REVISION,
         _build_id,
     ]
@@ -128,6 +143,8 @@ func _export_begin(
     _target_architecture = _architecture_from_features(features)
     _target_variant = _web_variant_from_features(features)
     _build_profile = "debug" if is_debug else "release"
+    for feature: String in features:
+        _export_features[feature] = true
     if get_option(STRIP_OPTION) != true:
         print("GDPP: AOT source stripping is disabled for this export preset")
         # Godot 4.5 can reuse a remapped scene produced by an earlier AOT preset even when the
@@ -139,14 +156,22 @@ func _export_begin(
             return
         # This is an intentional pure-GDScript export, not a failed AOT build. Do not load the
         # empty fallback extension or retain any project-native library in the comparison/package.
-        # Godot scans every .gdextension before _export_file() can skip it, so present the tiny
-        # fallback only during that scan and remove the copied image at transaction end.
         _activate_fallback_descriptors(is_debug)
-        _prepare_extension_registry(false)
+        if not _prepare_extension_registry(false):
+            return
         return
     if not _prepare_export(features, is_debug):
         _activate_fallback_descriptors(is_debug)
-        _prepare_extension_registry(_target_platform in ["macos", "windows", "linux"])
+        if not _prepare_extension_registry(
+            _target_platform in ["macos", "windows", "linux"]
+        ):
+            return
+        if (
+            not _strict_failure_injected
+            and _include_project_extension
+            and not _register_runtime_library()
+        ):
+            return
         return
 
     if not _prepare_script_class_cache():
@@ -154,15 +179,26 @@ func _export_begin(
         # Android and Web have no host-loadable fallback library. Keeping a
         # project descriptor after a failed AOT transaction would make Godot
         # package a missing or wrong-ABI artifact instead of failing closed.
-        _prepare_extension_registry(_target_platform in ["macos", "windows", "linux"])
+        if not _prepare_extension_registry(
+            _target_platform in ["macos", "windows", "linux"]
+        ):
+            return
+        if (
+            not _strict_failure_injected
+            and _include_project_extension
+            and not _register_runtime_library()
+        ):
+            return
         return
     if not _prepare_extension_registry():
         return
+    if not _register_runtime_library():
+        return
     _activate_autoloads()
 
-    # The temporary scan descriptor is the single source of truth for native-library discovery.
-    # Registering the same file through add_shared_object() as well makes Godot's Android exporter
-    # append duplicate ZIP entries (and can multiply a large customer library threefold).
+    # GDPP owns registration of the project artifact. Its physical descriptor remains editor-only,
+    # while _export_file() supplies runtime bytes and prevents the built-in GDExtension scanner from
+    # observing that editor descriptor. This leaves exactly one registration path on every target.
     _ready = true
     print(
         "GDPP: %s %s/%s project library is ready for binary-only export" % [
@@ -319,10 +355,9 @@ func _export_file(path: String, _type: String, _features: PackedStringArray) -> 
         skip()
         return
 
-    # Keep one physical descriptor path in both editor and export. During export its contents are
-    # transactionally rewritten for native-library discovery, while the package receives the
-    # runtime descriptor bytes at that same path. Godot's forced extension-list filter only keeps
-    # physical project paths; a virtual second path is silently removed on Godot 4.6+.
+    # Keep one physical descriptor path in both editor and export without ever changing its
+    # on-disk editor contents. This plugin sorts before Godot's built-in GDExtension exporter,
+    # supplies the runtime bytes at the same virtual package path, then skips the physical file.
     if path == COMPILER_DESCRIPTOR:
         if _include_project_extension and not _runtime_descriptor.is_empty():
             add_file(COMPILER_DESCRIPTOR, _runtime_descriptor.to_utf8_buffer(), false)
@@ -334,10 +369,10 @@ func _export_file(path: String, _type: String, _features: PackedStringArray) -> 
         skip()
         return
 
-    # macOS Universal 2 export temporarily normalizes third-party descriptors for Godot's
-    # architecture scanner. Ship the provider's byte-for-byte original runtime descriptor.
-    if _provider_descriptor_originals.has(path):
-        add_file(path, str(_provider_descriptor_originals[path]).to_utf8_buffer(), false)
+    # Selected Universal 2 providers are registered by GDPP without changing customer files.
+    # Their byte-for-byte original runtime descriptor is still shipped in the package.
+    if _provider_descriptor_overrides.has(path):
+        add_file(path, str(_provider_descriptor_overrides[path]).to_utf8_buffer(), false)
         skip()
         return
 
@@ -581,6 +616,7 @@ func _prepare_export_impl(features: PackedStringArray, is_debug: bool) -> bool:
         return false
 
     var library_path := "res://addons/gdpp/binary/%s" % _output_library.get_file()
+    _runtime_library_path = library_path
     _runtime_descriptor = (
         "[configuration]\n\n"
         + "entry_symbol = \"gdpp_project_library_init\"\n"
@@ -588,17 +624,6 @@ func _prepare_export_impl(features: PackedStringArray, is_debug: bool) -> bool:
         + "reloadable = false\n\n"
         + "[libraries]\n\n"
         + _runtime_library_entries(
-            library_path,
-            "threads" if _target_platform == "web" and _target_variant == "threads" else ""
-        )
-    )
-    _export_scan_descriptor = (
-        "[configuration]\n\n"
-        + "entry_symbol = \"gdpp_project_library_init\"\n"
-        + "compatibility_minimum = \"%s\"\n" % target_version
-        + "reloadable = false\n\n"
-        + "[libraries]\n\n"
-        + _export_scan_library_entries(
             library_path,
             "threads" if _target_platform == "web" and _target_variant == "threads" else ""
         )
@@ -892,16 +917,6 @@ func _runtime_library_entries(library_path: String, feature := "") -> String:
     return "%s.%s = \"%s\"\n" % [prefix, _target_architecture, library_path]
 
 
-func _export_scan_library_entries(library_path: String, feature := "") -> String:
-    var prefix := _target_platform
-    if not feature.is_empty():
-        prefix += "." + feature
-    # Godot's GDExtension export plugin treats `universal` as a special export
-    # architecture and expands it to arm64/x86_64. Supplying all three keys
-    # makes the same dylib appear more than once depending on HashSet order.
-    return "%s.%s = \"%s\"\n" % [prefix, _target_architecture, library_path]
-
-
 func _shared_object_tags() -> PackedStringArray:
     var tags := PackedStringArray()
     if not _target_platform.is_empty():
@@ -914,6 +929,95 @@ func _shared_object_tags() -> PackedStringArray:
     if _target_platform == "web" and _target_variant == "threads":
         tags.append("threads")
     return tags
+
+
+func _register_runtime_library() -> bool:
+    if (
+        not _include_project_extension
+        or _runtime_descriptor.is_empty()
+        or _runtime_library_path.is_empty()
+    ):
+        return true
+    if not _register_shared_object_once(_runtime_library_path, _shared_object_tags()):
+        return false
+    if (
+        _target_platform == "ios"
+        and (
+            _runtime_library_path.ends_with(".a")
+            or _runtime_library_path.ends_with(".xcframework")
+        )
+    ):
+        return _register_apple_embedded_entry("gdpp_project_library_init")
+    return true
+
+
+func _register_shared_object_once(
+    resource_path: String,
+    tags: PackedStringArray,
+    target := ""
+) -> bool:
+    if resource_path.is_empty():
+        _fail_export("cannot register an empty native-library path")
+        return false
+    var absolute_path := ProjectSettings.globalize_path(resource_path)
+    if (
+        not FileAccess.file_exists(resource_path)
+        and not FileAccess.file_exists(absolute_path)
+        and not DirAccess.dir_exists_absolute(absolute_path)
+    ):
+        _fail_export("native export dependency does not exist: %s" % resource_path)
+        return false
+    var registration_key := "%s\n%s" % [resource_path, target]
+    if _registered_shared_objects.has(registration_key):
+        return true
+    add_shared_object(resource_path, tags, target)
+    _registered_shared_objects[registration_key] = true
+    return true
+
+
+func _register_apple_embedded_entry(entry_symbol: String) -> bool:
+    if _registered_apple_entries.has(entry_symbol):
+        return true
+    var modern_api := has_method(&"add_apple_embedded_platform_cpp_code")
+    var legacy_api := has_method(&"add_ios_cpp_code")
+    if not modern_api and not legacy_api:
+        _fail_export("Godot does not expose Apple embedded export registration APIs")
+        return false
+
+    var callback_symbol := (
+        "add_apple_embedded_platform_init_callback"
+        if modern_api
+        else "add_ios_init_callback"
+    )
+    var additional_code := (
+        "extern void register_dynamic_symbol(char *name, void *address);\n"
+        + "extern void $CALLBACK(void (*cb)());\n"
+        + "\n"
+        + "extern \"C\" void $ENTRY();\n"
+        + "void $ENTRY_init() {\n"
+        + (
+            "  if (&$ENTRY) "
+            + "register_dynamic_symbol((char *)\"$ENTRY\", (void *)$ENTRY);\n"
+        )
+        + "}\n"
+        + "struct $ENTRY_struct {\n"
+        + "  $ENTRY_struct() {\n"
+        + "    $CALLBACK($ENTRY_init);\n"
+        + "  }\n"
+        + "};\n"
+        + "$ENTRY_struct $ENTRY_struct_instance;\n\n"
+    )
+    additional_code = additional_code.replace("$CALLBACK", callback_symbol)
+    additional_code = additional_code.replace("$ENTRY", entry_symbol)
+    var linker_flags := "-Wl,-U,_%s" % entry_symbol
+    if modern_api:
+        call(&"add_apple_embedded_platform_cpp_code", additional_code)
+        call(&"add_apple_embedded_platform_linker_flags", linker_flags)
+    else:
+        call(&"add_ios_cpp_code", additional_code)
+        call(&"add_ios_linker_flags", linker_flags)
+    _registered_apple_entries[entry_symbol] = true
+    return true
 
 
 func _collect_scene_replacement_plan(
@@ -1705,34 +1809,49 @@ func _inject_strict_export_failure() -> void:
 func _prepare_extension_registry(include_project_extension := true) -> bool:
     _include_project_extension = include_project_extension
     var retained: PackedStringArray = []
+    var compiler_registered := false
+    var original := ""
     if FileAccess.file_exists(EXTENSION_REGISTRY):
-        for line in FileAccess.get_file_as_string(EXTENSION_REGISTRY).split("\n", false):
+        original = FileAccess.get_file_as_string(EXTENSION_REGISTRY)
+        for line in original.split("\n", false):
             var value := line.strip_edges()
             if value.is_empty():
                 continue
             if value == COMPILER_DESCRIPTOR:
+                compiler_registered = true
                 continue
             if value.begins_with(OUTPUT_DIRECTORY + "/"):
                 continue
             if not retained.has(value):
                 retained.append(value)
-    if not _prepare_provider_scan_descriptors(retained):
+    if not _prepare_provider_export_overrides(retained):
         return false
     if include_project_extension:
+        if not compiler_registered:
+            _fail_export(
+                (
+                    "Godot's extension registry does not contain '%s'; "
+                    + "rescan the project after installing GDPP"
+                )
+                % COMPILER_DESCRIPTOR
+            )
+            return false
         retained.append(COMPILER_DESCRIPTOR)
     _export_extension_registry = "" if retained.is_empty() else "\n".join(retained) + "\n"
-    # `.godot/extension_list.cfg` is generated metadata and is not guaranteed to pass through
-    # `_export_file()`. Add the sanitized registry explicitly; otherwise a virtual runtime
-    # descriptor can be present while independent PCK consumers have no load-order contract.
+
+    # Successful AOT and desktop fallback exports keep Godot's registry byte-stable. The physical
+    # editor descriptor already occupies the runtime descriptor's virtual path, so Godot's forced
+    # registry filter preserves that path while _export_file() replaces only the packaged bytes.
+    if include_project_extension:
+        return true
+
+    # A deliberate source-only export (or a non-desktop source fallback) has no runtime extension.
+    # Godot 4.4-4.7 regenerates this forced metadata after plugin callbacks, so this one bounded
+    # transaction is still required to remove GDPP's descriptor from that package. It only touches
+    # generated `.godot` metadata; editor and customer extension descriptors remain immutable.
     if not _export_extension_registry.is_empty():
         add_file(EXTENSION_REGISTRY, _export_extension_registry.to_utf8_buffer(), false)
-    var original := ""
-    if FileAccess.file_exists(EXTENSION_REGISTRY):
-        original = FileAccess.get_file_as_string(EXTENSION_REGISTRY)
     if original != _export_extension_registry:
-        # Godot 4.5 regenerates extension_list.cfg after _export_file() callbacks.
-        # Temporarily replace the editor registry itself so its forced export pass
-        # cannot reintroduce the compiler-only GDExtension into the game package.
         if not _write_text_file(EXTENSION_REGISTRY_BACKUP, original):
             _fail_export("cannot create the extension registry transaction backup")
             return false
@@ -1742,9 +1861,6 @@ func _prepare_extension_registry(include_project_extension := true) -> bool:
             return false
         _extension_registry_original = original
         _extension_registry_modified = true
-    if not _prepare_compiler_descriptor():
-        _restore_export_transaction()
-        return false
     return true
 
 
@@ -1808,30 +1924,15 @@ func _remove_directory_contents(absolute: String) -> bool:
     return success
 
 
-func _prepare_compiler_descriptor() -> bool:
-    if _export_scan_descriptor.is_empty() or not FileAccess.file_exists(COMPILER_DESCRIPTOR):
-        return true
-    var original := FileAccess.get_file_as_string(COMPILER_DESCRIPTOR)
-    if original == _export_scan_descriptor:
-        return true
-    if not _write_text_file(COMPILER_DESCRIPTOR_BACKUP, original):
-        _fail_export("cannot create the compiler descriptor transaction backup")
-        return false
-    if not _write_text_file(COMPILER_DESCRIPTOR, _export_scan_descriptor):
-        DirAccess.remove_absolute(ProjectSettings.globalize_path(COMPILER_DESCRIPTOR_BACKUP))
-        _fail_export("cannot prepare the project library scan descriptor")
-        return false
-    _compiler_descriptor_original = original
-    _compiler_descriptor_modified = true
-    return true
-
-
-func _prepare_provider_scan_descriptors(descriptors: PackedStringArray) -> bool:
+func _prepare_provider_export_overrides(descriptors: PackedStringArray) -> bool:
     if _target_platform != "macos" or _target_architecture != "universal":
         return true
 
-    var originals: Dictionary = {}
-    var rewritten: Dictionary = {}
+    var normalized_features: Dictionary = _export_features.duplicate()
+    for architecture: String in ARCHITECTURE_FEATURES:
+        normalized_features.erase(architecture)
+    normalized_features["universal"] = true
+
     for path: String in descriptors:
         if path.get_extension().to_lower() != "gdextension":
             continue
@@ -1902,20 +2003,93 @@ func _prepare_provider_scan_descriptors(descriptors: PackedStringArray) -> bool:
             config.erase_section_key("libraries", str(pair.arm))
             config.erase_section_key("libraries", str(pair.x86))
             config.set_value("libraries", universal_key, str(pair.library))
-        originals[path] = original
-        rewritten[path] = config.encode_to_text()
 
-    if rewritten.is_empty():
-        return true
-    if not _write_text_file(PROVIDER_DESCRIPTORS_BACKUP, JSON.stringify(originals)):
-        _fail_export("cannot create the provider descriptor transaction backup")
-        return false
-    _provider_descriptor_originals = originals
-    for path: String in rewritten:
-        if not _write_text_file(path, str(rewritten[path])):
-            _restore_provider_descriptors()
-            _fail_export("cannot prepare provider extension scan descriptor: %s" % path)
+        var selection := _select_extension_library(config, path, normalized_features)
+        if selection.is_empty():
+            _fail_export(
+                "provider extension '%s' has no Universal 2 library for this export" % path
+            )
             return false
+        var selected_path := str(selection.get("path", ""))
+        if not _is_universal_macos_library(selected_path):
+            _fail_export(
+                "provider extension '%s' selected a non-Universal library '%s'"
+                % [path, selected_path]
+            )
+            return false
+        var selected_tags: PackedStringArray = selection.get("tags", PackedStringArray())
+        if not _register_shared_object_once(selected_path, selected_tags):
+            return false
+        if not _register_extension_dependencies(
+            config,
+            path,
+            normalized_features
+        ):
+            return false
+        _provider_descriptor_overrides[path] = original
+    return true
+
+
+func _select_extension_library(
+    config: ConfigFile,
+    descriptor_path: String,
+    features: Dictionary
+) -> Dictionary:
+    var best_path := ""
+    var best_tags := PackedStringArray()
+    for key: String in config.get_section_keys("libraries"):
+        var tags := key.split(".", false)
+        var matches := true
+        for tag: String in tags:
+            if not features.has(tag.strip_edges()):
+                matches = false
+                break
+        if not matches or tags.size() <= best_tags.size():
+            continue
+        best_path = str(config.get_value("libraries", key, ""))
+        best_tags = tags
+    if best_path.is_empty():
+        return {}
+    if best_path.is_relative_path():
+        best_path = descriptor_path.get_base_dir().path_join(best_path)
+    return {
+        "path": best_path,
+        "tags": best_tags,
+    }
+
+
+func _register_extension_dependencies(
+    config: ConfigFile,
+    descriptor_path: String,
+    features: Dictionary
+) -> bool:
+    if not config.has_section("dependencies"):
+        return true
+    for key: String in config.get_section_keys("dependencies"):
+        var tags := key.split(".", false)
+        var matches := true
+        for tag: String in tags:
+            if not features.has(tag.strip_edges()):
+                matches = false
+                break
+        if not matches:
+            continue
+        var raw_dependencies: Variant = config.get_value("dependencies", key, {})
+        if not raw_dependencies is Dictionary:
+            _fail_export(
+                "provider extension '%s' has malformed dependencies for '%s'"
+                % [descriptor_path, key]
+            )
+            return false
+        var dependencies: Dictionary = raw_dependencies
+        for dependency_key: Variant in dependencies:
+            var dependency_path := str(dependency_key)
+            if dependency_path.is_relative_path():
+                dependency_path = descriptor_path.get_base_dir().path_join(dependency_path)
+            var target := str(dependencies[dependency_key])
+            if not _register_shared_object_once(dependency_path, tags, target):
+                return false
+        break
     return true
 
 
@@ -1941,39 +2115,34 @@ func _restore_export_transaction() -> void:
 
 
 func _restore_provider_descriptors() -> void:
-    if (
-        _provider_descriptor_originals.is_empty()
-        and FileAccess.file_exists(PROVIDER_DESCRIPTORS_BACKUP)
-    ):
-        var recovered: Variant = JSON.parse_string(
-            FileAccess.get_file_as_string(PROVIDER_DESCRIPTORS_BACKUP)
-        )
-        if not recovered is Dictionary:
-            push_error("GDPP export: cannot parse the provider descriptor transaction backup")
-            return
-        _provider_descriptor_originals = recovered
-    if _provider_descriptor_originals.is_empty():
+    # Migration recovery for an interrupted export performed by GDPP 1.7.8 or
+    # earlier. New exports never write provider descriptors or this backup.
+    if not FileAccess.file_exists(PROVIDER_DESCRIPTORS_BACKUP):
         return
-    for path: String in _provider_descriptor_originals:
-        if not _write_text_file(path, str(_provider_descriptor_originals[path])):
+    var recovered: Variant = JSON.parse_string(
+        FileAccess.get_file_as_string(PROVIDER_DESCRIPTORS_BACKUP)
+    )
+    if not recovered is Dictionary:
+        push_error("GDPP export: cannot parse the provider descriptor transaction backup")
+        return
+    var originals: Dictionary = recovered
+    for path: String in originals:
+        if not _write_text_file(path, str(originals[path])):
             push_error("GDPP export: cannot restore provider descriptor '%s'" % path)
             return
     DirAccess.remove_absolute(ProjectSettings.globalize_path(PROVIDER_DESCRIPTORS_BACKUP))
-    _provider_descriptor_originals.clear()
 
 
 func _restore_compiler_descriptor() -> void:
-    if not _compiler_descriptor_modified and FileAccess.file_exists(COMPILER_DESCRIPTOR_BACKUP):
-        _compiler_descriptor_original = FileAccess.get_file_as_string(COMPILER_DESCRIPTOR_BACKUP)
-        _compiler_descriptor_modified = true
-    if not _compiler_descriptor_modified:
+    # Migration recovery for the old descriptor-rewrite transaction. The
+    # compiler descriptor remains immutable in all new exports.
+    if not FileAccess.file_exists(COMPILER_DESCRIPTOR_BACKUP):
         return
-    if not _write_text_file(COMPILER_DESCRIPTOR, _compiler_descriptor_original):
+    var original := FileAccess.get_file_as_string(COMPILER_DESCRIPTOR_BACKUP)
+    if not _write_text_file(COMPILER_DESCRIPTOR, original):
         push_error("GDPP export: cannot restore the editor compiler descriptor")
         return
     DirAccess.remove_absolute(ProjectSettings.globalize_path(COMPILER_DESCRIPTOR_BACKUP))
-    _compiler_descriptor_original = ""
-    _compiler_descriptor_modified = false
 
 
 func _restore_extension_registry() -> void:
@@ -2031,7 +2200,7 @@ func _activate_fallback_descriptors(is_debug: bool) -> void:
     }.get(_target_platform, "")
     if extension.is_empty():
         _runtime_descriptor = ""
-        _export_scan_descriptor = ""
+        _runtime_library_path = ""
         return
     var prefix := "" if _target_platform == "windows" else "lib"
     var filename := "%sgdpp_fallback.%s.%s.%s" % [
@@ -2041,6 +2210,7 @@ func _activate_fallback_descriptors(is_debug: bool) -> void:
         extension,
     ]
     var library_path := "res://addons/gdpp/binary/%s" % filename
+    _runtime_library_path = library_path
     var feature := "debug" if is_debug else "release"
     var descriptor := (
         "[configuration]\n\n"
@@ -2051,14 +2221,6 @@ func _activate_fallback_descriptors(is_debug: bool) -> void:
         + _runtime_library_entries(library_path, feature)
     )
     _runtime_descriptor = descriptor
-    _export_scan_descriptor = (
-        "[configuration]\n\n"
-        + "entry_symbol = \"gdpp_export_fallback_library_init\"\n"
-        + "compatibility_minimum = \"4.4\"\n"
-        + "reloadable = false\n\n"
-        + "[libraries]\n\n"
-        + _export_scan_library_entries(library_path, feature)
-    )
 
 
 func _prepare_script_class_cache() -> bool:
@@ -2120,7 +2282,7 @@ func _reset_export_state() -> void:
     _abstract_scripts.clear()
     _editor_only_scripts.clear()
     _runtime_descriptor = ""
-    _export_scan_descriptor = ""
+    _runtime_library_path = ""
     _output_library = ""
     _build_id = ""
     _target_platform = ""
@@ -2129,7 +2291,10 @@ func _reset_export_state() -> void:
     _build_profile = ""
     _export_extension_registry = ""
     _export_script_class_cache = ""
-    _provider_descriptor_originals.clear()
+    _export_features.clear()
+    _provider_descriptor_overrides.clear()
+    _registered_shared_objects.clear()
+    _registered_apple_entries.clear()
     _include_project_extension = false
     _has_resource_scripts = false
     _export_output_path = ""

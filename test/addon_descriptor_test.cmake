@@ -67,22 +67,17 @@ if(editor_only_metadata_offset EQUAL -1)
     message(FATAL_ERROR
         "Compiler service does not expose editor-only script metadata to the exporter")
 endif()
-string(FIND "${export_plugin}" "add_shared_object(\n        library_path" duplicate_registration)
-if(NOT duplicate_registration EQUAL -1)
-    message(FATAL_ERROR
-        "Successful exports must not register a library already discovered through GDExtension")
-endif()
-string(FIND "${export_plugin}"
-    "_prepare_compiler_descriptor() or not _prepare_stable_descriptor()"
-    duplicate_descriptor_scan)
-if(NOT duplicate_descriptor_scan EQUAL -1)
-    message(FATAL_ERROR
-        "Compiler and runtime descriptors must not both discover the project library")
-endif()
 foreach(required_runtime_export IN ITEMS
-        "if not _prepare_compiler_descriptor():"
+        "return \"AOT GDPP scene transformer r%d %s\""
         "add_file(COMPILER_DESCRIPTOR, _runtime_descriptor.to_utf8_buffer(), false)"
-        "add_file(EXTENSION_REGISTRY, _export_extension_registry.to_utf8_buffer(), false)"
+        "func _register_runtime_library() -> bool:"
+        "func _register_shared_object_once("
+        "add_shared_object(resource_path, tags, target)"
+        "func _register_apple_embedded_entry(entry_symbol: String) -> bool:"
+        "add_apple_embedded_platform_cpp_code"
+        "add_ios_cpp_code"
+        "func _prepare_provider_export_overrides(descriptors: PackedStringArray) -> bool:"
+        "_provider_descriptor_overrides[path] = original"
         "func _clear_godot_export_cache() -> bool:"
         "func _remove_legacy_project_artifacts() -> bool:"
         "if not _remove_legacy_project_artifacts():"
@@ -91,6 +86,19 @@ foreach(required_runtime_export IN ITEMS
     if(runtime_export_offset EQUAL -1)
         message(FATAL_ERROR
             "Single-descriptor export transaction is missing: ${required_runtime_export}")
+    endif()
+endforeach()
+foreach(forbidden_descriptor_mutation IN ITEMS
+        "func _prepare_compiler_descriptor() -> bool:"
+        "_write_text_file(COMPILER_DESCRIPTOR, _export_scan_descriptor)"
+        "_write_text_file(PROVIDER_DESCRIPTORS_BACKUP"
+        "_write_text_file(path, str(rewritten[path]))")
+    string(FIND "${export_plugin}" "${forbidden_descriptor_mutation}"
+        descriptor_mutation_offset)
+    if(NOT descriptor_mutation_offset EQUAL -1)
+        message(FATAL_ERROR
+            "Export must not mutate editor or provider descriptors: "
+            "${forbidden_descriptor_mutation}")
     endif()
 endforeach()
 foreach(required_target_matrix IN ITEMS
