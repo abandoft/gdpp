@@ -613,10 +613,13 @@ godot::Variant instantiate_attached_script(const godot::String& source_path,
         return {};
     }
 
-    godot::Ref<AttachedCompiledScript> script;
-    script.instantiate();
-    script->set_source_path(descriptor->source_path);
-    script->set_contract_hash(descriptor->contract_hash);
+    const auto script = attached_script_resource(descriptor->source_path, error);
+    if (script.is_null()) {
+        if (!error)
+            godot::UtilityFunctions::push_error(
+                "GDPP: failed to materialize attached script resource: " + descriptor->source_path);
+        return {};
+    }
     PendingConstruction construction{descriptor->source_path, &arguments, false};
     auto* previous = pending_construction;
     pending_construction = &construction;

@@ -6,17 +6,20 @@
 #include <godot_cpp/classes/script_language_extension.hpp>
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/core/property_info.hpp>
+#include <godot_cpp/core/type_info.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/string_name.hpp>
 #include <godot_cpp/variant/typed_array.hpp>
+#include <godot_cpp/variant/typed_dictionary.hpp>
 #include <godot_cpp/variant/variant.hpp>
 
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -122,6 +125,15 @@ resolve_attached_script(const godot::String& source_path, godot::String* error =
 [[nodiscard]] godot::Dictionary
 materialize_attached_script_constants(const AttachedScriptDescriptor& descriptor);
 
+class AttachedCompiledScript;
+
+// Returns the process-local canonical Script resource for a registered source identity. Godot
+// uses resource identity as part of typed Array/Dictionary compatibility, so all generated
+// containers and runtime-created instances must share this resource instead of materializing
+// equivalent-but-distinct ScriptExtension objects.
+[[nodiscard]] godot::Ref<AttachedCompiledScript>
+attached_script_resource(const godot::String& source_path, godot::String* error = nullptr);
+
 // Script types are identities attached to a Godot owner, not ClassDB subclasses of that owner.
 // These helpers provide the runtime equivalent of GDScript's `is` and `as` operations without
 // ever casting an owner pointer to a generated behavior implementation.
@@ -140,6 +152,111 @@ set_attached_editor_storage_state(godot::Object* object,
 [[nodiscard]] godot::Variant instantiate_attached_script(const godot::String& source_path,
                                                          const godot::Array& arguments = {},
                                                          godot::String* error = nullptr);
+
+// Godot represents Array[ScriptType] and Dictionary[..., ScriptType] with both the provider-owned
+// native base class and the exact Script resource. A generated attached behavior is not a native
+// subclass of its owner, so using the behavior ClassDB name alone rejects every valid element.
+// Resolve the same native-base-plus-Script contract that GDScript installs on typed containers.
+struct AttachedContainerType {
+    std::uint32_t builtin_type{godot::Variant::NIL};
+    godot::StringName class_name;
+    godot::Variant script;
+};
+
+[[nodiscard]] AttachedContainerType attached_container_type(const godot::String& source_path);
+
+template <typename Type, typename = void> struct ContainerTypeResolver {
+    [[nodiscard]] static AttachedContainerType resolve() {
+        return {static_cast<std::uint32_t>(godot::GetTypeInfo<Type>::VARIANT_TYPE), {}, {}};
+    }
+
+    [[nodiscard]] static godot::StringName reflection_name() {
+        return godot::Variant::get_type_name(
+            static_cast<godot::Variant::Type>(godot::GetTypeInfo<Type>::VARIANT_TYPE));
+    }
+};
+
+// Generated object tags expose their ClassDB constraint and, for attached scripts, the exact
+// source identity. Empty source paths retain ordinary native object-container behavior.
+template <typename Type>
+struct ContainerTypeResolver<Type, std::void_t<decltype(Type::get_class_static()),
+                                               decltype(Type::_gdpp_attached_script_path)>> {
+    [[nodiscard]] static AttachedContainerType resolve() {
+        if (Type::_gdpp_attached_script_path[0] != '\0')
+            return attached_container_type(godot::String(Type::_gdpp_attached_script_path));
+        return {godot::Variant::OBJECT, Type::get_class_static(), {}};
+    }
+
+    [[nodiscard]] static godot::StringName reflection_name() { return Type::get_class_static(); }
+};
+
+template <typename Element> class ScriptTypedArray : public godot::Array {
+  public:
+    ScriptTypedArray() { configure(); }
+
+    explicit ScriptTypedArray(const godot::Variant& value)
+        : ScriptTypedArray(godot::Array(value)) {}
+
+    explicit ScriptTypedArray(const godot::Array& value) {
+        configure();
+        if (is_same_typed(value))
+            godot::Array::operator=(value);
+        else
+            assign(value);
+    }
+
+    ScriptTypedArray(std::initializer_list<godot::Variant> values)
+        : ScriptTypedArray(godot::Array(values)) {}
+
+    void operator=(const godot::Array& value) {
+        ERR_FAIL_COND_MSG(!is_same_typed(value),
+                          "Cannot assign an Array with a different script element type.");
+        godot::Array::operator=(value);
+    }
+
+  private:
+    void configure() {
+        const auto type = ContainerTypeResolver<Element>::resolve();
+        set_typed(type.builtin_type, type.class_name, type.script);
+    }
+};
+
+template <typename Key, typename Value> class ScriptTypedDictionary : public godot::Dictionary {
+  public:
+    ScriptTypedDictionary() { configure(); }
+
+    explicit ScriptTypedDictionary(const godot::Variant& value)
+        : ScriptTypedDictionary(godot::Dictionary(value)) {}
+
+    explicit ScriptTypedDictionary(const godot::Dictionary& value) {
+        configure();
+        if (is_same_typed(value))
+            godot::Dictionary::operator=(value);
+        else
+            assign(value);
+    }
+
+    ScriptTypedDictionary(
+        std::initializer_list<godot::KeyValue<godot::Variant, godot::Variant>> values)
+        : ScriptTypedDictionary() {
+        for (const auto& entry : values)
+            set(entry.key, entry.value);
+    }
+
+    void operator=(const godot::Dictionary& value) {
+        ERR_FAIL_COND_MSG(!is_same_typed(value),
+                          "Cannot assign a Dictionary with different script key/value types.");
+        godot::Dictionary::operator=(value);
+    }
+
+  private:
+    void configure() {
+        const auto key = ContainerTypeResolver<Key>::resolve();
+        const auto value = ContainerTypeResolver<Value>::resolve();
+        set_typed(key.builtin_type, key.class_name, key.script, value.builtin_type,
+                  value.class_name, value.script);
+    }
+};
 
 [[nodiscard]] godot::Variant
 call_attached_native_base_raw(godot::Object* owner, const godot::StringName& native_class,
@@ -160,8 +277,6 @@ call_attached_native_base(godot::Object* owner, const godot::StringName& native_
                                          pointers.data(),
                                          static_cast<std::int64_t>(pointers.size()));
 }
-
-class AttachedCompiledScript;
 
 class AttachedCompiledLanguage : public godot::ScriptLanguageExtension {
     GDCLASS(AttachedCompiledLanguage, godot::ScriptLanguageExtension)
@@ -317,3 +432,96 @@ class AttachedCompiledScript : public godot::ScriptExtension {
 };
 
 } // namespace gdpp::runtime
+
+namespace godot {
+
+template <typename Element> struct GetTypeInfo<gdpp::runtime::ScriptTypedArray<Element>> {
+    static constexpr GDExtensionVariantType VARIANT_TYPE = GDEXTENSION_VARIANT_TYPE_ARRAY;
+    static constexpr GDExtensionClassMethodArgumentMetadata METADATA =
+        GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE;
+
+    static PropertyInfo get_class_info() {
+        return make_property_info(Variant::ARRAY, "", PROPERTY_HINT_ARRAY_TYPE,
+                                  gdpp::runtime::ContainerTypeResolver<Element>::reflection_name());
+    }
+};
+
+template <typename Element>
+struct GetTypeInfo<const gdpp::runtime::ScriptTypedArray<Element>&>
+    : GetTypeInfo<gdpp::runtime::ScriptTypedArray<Element>> {};
+
+template <typename Element> struct VariantCaster<gdpp::runtime::ScriptTypedArray<Element>> {
+    static gdpp::runtime::ScriptTypedArray<Element> cast(const Variant& value) {
+        return gdpp::runtime::ScriptTypedArray<Element>(value);
+    }
+};
+
+template <typename Element>
+struct VariantCaster<const gdpp::runtime::ScriptTypedArray<Element>&>
+    : VariantCaster<gdpp::runtime::ScriptTypedArray<Element>> {};
+
+template <typename Element> struct PtrToArg<gdpp::runtime::ScriptTypedArray<Element>> {
+    static gdpp::runtime::ScriptTypedArray<Element> convert(const void* value) {
+        return gdpp::runtime::ScriptTypedArray<Element>(*reinterpret_cast<const Array*>(value));
+    }
+
+    using EncodeT = Array;
+
+    static void encode(const gdpp::runtime::ScriptTypedArray<Element>& value, void* output) {
+        *reinterpret_cast<Array*>(output) = value;
+    }
+};
+
+template <typename Element>
+struct PtrToArg<const gdpp::runtime::ScriptTypedArray<Element>&>
+    : PtrToArg<gdpp::runtime::ScriptTypedArray<Element>> {};
+
+template <typename Key, typename Value>
+struct GetTypeInfo<gdpp::runtime::ScriptTypedDictionary<Key, Value>> {
+    static constexpr GDExtensionVariantType VARIANT_TYPE = GDEXTENSION_VARIANT_TYPE_DICTIONARY;
+    static constexpr GDExtensionClassMethodArgumentMetadata METADATA =
+        GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE;
+
+    static PropertyInfo get_class_info() {
+        return PropertyInfo(
+            Variant::DICTIONARY, "", PROPERTY_HINT_DICTIONARY_TYPE,
+            vformat("%s;%s", gdpp::runtime::ContainerTypeResolver<Key>::reflection_name(),
+                    gdpp::runtime::ContainerTypeResolver<Value>::reflection_name()));
+    }
+};
+
+template <typename Key, typename Value>
+struct GetTypeInfo<const gdpp::runtime::ScriptTypedDictionary<Key, Value>&>
+    : GetTypeInfo<gdpp::runtime::ScriptTypedDictionary<Key, Value>> {};
+
+template <typename Key, typename Value>
+struct VariantCaster<gdpp::runtime::ScriptTypedDictionary<Key, Value>> {
+    static gdpp::runtime::ScriptTypedDictionary<Key, Value> cast(const Variant& value) {
+        return gdpp::runtime::ScriptTypedDictionary<Key, Value>(value);
+    }
+};
+
+template <typename Key, typename Value>
+struct VariantCaster<const gdpp::runtime::ScriptTypedDictionary<Key, Value>&>
+    : VariantCaster<gdpp::runtime::ScriptTypedDictionary<Key, Value>> {};
+
+template <typename Key, typename Value>
+struct PtrToArg<gdpp::runtime::ScriptTypedDictionary<Key, Value>> {
+    static gdpp::runtime::ScriptTypedDictionary<Key, Value> convert(const void* value) {
+        return gdpp::runtime::ScriptTypedDictionary<Key, Value>(
+            *reinterpret_cast<const Dictionary*>(value));
+    }
+
+    using EncodeT = Dictionary;
+
+    static void encode(const gdpp::runtime::ScriptTypedDictionary<Key, Value>& value,
+                       void* output) {
+        *reinterpret_cast<Dictionary*>(output) = value;
+    }
+};
+
+template <typename Key, typename Value>
+struct PtrToArg<const gdpp::runtime::ScriptTypedDictionary<Key, Value>&>
+    : PtrToArg<gdpp::runtime::ScriptTypedDictionary<Key, Value>> {};
+
+} // namespace godot

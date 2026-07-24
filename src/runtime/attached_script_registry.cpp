@@ -70,6 +70,11 @@ std::map<std::string, AttachedScriptDescriptor>& registry() {
     return value;
 }
 
+std::map<std::string, godot::Ref<AttachedCompiledScript>>& script_resources() {
+    static std::map<std::string, godot::Ref<AttachedCompiledScript>> value;
+    return value;
+}
+
 std::string registry_key(const godot::String& path) {
     const godot::CharString utf8 = path.utf8();
     return {utf8.get_data(), static_cast<std::size_t>(utf8.length())};
@@ -288,6 +293,7 @@ bool register_attached_script(AttachedScriptDescriptor descriptor, godot::String
 
 void unregister_all_attached_scripts() {
     std::lock_guard<std::mutex> lock{registry_mutex()};
+    script_resources().clear();
     registry().clear();
 }
 
@@ -297,6 +303,33 @@ std::optional<AttachedScriptDescriptor> find_attached_script(const godot::String
     if (found == registry().end())
         return std::nullopt;
     return found->second;
+}
+
+godot::Ref<AttachedCompiledScript> attached_script_resource(const godot::String& source_path,
+                                                            godot::String* error) {
+    const auto normalized = source_path.simplify_path();
+    const auto key = registry_key(normalized);
+    std::lock_guard<std::mutex> lock{registry_mutex()};
+    const auto cached = script_resources().find(key);
+    if (cached != script_resources().end())
+        return cached->second;
+
+    const auto descriptor = registry().find(key);
+    if (descriptor == registry().end()) {
+        set_error(error, "attached script is not registered: " + normalized);
+        return {};
+    }
+
+    godot::Ref<AttachedCompiledScript> script;
+    script.instantiate();
+    if (script.is_null()) {
+        set_error(error, "failed to instantiate attached script resource: " + normalized);
+        return {};
+    }
+    script->set_source_path(descriptor->second.source_path);
+    script->set_contract_hash(descriptor->second.contract_hash);
+    script_resources().emplace(key, script);
+    return script;
 }
 
 std::optional<AttachedScriptDescriptor> resolve_attached_script(const godot::String& source_path,

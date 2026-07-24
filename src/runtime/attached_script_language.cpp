@@ -295,14 +295,7 @@ godot::Ref<godot::Script> AttachedCompiledScript::_get_base_script() const {
     const auto value = descriptor();
     if (!value || value->base_script_path.is_empty())
         return {};
-    godot::Ref<AttachedCompiledScript> base;
-    base.instantiate();
-    base->set_source_path(value->base_script_path);
-    const auto base_descriptor = resolve_attached_script(value->base_script_path);
-    if (!base_descriptor)
-        return {};
-    base->set_contract_hash(base_descriptor->contract_hash);
-    return base;
+    return attached_script_resource(value->base_script_path);
 }
 
 godot::StringName AttachedCompiledScript::_get_global_name() const {
@@ -314,6 +307,11 @@ bool AttachedCompiledScript::_inherits_script(const godot::Ref<godot::Script>& s
     const auto* target = godot::Object::cast_to<AttachedCompiledScript>(script.ptr());
     if (!target)
         return false;
+    // Script-typed containers can hold a separately materialized ScriptExtension resource for
+    // the same registered source identity. Treat that resource as the same script contract before
+    // walking actual base scripts.
+    if (source_path_ == target->source_path_)
+        return true;
     auto current = descriptor();
     while (current && !current->base_script_path.is_empty()) {
         if (current->base_script_path == target->source_path_)
@@ -326,6 +324,19 @@ bool AttachedCompiledScript::_inherits_script(const godot::Ref<godot::Script>& s
 godot::StringName AttachedCompiledScript::_get_instance_base_type() const {
     const auto value = descriptor();
     return value ? value->native_base_type : godot::StringName{};
+}
+
+AttachedContainerType attached_container_type(const godot::String& source_path) {
+    const auto descriptor = resolve_attached_script(source_path);
+    if (!descriptor) {
+        godot::UtilityFunctions::push_error(
+            "GDPP: cannot resolve attached typed-container script: " + source_path);
+        return {godot::Variant::OBJECT, godot::StringName("Object"), {}};
+    }
+    const auto script = attached_script_resource(descriptor->source_path);
+    if (script.is_null())
+        return {godot::Variant::OBJECT, descriptor->native_base_type, {}};
+    return {godot::Variant::OBJECT, descriptor->native_base_type, godot::Variant(script)};
 }
 
 bool AttachedCompiledScript::_has_source_code() const { return false; }
