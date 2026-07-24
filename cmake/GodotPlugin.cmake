@@ -374,7 +374,7 @@ endif()
 file(GENERATE
     OUTPUT "${GDPP_TEST_COMPILER_DESCRIPTOR}"
     CONTENT
-        "[configuration]\n\nentry_symbol = \"gdpp_library_init\"\ncompatibility_minimum = \"4.4\"\nreloadable = true\n\n[libraries]\n\n${GDPP_TEST_COMPILER_LIBRARIES}\n"
+        "[configuration]\n\nentry_symbol = \"gdpp_library_init\"\ncompatibility_minimum = \"4.4\"\nreloadable = false\n\n[libraries]\n\n${GDPP_TEST_COMPILER_LIBRARIES}\n"
 )
 
 # A tiny no-op runtime keeps ordinary GDScript exports runnable when an AOT export preflight fails.

@@ -22,6 +22,11 @@ endforeach()
 set(compiler_descriptor
     "${GDPP_TEST_SOURCE_DIR}/example/addons/gdpp/gdpp.gdextension")
 file(READ "${compiler_descriptor}" compiler_content)
+string(FIND "${compiler_content}" "reloadable = false" compiler_reloadable_offset)
+if(compiler_reloadable_offset EQUAL -1)
+    message(FATAL_ERROR
+        "Compiler descriptor must not advertise unsupported GDExtension hot reload")
+endif()
 set(compiler_entries "macos.editor.arm64" "macos.editor.x86_64")
 set(compiler_libraries
     "libgdpp_compiler.macos.arm64.dylib"
