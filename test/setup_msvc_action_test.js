@@ -42,6 +42,29 @@ assert.throws(() => {
     );
 }, /multiline value/u);
 
+let invocation;
+const captured = setup.captureEnvironment(
+    "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Auxiliary\\Build\\vcvarsall.bat",
+    "x64",
+    (...parameters) => {
+        invocation = parameters;
+        return {
+            error: undefined,
+            status: 0,
+            stdout: "VSCMD_ARG_TGT_ARCH=x64\r\nINCLUDE=C:\\MSVC\\include\r\n",
+            stderr: "",
+        };
+    },
+    "C:\\Windows\\System32\\cmd.exe",
+);
+assert.equal(captured.get("VSCMD_ARG_TGT_ARCH").value, "x64");
+assert.deepEqual(invocation[1].slice(0, 4), ["/d", "/u", "/s", "/c"]);
+assert.equal(
+    invocation[1][4],
+    'call "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Auxiliary\\Build\\vcvarsall.bat" x64 >nul && set',
+);
+assert.equal(invocation[2].windowsVerbatimArguments, true);
+
 const root = path.resolve(__dirname, "..");
 const action = fs.readFileSync(
     path.join(root, ".github/actions/setup-msvc/action.yml"),

@@ -134,13 +134,20 @@ function findVisualStudio() {
     return { installation, vcvars };
 }
 
-function captureEnvironment(vcvars, architecture) {
-    const commandProcessor = process.env.ComSpec || "C:\\Windows\\System32\\cmd.exe";
+function captureEnvironment(
+    vcvars,
+    architecture,
+    spawn = childProcess.spawnSync,
+    commandProcessor = process.env.ComSpec || "C:\\Windows\\System32\\cmd.exe",
+) {
     const command = `call "${vcvars}" ${architecture} >nul && set`;
-    const result = childProcess.spawnSync(commandProcessor, ["/d", "/u", "/s", "/c", command], {
+    const result = spawn(commandProcessor, ["/d", "/u", "/s", "/c", command], {
         encoding: "utf16le",
         maxBuffer: 16 * 1024 * 1024,
         windowsHide: true,
+        // cmd.exe owns the payload grammar after /c. Node's generic Windows argument quoting
+        // escapes the quotes around Program Files as \", which cmd treats literally.
+        windowsVerbatimArguments: true,
     });
     if (result.error) {
         throw new Error(`failed to initialize MSVC: ${result.error.message}`);
@@ -197,6 +204,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+    captureEnvironment,
     changedEnvironment,
     deduplicatePath,
     parseEnvironment,
