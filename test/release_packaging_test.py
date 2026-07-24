@@ -346,13 +346,26 @@ class ReleasePackagingTest(unittest.TestCase):
             )
 
     def test_release_workflow_declares_only_the_three_platform_archives(self) -> None:
-        workflow = (SOURCE_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        workflow_root = SOURCE_ROOT / ".github/workflows"
+        orchestrator = (workflow_root / "release.yml").read_text(encoding="utf-8")
+        host_components = (workflow_root / "host-components.yml").read_text(
+            encoding="utf-8"
+        )
+        packages = (workflow_root / "package-release.yml").read_text(encoding="utf-8")
         for archive in ("gdpp-mac.zip", "gdpp-linux.zip", "gdpp-win.zip"):
-            self.assertIn(archive, workflow)
-        self.assertIn("python3 tools/stage_host_component.py", workflow)
-        self.assertIn("--host '${{ matrix.host }}'", workflow)
-        self.assertNotIn("complete-packages:", workflow)
-        self.assertNotIn("16-archive matrix", workflow)
+            self.assertIn(archive, packages)
+        self.assertIn("python3 tools/stage_host_component.py", host_components)
+        self.assertIn("--host '${{ matrix.host }}'", host_components)
+        self.assertIn(
+            "uses: ./.github/workflows/host-components.yml",
+            orchestrator,
+        )
+        self.assertIn(
+            "uses: ./.github/workflows/package-release.yml",
+            orchestrator,
+        )
+        self.assertNotIn("complete-packages:", orchestrator)
+        self.assertNotIn("16-archive matrix", packages)
 
     def test_host_staging_excludes_msvc_import_products(self) -> None:
         source = create_host_component(self.temporary / "source", "windows-x64")

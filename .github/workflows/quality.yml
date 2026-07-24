@@ -46,27 +46,7 @@ jobs:
           ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].sort.each { |path| workflow = YAML.load_file(path); actual = workflow.fetch("permissions").fetch("contents"); raise "#{path}: top-level contents must be read, got #{actual}" unless actual == "read"; if path.end_with?("/release.yml"); publish = workflow.fetch("jobs").fetch("publish").fetch("permissions").fetch("contents"); raise "#{path}: publish job contents must be write, got #{publish}" unless publish == "write"; end; puts path }'
           test ! -e .github/workflows/ci.yml
       - name: Validate reusable delivery topology
-        shell: bash
-        run: |
-          set -euo pipefail
-          specialized=(
-            quality.yml core.yml native-integration.yml godot-compatibility.yml
-            android.yml web.yml ios.yml
-          )
-          for name in "${specialized[@]}"; do
-            file=".github/workflows/$name"
-            grep -q '^  workflow_call:$' "$file"
-            grep -q '^  workflow_dispatch:' "$file"
-            if grep -q '^  pull_request:' "$file"; then
-              echo "$file must be invoked by the unified PR gate."
-              exit 1
-            fi
-            grep -Fq "uses: ./.github/workflows/$name" .github/workflows/release.yml
-          done
-          test "$(grep -l '^  pull_request:' .github/workflows/*.yml)" \
-            = .github/workflows/release.yml
-          grep -q '^  readiness:$' .github/workflows/release.yml
-          grep -q '^    needs: readiness$' .github/workflows/release.yml
+        run: ruby tools/check_workflow_topology.rb
       - name: Reject mutable external Action references
         shell: bash
         run: |
