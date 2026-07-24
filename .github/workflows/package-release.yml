@@ -16,7 +16,7 @@ jobs:
       matrix:
         include:
           - package_host: mac
-            component_host: mac-arm64
+            component_host: mac-universal
             archive: gdpp-mac.zip
           - package_host: linux
             component_host: linux-x64

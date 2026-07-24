@@ -23,10 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - host: mac-arm64
+          - host: mac-universal
             os: macos-15
             sdk_platform: macos
-            sdk_arch: arm64
+            sdk_arch: universal
             platform_minimum: macOS_11.0
           - host: linux-x64
             os: ubuntu-22.04
@@ -56,9 +56,9 @@ jobs:
             "-DGDPP_GODOT_API_VERSION=$GDPP_COMPILER_GODOT_API"
             "-DGDPP_PACKAGE_GODOT_VERSIONS=4.4;4.5;4.6;4.7"
           )
-          if [[ "${{ matrix.host }}" == mac-arm64 ]]; then
+          if [[ "${{ matrix.host }}" == mac-universal ]]; then
             test "$(uname -m)" = arm64
-            arguments+=("-DCMAKE_OSX_ARCHITECTURES=arm64")
+            arguments+=("-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64")
           elif [[ "${{ matrix.host }}" == windows-x64 ]]; then
             arguments+=("-DCMAKE_CXX_COMPILER=cl.exe")
           fi
@@ -104,26 +104,10 @@ jobs:
           root="$GITHUB_WORKSPACE/build/host-export"
           mkdir -p "$root"
           if [[ "$RUNNER_OS" == macOS ]]; then
-            python3 - <<'PY'
-          from pathlib import Path
-          path = Path("example/export_presets.cfg")
-          contents = path.read_text(encoding="utf-8")
-          original = 'binary_format/architecture="universal"'
-          if original not in contents:
-              raise SystemExit("macOS Universal preset architecture is missing")
-          path.write_text(
-              contents.replace(
-                  original,
-                  'binary_format/architecture="arm64"',
-                  1,
-              ),
-              encoding="utf-8",
-          )
-          PY
             preset='macOS Universal'
             output="$root/GDPPExample.app"
             runtime="$output/Contents/MacOS/GDPP Example"
-            project_library="$output/Contents/Frameworks/libgdpp.release.macos.arm64.dylib"
+            project_library="$output/Contents/Frameworks/libgdpp.release.macos.universal.dylib"
           elif [[ "$RUNNER_OS" == Windows ]]; then
             preset='Windows x86_64'
             output="$root/GDPPExample.exe"
@@ -183,17 +167,22 @@ jobs:
             echo 'Official host desktop export emitted a forbidden diagnostic.'
             exit 1
           fi
-      - name: Validate macOS arm64 and 11.0 minimum
+      - name: Validate macOS Universal 2 and 11.0 minimum
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
           for binary in \
-            example/addons/gdpp/binary/libgdpp_compiler.macos.arm64.dylib \
-            example/addons/gdpp/binary/libgdpp_fallback.macos.arm64.dylib; do
-            test "$(lipo -archs "$binary")" = arm64
-            otool -arch arm64 -l "$binary" | grep -A3 LC_BUILD_VERSION \
-              | grep -q 'minos 11.0'
+            example/addons/gdpp/binary/libgdpp_compiler.macos.universal.dylib \
+            example/addons/gdpp/binary/libgdpp_fallback.macos.universal.dylib \
+            example/addons/gdpp/sdk/*/lib/libgodot-cpp.macos.template_release.universal.a; do
+            architectures="$(lipo -archs "$binary")"
+            grep -qw arm64 <<<"$architectures"
+            grep -qw x86_64 <<<"$architectures"
+            for architecture in arm64 x86_64; do
+              otool -arch "$architecture" -l "$binary" | grep -A3 LC_BUILD_VERSION \
+                | grep -q 'minos 11.0'
+            done
           done
       - name: Validate Ubuntu 22.04 glibc minimum
         if: runner.os == 'Linux'
