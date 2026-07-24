@@ -644,6 +644,25 @@ TEST_CASE("native builder emits MSVC compile and link arguments") {
     REQUIRE_EQ(plan.output_library.parent_path(), options.binary_output_directory);
 }
 
+TEST_CASE("native builder pins the MSVC linker beside an absolute compiler") {
+    const auto root = make_sdk_fixture("native-builder-windows-absolute-toolchain",
+                                       "godot-cpp.windows.template_release.x86_64.lib");
+    gdpp::NativeBuildOptions options;
+    options.project_output_directory = root / "project";
+    options.binary_output_directory = root / "addons/gdpp/binary";
+    options.sdk_root = root / "sdk";
+    options.compiler_executable = root / "toolchain/Hostx64/x64/cl.exe";
+    options.platform = gdpp::NativePlatform::windows;
+    options.architecture = "x86_64";
+
+    const auto plan = gdpp::NativeBuilder{}.plan(options);
+
+    REQUIRE(plan.success);
+    REQUIRE_EQ(plan.commands.front().executable, options.compiler_executable);
+    REQUIRE_EQ(plan.commands.back().executable,
+               (root / "toolchain/Hostx64/x64/link.exe").string());
+}
+
 TEST_CASE("native builder creates a stable release library with release bindings") {
     const auto root =
         make_sdk_fixture("native-builder-release", "libgodot-cpp.macos.template_release.arm64.a");

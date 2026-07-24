@@ -138,6 +138,9 @@ foreach(required_windows_process_contract IN ITEMS
         "GDPP_VCVARS_PATH"
         "cached_msvc_environment("
         "resolve_msvc_executable("
+        "resolve_msvc_compiler_for_plan("
+        "build_options.compiler_executable = resolved_compiler_executable;"
+        "const bool requires_resolution = !requested.has_parent_path();"
         "options.environment = &environment->block;"
         "return execute_hidden_windows_command_line(std::move(command_line), options);"
         "return execute_hidden_windows_process(wide_arguments);")
@@ -149,6 +152,13 @@ foreach(required_windows_process_contract IN ITEMS
             "${required_windows_process_contract}")
     endif()
 endforeach()
+string(FIND "${compiler_service}"
+    "if (!windows_environment(L\"INCLUDE\"))"
+    inherited_msvc_path_trust_offset)
+if(NOT inherited_msvc_path_trust_offset EQUAL -1)
+    message(FATAL_ERROR
+        "MSVC executable resolution must not trust an inherited INCLUDE variable")
+endif()
 foreach(forbidden_machine_specific_toolchain_path IN ITEMS
         "windows_environment(L\"USERPROFILE\")"
         "\"software/VS\"")
