@@ -70,7 +70,9 @@ jobs:
         run: |
           mkdir -p build/tools/go-cache build/tools/go-mod
           GOCACHE="$PWD/build/tools/go-cache" GOMODCACHE="$PWD/build/tools/go-mod" \
-            go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+            go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Validate the Node.js 24 MSVC bootstrap action
+        run: node test/setup_msvc_action_test.js
       - name: Reject generated and platform metadata
         shell: bash
         run: |
