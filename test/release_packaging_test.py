@@ -240,7 +240,7 @@ class ReleasePackagingTest(unittest.TestCase):
             with self.subTest(package=package_name):
                 stage, archive_name = self.stage(package_name)
                 self.assertEqual(archive_name, expected_archive)
-                addon = stage / "addons/gdpp"
+                addon = stage / "gdpp"
                 package = package_platform_release.PLATFORM_PACKAGES[package_name]
                 host = package_release.HOSTS[package.component_host]
                 self.assertEqual(
@@ -254,19 +254,30 @@ class ReleasePackagingTest(unittest.TestCase):
                 for godot_version in package_release.SUPPORTED_GODOT_VERSIONS:
                     sdk = addon / "sdk" / godot_version
                     self.assertTrue((sdk / "sdk.manifest").is_file())
-                    self.assertTrue((sdk / "android/arm64/sdk.manifest").is_file())
-                    self.assertTrue((sdk / "web/wasm32/nothreads/sdk.manifest").is_file())
-                    self.assertTrue((sdk / "web/wasm32/threads/sdk.manifest").is_file())
+                    manifests = sdk / "manifests"
+                    self.assertTrue(
+                        (manifests / "android.arm64.sdk.manifest").is_file()
+                    )
+                    self.assertTrue(
+                        (manifests / "web.wasm32.nothreads.sdk.manifest").is_file()
+                    )
+                    self.assertTrue(
+                        (manifests / "web.wasm32.threads.sdk.manifest").is_file()
+                    )
                     self.assertEqual(
-                        (sdk / "ios/arm64/sdk.manifest").is_file(),
+                        (manifests / "ios.arm64.sdk.manifest").is_file(),
                         package_name == "mac",
                     )
-                    self.assertFalse((sdk / "macos").exists())
-                    self.assertFalse((sdk / "linux").exists())
-                    self.assertFalse((sdk / "windows").exists())
+                    self.assertEqual(
+                        len(list((sdk / "lib").iterdir())),
+                        6 if package_name == "mac" else 4,
+                    )
+                    for retired in ("android", "ios", "web", "macos", "linux", "windows"):
+                        self.assertFalse((sdk / retired).exists())
                 manifest = (addon / "PACKAGE_MANIFEST.txt").read_text(encoding="utf-8")
                 self.assertIn("target_godot_apis 4.4,4.5,4.6,4.7", manifest)
                 self.assertIn(f"host {package_name}", manifest)
+                self.assertIn("sdk_layout shared-target-manifests", manifest)
 
     def test_zip_is_reproducible_and_contains_no_nested_or_debug_products(self) -> None:
         stage, archive_name = self.stage("mac")
@@ -279,8 +290,9 @@ class ReleasePackagingTest(unittest.TestCase):
         self.assertFalse(any("template_debug" in path for path in names))
         self.assertFalse(any(".editor." in path for path in names))
         self.assertFalse(any("gdpp_project" in path for path in names))
-        self.assertIn("addons/gdpp/build_progress.gd", names)
-        self.assertIn("addons/gdpp/native_build_job.gd", names)
+        self.assertIn("gdpp/build_progress.gd", names)
+        self.assertIn("gdpp/native_build_job.gd", names)
+        self.assertFalse(any(path.startswith("addons/") for path in names))
 
         second_stage, second_name, _ = package_platform_release.stage_platform_package(
             self.components,

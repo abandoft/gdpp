@@ -278,6 +278,30 @@ def web_component(components: Path, godot_version: str, variant: str) -> Path:
     return components / f"gdpp-web-godot-{godot_version}-{variant}"
 
 
+def copy_unique_library(source: Path, destination: Path) -> None:
+    target = destination / source.name
+    if target.exists():
+        fail(f"target SDK libraries collide in the shared SDK layout: {source} and {target}")
+    package_release.copy_path(source, target)
+
+
+def copy_component_libraries(source: Path, destination: Path) -> None:
+    libraries = sorted(path for path in source.rglob("*") if path.is_file())
+    if not libraries:
+        fail(f"target SDK component has no libraries: {source}")
+    for library in libraries:
+        if library.suffix not in {".a", ".lib"}:
+            fail(f"target SDK library directory contains an unexpected file: {library}")
+        copy_unique_library(library, destination)
+
+
+def copy_target_manifest(source_sdk: Path, staged_sdk: Path, target: str) -> None:
+    package_release.copy_path(
+        source_sdk / "sdk.manifest",
+        staged_sdk / "manifests" / f"{target}.sdk.manifest",
+    )
+
+
 def stage_platform_package(
     components: Path,
     output: Path,
@@ -325,7 +349,7 @@ def stage_platform_package(
     stage_root = output / ".staging" / package.archive_name
     if stage_root.exists():
         shutil.rmtree(stage_root)
-    staged_addon = stage_root / "addons/gdpp"
+    staged_addon = stage_root / "gdpp"
     staged_addon.mkdir(parents=True)
 
     for relative in package_release.STATIC_ADDON_FILES:
@@ -341,25 +365,27 @@ def stage_platform_package(
         staged_sdk = staged_addon / "sdk" / godot_version
         for relative in package_release.HOST_SDK_PATHS:
             package_release.copy_path(source_sdk / relative, staged_sdk / relative)
-        package_release.copy_path(
-            android_component(components, godot_version),
-            staged_sdk / "android/arm64",
-        )
+        android_sdk = android_component(components, godot_version)
+        copy_component_libraries(android_sdk / "lib", staged_sdk / "lib")
+        copy_target_manifest(android_sdk, staged_sdk, "android.arm64")
         for variant in WEB_VARIANTS:
-            package_release.copy_path(
-                web_component(components, godot_version, variant),
-                staged_sdk / "web/wasm32" / variant,
+            web_sdk = web_component(components, godot_version, variant)
+            copy_component_libraries(web_sdk / "lib", staged_sdk / "lib")
+            copy_target_manifest(
+                web_sdk,
+                staged_sdk,
+                f"web.wasm32.{variant}",
             )
         if package.include_ios:
-            package_release.copy_path(
-                ios_component(components, godot_version),
-                staged_sdk / "ios/arm64",
-            )
+            ios_sdk = ios_component(components, godot_version)
+            copy_component_libraries(ios_sdk / "lib", staged_sdk / "lib")
+            copy_target_manifest(ios_sdk, staged_sdk, "ios.arm64")
 
     (staged_addon / "sdk/.gdignore").write_text("", encoding="utf-8")
     (staged_addon / "PACKAGE_MANIFEST.txt").write_text(
-        "GDPP_PACKAGE 3\n"
+        "GDPP_PACKAGE 4\n"
         "kind desktop-host\n"
+        "sdk_layout shared-target-manifests\n"
         f"version {gdpp_version}\n"
         "compiler_godot_api 4.4\n"
         "target_godot_apis 4.4,4.5,4.6,4.7\n"
@@ -373,6 +399,61 @@ def stage_platform_package(
     )
     validate_platform_stage(staged_addon, package_name, gdpp_version)
     return stage_root, package.archive_name, gdpp_version
+
+
+def binding_matches(
+    filename: str,
+    platform: str,
+    architecture: str,
+    web_variant: str | None = None,
+) -> bool:
+    if f".{platform}.template_release.{architecture}." not in filename:
+        return False
+    if platform != "web":
+        return True
+    has_nothreads = ".nothreads." in filename
+    return has_nothreads if web_variant == "nothreads" else not has_nothreads
+
+
+def require_one_binding(
+    names: set[str],
+    platform: str,
+    architecture: str,
+    web_variant: str | None = None,
+) -> None:
+    matches = [
+        name
+        for name in names
+        if binding_matches(name, platform, architecture, web_variant)
+    ]
+    if len(matches) != 1:
+        variant = f"/{web_variant}" if web_variant else ""
+        fail(
+            f"shared SDK must contain exactly one {platform}/{architecture}{variant} "
+            f"Release binding, found {matches}"
+        )
+
+
+def validate_shared_target_manifest(
+    manifest: Path,
+    expected: dict[str, str],
+    runtime_contract: dict[str, str],
+) -> None:
+    schema, fields = package_release.read_sdk_manifest(manifest)
+    package_release.require_fields(
+        manifest,
+        schema,
+        fields,
+        {
+            "profiles": "debug,release",
+            "distribution_binding": "template_release",
+            "distribution_optimization": "Release",
+            **expected,
+        },
+    )
+    contract = {field: fields.get(field, "") for field in RUNTIME_FIELDS}
+    if contract != runtime_contract:
+        fail(f"shared target manifest runtime contract conflicts with the host SDK: {manifest}")
 
 
 def validate_platform_stage(addon: Path, package_name: str, gdpp_version: str) -> None:
@@ -400,21 +481,91 @@ def validate_platform_stage(addon: Path, package_name: str, gdpp_version: str) -
         )
     for godot_version in package_release.SUPPORTED_GODOT_VERSIONS:
         version_root = addon / "sdk" / godot_version
-        required = [
-            "sdk.manifest",
-            "android/arm64/sdk.manifest",
-            "web/wasm32/nothreads/sdk.manifest",
-            "web/wasm32/threads/sdk.manifest",
-        ]
+        for relative in package_release.HOST_SDK_PATHS:
+            if not (version_root / relative).exists():
+                fail(f"{package_name} package shared SDK input is missing: {version_root / relative}")
+        host_manifest = version_root / "sdk.manifest"
+        schema, host_fields = package_release.read_sdk_manifest(host_manifest)
+        package_release.require_fields(
+            host_manifest,
+            schema,
+            host_fields,
+            {
+                "api": godot_version,
+                "platform": host.platform,
+                "arch": host.architecture,
+                "gdpp_version": gdpp_version,
+                "profiles": "debug,release",
+                "distribution_binding": "template_release",
+                "distribution_optimization": "Release",
+            },
+        )
+        runtime_contract = require_runtime_contract(
+            version_root,
+            host_fields,
+            None,
+        )
+        manifests = version_root / "manifests"
+        validate_shared_target_manifest(
+            manifests / "android.arm64.sdk.manifest",
+            {
+                "api": godot_version,
+                "platform": "android",
+                "arch": "arm64",
+                "gdpp_version": gdpp_version,
+            },
+            runtime_contract,
+        )
+        for variant in WEB_VARIANTS:
+            validate_shared_target_manifest(
+                manifests / f"web.wasm32.{variant}.sdk.manifest",
+                {
+                    "api": godot_version,
+                    "platform": "web",
+                    "arch": "wasm32",
+                    "web_threads": variant,
+                    "gdpp_version": gdpp_version,
+                },
+                runtime_contract,
+            )
+        ios_manifest = manifests / "ios.arm64.sdk.manifest"
         if package.include_ios:
-            required.append("ios/arm64/sdk.manifest")
-        for relative in required:
-            if not (version_root / relative).is_file():
-                fail(f"{package_name} package target SDK is missing: {version_root / relative}")
-        if not package.include_ios and (version_root / "ios").exists():
-            fail(f"{package_name} package cannot contain an iOS SDK")
-        if any((version_root / platform).exists() for platform in ("macos", "linux", "windows")):
-            fail(f"{package_name} package cannot contain another desktop host SDK")
+            validate_shared_target_manifest(
+                ios_manifest,
+                {
+                    "api": godot_version,
+                    "platform": "ios",
+                    "arch": "arm64",
+                    "gdpp_version": gdpp_version,
+                },
+                runtime_contract,
+            )
+        elif ios_manifest.exists():
+            fail(f"{package_name} package cannot contain an iOS SDK manifest")
+
+        libraries = {
+            path.name for path in (version_root / "lib").iterdir() if path.is_file()
+        }
+        expected_count = 6 if package.include_ios else 4
+        if len(libraries) != expected_count:
+            fail(
+                f"{package_name} shared Godot {godot_version} SDK must contain "
+                f"{expected_count} target libraries, found {sorted(libraries)}"
+            )
+        require_one_binding(libraries, host.platform, host.architecture)
+        require_one_binding(libraries, "android", "arm64")
+        require_one_binding(libraries, "web", "wasm32", "nothreads")
+        require_one_binding(libraries, "web", "wasm32", "threads")
+        if package.include_ios:
+            require_one_binding(libraries, "ios", "arm64")
+            require_one_binding(libraries, "ios", "universal")
+
+        for retired_directory in ("android", "web", "ios", "macos", "linux", "windows"):
+            if (version_root / retired_directory).exists():
+                fail(
+                    f"{package_name} shared SDK contains retired platform directory: "
+                    f"{version_root / retired_directory}"
+                )
 
     forbidden = [
         path
