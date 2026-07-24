@@ -1,0 +1,96 @@
+name: Release package assembly
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ZIP / ${{ matrix.package_host }} / Godot 4.4-4.7
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package_host: mac
+            component_host: mac-arm64
+            archive: gdpp-mac.zip
+          - package_host: linux
+            component_host: linux-x64
+            archive: gdpp-linux.zip
+          - package_host: win
+            component_host: windows-x64
+            archive: gdpp-win.zip
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: gdpp-host-${{ matrix.component_host }}
+          path: build/components/gdpp-host-${{ matrix.component_host }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: gdpp-android-arm64-godot-*
+          path: build/components
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: gdpp-web-godot-*
+          path: build/components
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: matrix.package_host == 'mac'
+        with:
+          pattern: gdpp-ios-godot-*
+          path: build/components
+      - name: Assemble the cross-version desktop plugin ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/package_platform_release.py \
+            --components build/components \
+            --output build/release \
+            --host ${{ matrix.package_host }}
+      - name: Audit the platform and SDK matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="build/release/${{ matrix.archive }}"
+          test -f "$archive"
+          unzip -Z1 "$archive" > build/archive-contents.txt
+          contents=build/archive-contents.txt
+          grep -q '^addons/gdpp/build_progress.gd$' "$contents"
+          grep -q '^addons/gdpp/native_build_job.gd$' "$contents"
+          grep -q '^addons/gdpp/PACKAGE_MANIFEST.txt$' "$contents"
+          test "$(grep -Ec '^addons/gdpp/binary/[^/]+$' "$contents")" -eq 2
+          for godot in 4.4 4.5 4.6 4.7; do
+            grep -q "^addons/gdpp/sdk/$godot/sdk.manifest$" "$contents"
+            grep -q "^addons/gdpp/sdk/$godot/android/arm64/sdk.manifest$" "$contents"
+            grep -q "^addons/gdpp/sdk/$godot/web/wasm32/nothreads/sdk.manifest$" "$contents"
+            grep -q "^addons/gdpp/sdk/$godot/web/wasm32/threads/sdk.manifest$" "$contents"
+            if [[ "${{ matrix.package_host }}" == mac ]]; then
+              grep -q "^addons/gdpp/sdk/$godot/ios/arm64/sdk.manifest$" "$contents"
+            elif grep -q "^addons/gdpp/sdk/$godot/ios/" "$contents"; then
+              echo 'A non-macOS package contains an iOS SDK.'
+              exit 1
+            fi
+          done
+          test "$(grep -Eo '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/' "$contents" \
+            | sort -u | wc -l)" -eq 4
+          if grep -Eq \
+              'template_debug|\.editor\.|\.zip$|/build/|gdpp_project|\.DS_Store$|/\._' \
+              "$contents"; then
+            echo 'Release ZIP contains a forbidden binding or generated product.'
+            exit 1
+          fi
+          if grep -Eq '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/(macos|linux|windows)/' \
+              "$contents"; then
+            echo 'Release ZIP contains another desktop host SDK.'
+            exit 1
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: gdpp-release-${{ matrix.package_host }}
+          path: build/release/${{ matrix.archive }}
+          if-no-files-found: error
+          retention-days: 14
