@@ -23,6 +23,8 @@
 - Automatically validate both accessors for every Godot 4.4–4.7 property record and gate generated code across the complete Canvas, Tile, 2D/3D particle, fog, sky, geometry, CSG, and mesh material families.
 - Cover scene-inline `ShaderMaterial`, external `.tres` material resources, `.gdshader` dependencies, serialized uniforms, and runtime uniform writes in the independent binary-export fixture so AOT scene/resource rewriting preserves prebound and dynamically bound resource contracts alike.
 - Extend network-image regression coverage to PNG, JPEG, and WebP, including Content-Type dispatch, file-signature fallback, `PackedByteArray` decoding, static asynchronous callbacks, and `ImageTexture` creation.
+- Run the macOS, Linux, and Windows commercial host-component builds in parallel with all compiler, Godot, Android, Web, and iOS validation gates; final package assembly now starts only after every producer and test succeeds, removing the former test-then-desktop-build critical path.
+- Separate desktop component production, release orchestration, and three-package aggregation into independently validated reusable workflows, with a structural topology gate that prevents accidental serialization, missing package prerequisites, standalone artifact aggregation, or additional release entrypoints.
 
 ## 1.7.7
 
