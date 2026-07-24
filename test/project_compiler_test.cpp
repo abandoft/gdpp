@@ -2445,8 +2445,11 @@ TEST_CASE("typed container object arguments participate in precise dependency in
     REQUIRE_EQ(initial_consumer->dependencies, std::vector<std::string>{"item.gd"});
     const auto initial_header =
         read_text(options.output_directory / "generated" / initial_consumer->header_file_name);
-    REQUIRE(initial_header.find("godot::TypedArray<") != std::string::npos);
-    REQUIRE(initial_header.find(initial_item_class) != std::string::npos);
+    REQUIRE(initial_header.find("gdpp::runtime::ScriptTypedArray<") != std::string::npos);
+    REQUIRE(initial_header.find("godot::StringName(\"RefCounted\")") != std::string::npos);
+    REQUIRE(initial_header.find("_gdpp_attached_script_path = \"res://item.gd\"") !=
+            std::string::npos);
+    REQUIRE(initial_header.find(initial_item_class) == std::string::npos);
 
     write_text(root / "item.gd", "extends RefCounted\nclass_name ContainerItem\n"
                                  "func value() -> float:\n    return 1.0\n");
@@ -2463,7 +2466,10 @@ TEST_CASE("typed container object arguments participate in precise dependency in
     REQUIRE(changed_consumer != changed.scripts.end());
     const auto changed_header =
         read_text(options.output_directory / "generated" / changed_consumer->header_file_name);
-    REQUIRE(changed_header.find(native_class_for(changed, "item.gd")) != std::string::npos);
+    REQUIRE(changed_header.find("gdpp::runtime::ScriptTypedArray<") != std::string::npos);
+    REQUIRE(changed_header.find("_gdpp_attached_script_path = \"res://item.gd\"") !=
+            std::string::npos);
+    REQUIRE(changed_header.find(native_class_for(changed, "item.gd")) == std::string::npos);
     REQUIRE(changed_header.find(initial_item_class) == std::string::npos);
 }
 

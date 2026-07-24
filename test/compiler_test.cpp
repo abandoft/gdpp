@@ -828,17 +828,27 @@ TEST_CASE("typed containers preserve internal class runtime identity without inc
                                          "class Payload:\n"
                                          "    var value: int = 1\n"
                                          "var payloads: Array[Payload] = []\n"
+                                         "var by_name: Dictionary[String, Payload] = {}\n"
                                          "func replace(values: Array[Payload]) -> Array[Payload]:\n"
                                          "    payloads = values\n"
                                          "    return payloads\n");
 
     REQUIRE(result.success);
     REQUIRE(result.unit.header.find("struct ContainerObjectTag_Payload") != std::string::npos);
-    REQUIRE(result.unit.header.find(
-                "godot::StringName(\"GDPPNative_InnerTypedContainers__Payload\")") !=
+    REQUIRE(result.unit.header.find("godot::StringName(\"RefCounted\")") != std::string::npos);
+    REQUIRE(result.unit.header.find("_gdpp_attached_script_path = "
+                                    "\"res://inner_typed_containers.gd::Payload\"") !=
             std::string::npos);
-    REQUIRE(result.unit.header.find("godot::TypedArray<inner_typed_containers_gdpp_detail::"
-                                    "ContainerObjectTag_Payload> payloads") != std::string::npos);
+    REQUIRE(result.unit.header.find(
+                "gdpp::runtime::ScriptTypedArray<inner_typed_containers_gdpp_detail::"
+                "ContainerObjectTag_Payload> payloads") != std::string::npos);
+    REQUIRE(result.unit.header.find(
+                "gdpp::runtime::ScriptTypedDictionary<godot::String, "
+                "inner_typed_containers_gdpp_detail::ContainerObjectTag_Payload> by_name") !=
+            std::string::npos);
+    REQUIRE(result.unit.header.find(
+                "godot::StringName(\"GDPPNative_InnerTypedContainers__Payload\")") ==
+            std::string::npos);
 }
 
 TEST_CASE("compiler topologically lowers internal class inheritance and super calls") {
