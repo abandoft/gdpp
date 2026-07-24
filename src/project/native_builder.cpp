@@ -229,8 +229,18 @@ std::string web_thread_mode_name(NativeWebThreadMode mode) {
     return "none";
 }
 
+std::filesystem::path sdk_manifest_path(const NativeBuildOptions& options) {
+    auto target_name = platform_name(options.platform) + "." + options.architecture;
+    if (options.platform == NativePlatform::web)
+        target_name += "." + web_thread_mode_name(options.web_thread_mode);
+    const auto target_manifest = options.sdk_root / "manifests" / (target_name + ".sdk.manifest");
+    if (std::filesystem::is_regular_file(target_manifest))
+        return target_manifest;
+    return options.sdk_root / "sdk.manifest";
+}
+
 bool validate_manifest(const NativeBuildOptions& options, std::vector<std::string>& diagnostics) {
-    const auto path = options.sdk_root / "sdk.manifest";
+    const auto path = sdk_manifest_path(options);
     std::ifstream input{path};
     std::string magic;
     std::string format;
@@ -525,11 +535,17 @@ std::string manifest_value(const std::filesystem::path& manifest, std::string_vi
 
 std::filesystem::path find_binding_library(const std::filesystem::path& directory,
                                            const NativeBuildOptions& options,
-                                           const std::string& target) {
+                                           const std::string& target,
+                                           std::string_view requested_architecture = {}) {
     std::error_code error;
     if (!std::filesystem::is_directory(directory, error))
         return {};
     std::vector<std::filesystem::path> candidates;
+    std::vector<std::filesystem::path> fallback_candidates;
+    const auto platform_marker = "." + platform_name(options.platform) + "." + target + ".";
+    const auto architecture = requested_architecture.empty()
+                                  ? std::string_view{options.architecture}
+                                  : requested_architecture;
     for (std::filesystem::directory_iterator iterator{directory, error}, end;
          !error && iterator != end; iterator.increment(error)) {
         if (!iterator->is_regular_file())
@@ -541,14 +557,25 @@ std::filesystem::path find_binding_library(const std::filesystem::path& director
             (options.web_thread_mode == NativeWebThreadMode::single_threaded
                  ? filename.find(".nothreads.") != std::string::npos
                  : filename.find(".nothreads.") == std::string::npos);
+        const bool architecture_matches =
+            filename.find("." + std::string{architecture} + ".") != std::string::npos;
+        const bool universal_fallback = options.platform == NativePlatform::macos &&
+                                        architecture != "universal" &&
+                                        filename.find(".universal.") != std::string::npos;
         if (((options.platform == NativePlatform::windows && extension == ".lib") ||
              (options.platform != NativePlatform::windows && extension == ".a")) &&
-            filename.find("." + target + ".") != std::string::npos && thread_variant_matches) {
-            candidates.push_back(iterator->path());
+            filename.find(platform_marker) != std::string::npos && thread_variant_matches) {
+            if (architecture_matches)
+                candidates.push_back(iterator->path());
+            else if (universal_fallback)
+                fallback_candidates.push_back(iterator->path());
         }
     }
     std::sort(candidates.begin(), candidates.end());
-    return candidates.empty() ? std::filesystem::path{} : candidates.front();
+    if (!candidates.empty())
+        return candidates.front();
+    std::sort(fallback_candidates.begin(), fallback_candidates.end());
+    return fallback_candidates.empty() ? std::filesystem::path{} : fallback_candidates.front();
 }
 
 bool older_than(const std::filesystem::path& output,
@@ -759,8 +786,8 @@ NativeBuildCommand compile_command(const NativeBuildOptions& options,
             if (options.web_thread_mode == NativeWebThreadMode::multi_threaded)
                 arguments.emplace_back("-sUSE_PTHREADS=1");
         }
-        arguments.insert(arguments.end(), {"-O3", "-fvisibility=hidden", "-ffunction-sections",
-                                           "-fdata-sections"});
+        arguments.insert(arguments.end(),
+                         {"-O3", "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections"});
         arguments.emplace_back("-DNDEBUG");
         if (options.profile == NativeBuildProfile::debug)
             arguments.emplace_back("-DGDPP_SCRIPT_DEBUG_ENABLED");
@@ -796,8 +823,8 @@ NativeBuildCommand ios_compile_command(const NativeBuildOptions& options,
         "--sdk",         slice.sdk,       "clang++",         "-target",       slice.target_triple,
         "-std=c++17",    "-fPIC",         "-fno-exceptions", "-DGDEXTENSION", "-DTHREADS_ENABLED",
         "-DIOS_ENABLED", "-DUNIX_ENABLED"};
-    arguments.insert(arguments.end(), {"-O3", "-fvisibility=hidden", "-ffunction-sections",
-                                       "-fdata-sections"});
+    arguments.insert(arguments.end(),
+                     {"-O3", "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections"});
     arguments.emplace_back("-DNDEBUG");
     if (options.profile == NativeBuildProfile::debug)
         arguments.emplace_back("-DGDPP_SCRIPT_DEBUG_ENABLED");
@@ -1144,9 +1171,17 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
     std::filesystem::path ios_simulator_binding_library;
     if (options.platform == NativePlatform::ios) {
         ios_device_binding_library =
-            find_binding_library(options.sdk_root / "lib/device", options, binding_target);
+            find_binding_library(options.sdk_root / "lib", options, binding_target, "arm64");
         ios_simulator_binding_library =
-            find_binding_library(options.sdk_root / "lib/simulator", options, binding_target);
+            find_binding_library(options.sdk_root / "lib", options, binding_target, "universal");
+        if (ios_device_binding_library.empty()) {
+            ios_device_binding_library =
+                find_binding_library(options.sdk_root / "lib/device", options, binding_target);
+        }
+        if (ios_simulator_binding_library.empty()) {
+            ios_simulator_binding_library = find_binding_library(
+                options.sdk_root / "lib/simulator", options, binding_target, "universal");
+        }
         if (ios_device_binding_library.empty() || ios_simulator_binding_library.empty()) {
             result.diagnostics.emplace_back(
                 "missing device or Universal Simulator godot-cpp library in iOS SDK");
@@ -1230,7 +1265,7 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
 
     std::vector<std::filesystem::path> compile_inputs{
         build_configuration,
-        options.sdk_root / "sdk.manifest",
+        sdk_manifest_path(options),
         options.sdk_root / "include/gdpp/runtime/variant_ops.hpp",
         options.sdk_root / "include/gdpp/runtime/reference_semantics.hpp",
         options.sdk_root / "include/gdpp/numeric/integer_semantics.hpp",
@@ -1268,7 +1303,7 @@ NativeBuildPlan NativeBuilder::plan(const NativeBuildOptions& options) const {
 
     if (options.platform == NativePlatform::ios) {
         const auto deployment_target =
-            manifest_value(options.sdk_root / "sdk.manifest", "ios_deployment_target");
+            manifest_value(sdk_manifest_path(options), "ios_deployment_target");
         if (deployment_target.empty()) {
             result.diagnostics.emplace_back("native iOS SDK deployment target is unavailable");
             return result;
