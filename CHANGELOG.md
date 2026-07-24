@@ -7,6 +7,8 @@
 - Advance the native-build and export-transform revisions and transactionally remove artifacts generated with the retired filename before the next AOT export, including directory-form iOS XCFrameworks; fail closed if a stale product cannot be removed.
 - Update desktop runtime, APK, XCFramework, Wasm, PCK, plugin-package, cleanup, and workflow gates to require the shortened names, reject both current generated products and retired products from commercial plugin archives, and preserve compiler/fallback binaries through exact product classification.
 - Restore the standard `addons/gdpp/` root in all three desktop plugin ZIPs so extracting an archive directly into a Godot project produces a discoverable EditorPlugin instead of an inert `res://gdpp/` directory; advance the package manifest to schema 5 and gate the exact installation layout.
+- Move the compatibility editor gate to the official Godot 4.7.1 patch release and make the integration project treat Variant inference warnings as errors, covering the strict customer setting that exposed the misplaced-archive failure.
+- Make the production Windows exporter discover Visual Studio through `vswhere`, require the installed x64 C++ tools component, accept preview and non-default installations, preserve explicit compiler overrides, and report an actionable toolchain diagnostic instead of misclassifying an installed MSVC environment as missing.
 
 ## 1.7.8
 
