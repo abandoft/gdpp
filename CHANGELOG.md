@@ -1,3 +1,14 @@
+## 1.7.8
+
+- Keep attached-script descriptor registration strictly metadata-only: script constants, including nested resource containers and otherwise pure values, are represented by captureless deferred resolvers instead of being evaluated while GDExtension classes are registered.
+- Materialize deferred constants only when Godot requests the compiled Script constant map, preserving local and inherited constant reflection, derived shadowing, deterministic descriptor identity, thread-safe generated constant caching, and explicit shutdown cleanup.
+- Prevent exported games from terminating during native extension startup when a script constant preloads a scene or resource whose construction depends on services that are not yet initialized, including 2D/3D physics, rendering, audio, navigation, and third-party GDExtension services.
+- Validate deferred resolver presence, eager/deferred name conflicts, inheritance merges, and duplicate descriptors fail-closed without invoking customer code or engine resource services under the registry lock.
+- Guard the remaining editor-only Engine lookup during generated project registration so an unavailable mandatory singleton produces a bounded initialization error instead of a native null dereference.
+- Add generated-code purity coverage for resource constants, nested preload containers, resource-backed field defaults, service-backed instance fields, static preloads, and resource default arguments.
+- Add a real Godot 4.4–4.7 independent-GDExtension export/runtime regression with local and inherited preloads of a scene containing `CircleShape2D`, plus compiled Script constant-map reflection.
+- Advance the packaged runtime ABI to 11 so stale SDKs fail preflight instead of compiling against the old eager descriptor layout.
+
 ## 1.7.7
 
 - Present native compilation progress in a frontmost overlay attached directly to the active export dialog viewport, keeping it visible above Godot's modal export interface on every desktop host.
