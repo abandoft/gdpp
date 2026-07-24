@@ -25,6 +25,9 @@
 - Extend network-image regression coverage to PNG, JPEG, and WebP, including Content-Type dispatch, file-signature fallback, `PackedByteArray` decoding, static asynchronous callbacks, and `ImageTexture` creation.
 - Run the macOS, Linux, and Windows commercial host-component builds in parallel with all compiler, Godot, Android, Web, and iOS validation gates; final package assembly now starts only after every producer and test succeeds, removing the former test-then-desktop-build critical path.
 - Separate desktop component production, release orchestration, and three-package aggregation into independently validated reusable workflows, with a structural topology gate that prevents accidental serialization, missing package prerequisites, standalone artifact aggregation, or additional release entrypoints.
+- Flatten every packaged Godot-version SDK into one shared runtime, godot-cpp header tree, source tree, and `lib` directory; Android, Web threads/nothreads, iOS, and the package host now contribute only their distinct optimized Release libraries instead of duplicating the common SDK payload.
+- Select target manifests and godot-cpp libraries by exact platform, architecture, profile, and Web thread mode from the shared SDK, while retaining legacy component-layout compatibility and preferring exact macOS slices over Universal fallbacks.
+- Ship each desktop archive with `gdpp/` as its top-level directory instead of an `addons/` wrapper, and gate the final ZIP structure, target manifest set, library count, retired platform directories, and cross-target runtime contract before publishing.
 
 ## 1.7.7
 
