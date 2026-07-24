@@ -309,27 +309,65 @@ godot::Ref<AttachedCompiledScript> attached_script_resource(const godot::String&
                                                             godot::String* error) {
     const auto normalized = source_path.simplify_path();
     const auto key = registry_key(normalized);
-    std::lock_guard<std::mutex> lock{registry_mutex()};
-    const auto cached = script_resources().find(key);
-    if (cached != script_resources().end())
-        return cached->second;
-
-    const auto descriptor = registry().find(key);
-    if (descriptor == registry().end()) {
-        set_error(error, "attached script is not registered: " + normalized);
-        return {};
-    }
-
     godot::Ref<AttachedCompiledScript> script;
-    script.instantiate();
-    if (script.is_null()) {
-        set_error(error, "failed to instantiate attached script resource: " + normalized);
-        return {};
+    godot::String contract_hash;
+    {
+        std::lock_guard<std::mutex> lock{registry_mutex()};
+        const auto descriptor = registry().find(key);
+        if (descriptor == registry().end()) {
+            set_error(error, "attached script is not registered: " + normalized);
+            return {};
+        }
+        contract_hash = descriptor->second.contract_hash;
+        const auto cached = script_resources().find(key);
+        if (cached != script_resources().end())
+            script = cached->second;
     }
-    script->set_source_path(descriptor->second.source_path);
-    script->set_contract_hash(descriptor->second.contract_hash);
-    script_resources().emplace(key, script);
+    if (script.is_null()) {
+        script.instantiate();
+        if (script.is_null()) {
+            set_error(error, "failed to instantiate attached script resource: " + normalized);
+            return {};
+        }
+        script->set_source_path(normalized);
+        std::lock_guard<std::mutex> lock{registry_mutex()};
+        const auto [stored, inserted] = script_resources().emplace(key, script);
+        if (!inserted)
+            script = stored->second;
+    }
+    if (script->get_contract_hash() != contract_hash)
+        script->set_contract_hash(contract_hash);
     return script;
+}
+
+godot::Ref<AttachedCompiledScript>
+attached_container_script_resource(const godot::String& source_path) {
+    const auto normalized = source_path.simplify_path();
+    const auto key = registry_key(normalized);
+    godot::Ref<AttachedCompiledScript> script;
+    godot::String contract_hash;
+    {
+        std::lock_guard<std::mutex> lock{registry_mutex()};
+        if (const auto descriptor = registry().find(key); descriptor != registry().end())
+            contract_hash = descriptor->second.contract_hash;
+        const auto cached = script_resources().find(key);
+        if (cached != script_resources().end())
+            script = cached->second;
+    }
+    if (script.is_valid()) {
+        if (!contract_hash.is_empty() && script->get_contract_hash() != contract_hash)
+            script->set_contract_hash(contract_hash);
+        return script;
+    }
+
+    script.instantiate();
+    ERR_FAIL_COND_V_MSG(script.is_null(), {}, "Failed to instantiate attached container Script");
+    script->set_source_path(normalized);
+    if (!contract_hash.is_empty())
+        script->set_contract_hash(contract_hash);
+    std::lock_guard<std::mutex> lock{registry_mutex()};
+    const auto [stored, inserted] = script_resources().emplace(key, script);
+    return inserted ? script : stored->second;
 }
 
 std::optional<AttachedScriptDescriptor> resolve_attached_script(const godot::String& source_path,

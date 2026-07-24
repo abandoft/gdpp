@@ -133,6 +133,12 @@ class AttachedCompiledScript;
 // equivalent-but-distinct ScriptExtension objects.
 [[nodiscard]] godot::Ref<AttachedCompiledScript>
 attached_script_resource(const godot::String& source_path, godot::String* error = nullptr);
+// Descriptor construction can itself contain typed-container defaults whose target descriptor is
+// registered later in the same generated library. This returns the same canonical resource
+// without requiring that registration order; the exact contract is bound when the descriptor
+// becomes available.
+[[nodiscard]] godot::Ref<AttachedCompiledScript>
+attached_container_script_resource(const godot::String& source_path);
 
 // Script types are identities attached to a Godot owner, not ClassDB subclasses of that owner.
 // These helpers provide the runtime equivalent of GDScript's `is` and `as` operations without
@@ -163,7 +169,9 @@ struct AttachedContainerType {
     godot::Variant script;
 };
 
-[[nodiscard]] AttachedContainerType attached_container_type(const godot::String& source_path);
+[[nodiscard]] AttachedContainerType
+attached_container_type(const godot::String& source_path,
+                        const godot::StringName& native_base_type);
 
 template <typename Type, typename = void> struct ContainerTypeResolver {
     [[nodiscard]] static AttachedContainerType resolve() {
@@ -183,7 +191,8 @@ struct ContainerTypeResolver<Type, std::void_t<decltype(Type::get_class_static()
                                                decltype(Type::_gdpp_attached_script_path)>> {
     [[nodiscard]] static AttachedContainerType resolve() {
         if (Type::_gdpp_attached_script_path[0] != '\0')
-            return attached_container_type(godot::String(Type::_gdpp_attached_script_path));
+            return attached_container_type(godot::String(Type::_gdpp_attached_script_path),
+                                           Type::get_class_static());
         return {godot::Variant::OBJECT, Type::get_class_static(), {}};
     }
 

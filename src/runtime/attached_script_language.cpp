@@ -326,17 +326,10 @@ godot::StringName AttachedCompiledScript::_get_instance_base_type() const {
     return value ? value->native_base_type : godot::StringName{};
 }
 
-AttachedContainerType attached_container_type(const godot::String& source_path) {
-    const auto descriptor = resolve_attached_script(source_path);
-    if (!descriptor) {
-        godot::UtilityFunctions::push_error(
-            "GDPP: cannot resolve attached typed-container script: " + source_path);
-        return {godot::Variant::OBJECT, godot::StringName("Object"), {}};
-    }
-    const auto script = attached_script_resource(descriptor->source_path);
-    if (script.is_null())
-        return {godot::Variant::OBJECT, descriptor->native_base_type, {}};
-    return {godot::Variant::OBJECT, descriptor->native_base_type, godot::Variant(script)};
+AttachedContainerType attached_container_type(const godot::String& source_path,
+                                              const godot::StringName& native_base_type) {
+    const auto script = attached_container_script_resource(source_path);
+    return {godot::Variant::OBJECT, native_base_type, godot::Variant(script)};
 }
 
 bool AttachedCompiledScript::_has_source_code() const { return false; }
