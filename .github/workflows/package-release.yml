@@ -59,6 +59,10 @@ jobs:
           test -f "$archive"
           unzip -Z1 "$archive" > build/archive-contents.txt
           contents=build/archive-contents.txt
+          if grep -qv '^gdpp/' "$contents"; then
+            echo 'Release ZIP must contain exactly one gdpp top-level directory.'
+            exit 1
+          fi
           grep -q '^gdpp/build_progress.gd$' "$contents"
           grep -q '^gdpp/native_build_job.gd$' "$contents"
           grep -q '^gdpp/PACKAGE_MANIFEST.txt$' "$contents"

@@ -286,6 +286,7 @@ class ReleasePackagingTest(unittest.TestCase):
         first_hash = package_release.sha256(first_archive)
         with zipfile.ZipFile(first_archive) as packaged:
             names = packaged.namelist()
+        self.assertTrue(all(path.startswith("gdpp/") for path in names))
         self.assertFalse(any(path.endswith(".zip") for path in names))
         self.assertFalse(any("template_debug" in path for path in names))
         self.assertFalse(any(".editor." in path for path in names))
