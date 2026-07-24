@@ -75,14 +75,16 @@ jobs:
 
           "$GODOT" --headless --editor --path "$fixture" --import \
             2>&1 | tee "$output/gdpp-attached-import.log"
+          state="$GITHUB_WORKSPACE/build/ci/attached-${GODOT_VERSION}-extension-state.json"
+          mkdir -p "$(dirname "$state")"
           python3 tools/verify_export_immutability.py snapshot \
-            --project "$fixture" --state "$output/extension-state.json"
+            --project "$fixture" --state "$state"
           "$GODOT" --headless --editor --path "$fixture" \
             --export-release 'Linux x86_64' \
             "$GITHUB_WORKSPACE/$output/gdpp-attached.x86_64" \
             2>&1 | tee "$output/gdpp-attached-export.log"
           python3 tools/verify_export_immutability.py verify \
-            --project "$fixture" --state "$output/extension-state.json"
+            --project "$fixture" --state "$state"
 
           test -x "$output/gdpp-attached.x86_64"
           test -f "$output/gdpp-attached.pck"
