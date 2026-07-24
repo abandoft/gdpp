@@ -9,6 +9,15 @@
 - 三个桌面插件 ZIP 全部恢复标准 `addons/gdpp/` 根目录，用户直接解压到 Godot 项目根目录即可得到可发现的 EditorPlugin，不再误装为无效的 `res://gdpp/`；发行包清单升级至 schema 5，并对精确安装目录执行门禁。
 - 编辑器兼容门禁更新至官方 Godot 4.7.1 修复版本，并让集成项目把 Variant 推断警告按错误处理，覆盖此次错误安装目录在客户严格项目设置下暴露的故障。
 - Windows 生产导出器改用 `vswhere` 查找 Visual Studio 并验证已安装 x64 C++ 工具组件，覆盖 Preview 与非默认安装路径且保留显式编译器覆盖，同时移除测试机专用的用户目录兜底；无法满足条件时给出可操作的工具链诊断，不再把已安装的 MSVC 环境误判为缺失。
+- 在成功的 AOT 导出期间保持编辑器编译器描述符不可变，并将其标记为不可热重载以匹配实际 godot-cpp 构建契约，消除把已加载编译器扩展替换为项目运行时所导致的 GDExtension 实例重建失败。
+- 让 GDPP 导出插件先于 Godot 内置 GDExtension 扫描器执行，只在包内稳定的 `addons/gdpp/gdpp.gdextension` 路径替换描述符字节，并通过公开导出 API 对生成的项目库进行且仅进行一次登记。
+- 在单一登记路径下保留各平台原生打包契约：Android 携带准确 ABI 标签，Web 携带选定线程特性，桌面库保持平台落位规则，iOS 根据 Godot 4.4 或 4.5+ 注入 XCFramework 所需的静态入口回调与未定义符号链接参数。
+- 完全在内存中解析 macOS Universal 2 第三方 GDExtension 库及依赖，验证胖 Mach-O 载荷，按字节原样打包 provider 描述符，不再为架构发现改写客户扩展文件。
+- 将剩余扩展注册表事务限制在有意的纯源码导出或非桌面源码回退场景，因为 Godot 的强制元数据阶段必须在这些场景排除运行时描述符；正常 AOT 导出的注册表和全部扩展描述符均保持字节级不变。
+- 编辑器启动时恢复 1.7.9 之前版本遗留的中断描述符事务；新导出不再创建编译器或 provider 描述符备份。
+- 增加 SHA-256 导出状态门禁，在成功、回退及失败关闭导出后拒绝编辑器/provider 描述符变化、扩展注册表变化、客户扩展增删以及事务备份残留。
+- 复用已构建的 host components，在 macOS、Linux 与 Windows 上通过官方 Godot 4.7.1 实际导出并运行桌面包；同时让 Android APK、iOS/Xcode、Web 线程/无线程、Godot 4.4-4.7 Linux 及独立 Universal 2 provider 路径统一接受描述符不可变与原生产物单次登记门禁。
+- 在不使用 C++20 `std::string::starts_with` 的前提下处理带 UTF-8 BOM 的 `vswhere` 输出，保持 Visual Studio 发现逻辑符合 C++17 合同，并由 Windows 编译器与 host-component 门禁实际编译覆盖。
 
 ## 1.7.8
 
