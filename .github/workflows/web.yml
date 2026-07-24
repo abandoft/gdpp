@@ -159,7 +159,7 @@ jobs:
           set -euo pipefail
           root="example/addons/gdpp/build/${{ matrix.output }}"
           mapfile -t modules < <(find "$root" -maxdepth 1 -type f \
-            -name 'libgdpp_project.release.web.wasm32*.wasm' | LC_ALL=C sort)
+            -name 'libgdpp.release.web.wasm32*.wasm' | LC_ALL=C sort)
           test "${#modules[@]}" -eq 1
           module="${modules[0]}"
           mkdir -p build/ci/web-validation

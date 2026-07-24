@@ -135,7 +135,7 @@ jobs:
             echo 'Godot reported an iOS import/export failure.'
             exit 1
           fi
-          test "$(find "$root" -type d -name 'libgdpp_project.release.ios.arm64.xcframework' | wc -l)" -eq 1
+          test "$(find "$root" -type d -name 'libgdpp.release.ios.arm64.xcframework' | wc -l)" -eq 1
           test "$(find "$root" -type d -name '*.xcodeproj' | wc -l)" -eq 1
           if find "$root" -type f \( -name '*.gd' -o -name '*.gdc' \) -print -quit \
               | grep -q .; then
@@ -151,8 +151,8 @@ jobs:
           test -n "$project"
           engine_archive="$(find "$root" -path \
             '*/GDPPExample.xcframework/*-simulator/libgodot.a' -print -quit)"
-          project_pattern='*libgdpp_project.release.ios.arm64.xcframework/'
-          project_pattern+='*-simulator/libgdpp_project.framework/libgdpp_project'
+          project_pattern='*libgdpp.release.ios.arm64.xcframework/'
+          project_pattern+='*-simulator/libgdpp.framework/libgdpp'
           project_library="$(find "$root" -path "$project_pattern" -print -quit)"
           test -n "$engine_archive"
           test -n "$project_library"

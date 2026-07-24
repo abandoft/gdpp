@@ -83,7 +83,7 @@ jobs:
           test -x "$output/gdpp-attached.x86_64"
           test -f "$output/gdpp-attached.pck"
           test -f "$fixture/addons/vendor/binary/libgdpp_test_vendor.release.linux.x86_64.so"
-          test -f "$fixture/addons/gdpp/binary/libgdpp_project.release.linux.x86_64.so"
+          test -f "$fixture/addons/gdpp/binary/libgdpp.release.linux.x86_64.so"
           timeout 15s "$output/gdpp-attached.x86_64" --headless \
             2>&1 | tee "$output/gdpp-attached-runtime.log"
           grep -q '^GDPP_ATTACHED_EXPORT_RUNTIME_OK$' \
@@ -177,7 +177,7 @@ jobs:
             --export-release 'Linux x86_64' \
             "$GITHUB_WORKSPACE/$output/aot/gdpp-runtime.x86_64" \
             2>&1 | tee "$output/gdpp-aot-export.log"
-          project=example/addons/gdpp/binary/libgdpp_project.release.linux.x86_64.so
+          project=example/addons/gdpp/binary/libgdpp.release.linux.x86_64.so
           test -x "$output/aot/gdpp-runtime.x86_64"
           test -f "$project"
           test "$(nm -D --defined-only "$project" | awk 'NF {print $NF}' | wc -l)" -eq 1
@@ -224,7 +224,7 @@ jobs:
             --export-debug 'Linux x86_64' \
             "$GITHUB_WORKSPACE/$output/debug/gdpp-runtime-debug.x86_64" \
             2>&1 | tee "$output/gdpp-debug-export.log"
-          project=example/addons/gdpp/binary/libgdpp_project.debug.linux.x86_64.so
+          project=example/addons/gdpp/binary/libgdpp.debug.linux.x86_64.so
           test -x "$output/debug/gdpp-runtime-debug.x86_64"
           test -f "$project"
           test "$(nm -D --defined-only "$project" | awk 'NF {print $NF}' | wc -l)" -eq 1
@@ -277,7 +277,7 @@ jobs:
           set -euo pipefail
           sdk_version="$(printf '%s' '${{ matrix.version }}' | cut -d. -f1,2)"
           sdk="example/addons/gdpp/sdk/$sdk_version"
-          project="example/addons/gdpp/binary/libgdpp_project.release.linux.x86_64.so"
+          project="example/addons/gdpp/binary/libgdpp.release.linux.x86_64.so"
           test -f "$project"
           mv "$sdk" "$sdk.unavailable"
           mv "$project" "$project.unavailable"

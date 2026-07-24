@@ -125,7 +125,7 @@ jobs:
           apk="$root/GDPPExample.apk"
           test -f "$apk"
           unzip -Z1 "$apk" | LC_ALL=C sort > "$root/contents.txt"
-          project_library="$(awk '/^lib\/arm64-v8a\/libgdpp_project.*\.so$/{print}' "$root/contents.txt")"
+          project_library="$(awk '/^lib\/arm64-v8a\/libgdpp\.release\.android\.arm64\.so$/{print}' "$root/contents.txt")"
           test "$(printf '%s\n' "$project_library" | sed '/^$/d' | wc -l)" -eq 1
           if grep -E -q '\.(gd|gdc)$|/(sdk|godot-cpp)/|libgdpp_compiler' "$root/contents.txt"; then
             echo 'Android package contains GDScript or compiler-only payload.'

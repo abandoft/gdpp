@@ -87,7 +87,7 @@ jobs:
           test "$(grep -Eo '^gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/' "$contents" \
             | sort -u | wc -l)" -eq 4
           if grep -Eq \
-              '^addons/|template_debug|\.editor\.|\.zip$|/build/|gdpp_project|\.DS_Store$|/\._' \
+              '^addons/|template_debug|\.editor\.|\.zip$|/build/|gdpp_project|(^|/)(lib)?gdpp\.(debug|release)\.|(^|/)gdpp\.lib$|\.DS_Store$|/\._' \
               "$contents"; then
             echo 'Release ZIP contains a forbidden binding or generated product.'
             exit 1
