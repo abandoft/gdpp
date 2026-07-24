@@ -5455,6 +5455,24 @@ void CodeGenerator::emit_attached_descriptor_definition(
                << "        gdpp::runtime::AttachedScriptProperty property;\n"
                << "        property.info = "
                << property_info(variable, api_, script_symbols_, cpp_type(variable.type)) << ";\n";
+        const auto name = sanitize_identifier(variable.name);
+        source << "        property.getter = [](gdpp::runtime::AttachedScriptBehavior *behavior) "
+                  "-> godot::Variant {\n"
+               << "            if (!behavior || !behavior->is_class(" << native_name
+               << "::get_class_static())) return {};\n"
+               << "            auto *typed = static_cast<" << native_name << " *>(behavior);\n"
+               << "            return gdpp::runtime::to_variant(typed->_gdpp_get_" << name
+               << "());\n"
+               << "        };\n"
+               << "        property.setter = [](gdpp::runtime::AttachedScriptBehavior *behavior, "
+                  "const godot::Variant &value) -> bool {\n"
+               << "            if (!behavior || !behavior->is_class(" << native_name
+               << "::get_class_static())) return false;\n"
+               << "            auto *typed = static_cast<" << native_name << " *>(behavior);\n"
+               << "            typed->_gdpp_set_" << name << "("
+               << emit_conversion(variable.type, {TypeKind::variant, "Variant"}, "value") << ");\n"
+               << "            return true;\n"
+               << "        };\n";
         if (!variable.initializer || editor_safe_initializer(*variable.initializer)) {
             source << "        property.has_default = true;\n"
                    << "        property.default_value = gdpp::runtime::to_variant(";

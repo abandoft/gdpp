@@ -52,10 +52,17 @@ class AttachedScriptBehavior : public godot::RefCounted {
 // supported Godot release and never depends on the include order of ref.hpp.
 using AttachedBehaviorFactory = godot::Ref<AttachedScriptBehavior> (*)();
 using AttachedConstantResolver = godot::Variant (*)();
+using AttachedPropertyGetter = godot::Variant (*)(AttachedScriptBehavior*);
+using AttachedPropertySetter = bool (*)(AttachedScriptBehavior*, const godot::Variant&);
 
 struct AttachedScriptProperty {
     godot::PropertyInfo info;
     godot::Variant default_value;
+    // ScriptInstance property dispatch must not depend on ClassDBSingleton reflecting a
+    // GDExtension-owned behavior object. Generated accessors retain the original typed
+    // getter/setter semantics and also work for inherited descriptors.
+    AttachedPropertyGetter getter{nullptr};
+    AttachedPropertySetter setter{nullptr};
     bool has_default{false};
 };
 

@@ -218,8 +218,11 @@ GDExtensionBool instance_set(AttachedScriptInstance* instance, const godot::Stri
         if (error.error == GDEXTENSION_CALL_OK && static_cast<bool>(handled))
             return true;
     }
-    if (!find_property(instance, *name))
+    const auto* property = find_property(instance, *name);
+    if (!property)
         return false;
+    if (property->setter)
+        return property->setter(instance->behavior.ptr(), *value);
     return godot::ClassDB::class_set_property(instance->behavior.ptr(), *name, *value) == godot::OK;
 }
 
@@ -252,8 +255,10 @@ GDExtensionBool instance_get(AttachedScriptInstance* instance, const godot::Stri
             return true;
         }
     }
-    if (find_property(instance, *name)) {
-        *result = godot::ClassDB::class_get_property(instance->behavior.ptr(), *name);
+    if (const auto* property = find_property(instance, *name)) {
+        *result = property->getter
+                      ? property->getter(instance->behavior.ptr())
+                      : godot::ClassDB::class_get_property(instance->behavior.ptr(), *name);
         return true;
     }
     if (find_method(instance, *name)) {
@@ -324,12 +329,16 @@ void instance_property_state(AttachedScriptInstance* instance,
             // are emitted; all others are initialized by the target behavior constructor.
             continue;
         }
-        godot::Variant value =
-            instance->behavior.is_valid()
-                ? godot::ClassDB::class_get_property(instance->behavior.ptr(), property.info.name)
-                : instance->metadata_values.get(
-                      property.info.name,
-                      property.has_default ? property.default_value : godot::Variant{});
+        godot::Variant value;
+        if (instance->behavior.is_valid()) {
+            value = property.getter ? property.getter(instance->behavior.ptr())
+                                    : godot::ClassDB::class_get_property(instance->behavior.ptr(),
+                                                                         property.info.name);
+        } else {
+            value = instance->metadata_values.get(property.info.name, property.has_default
+                                                                          ? property.default_value
+                                                                          : godot::Variant{});
+        }
         add(&property.info.name, &value, userdata);
     }
 }
@@ -489,7 +498,7 @@ void* AttachedCompiledScript::_instance_create(godot::Object* object) const {
     }
     if (behavior.is_null())
         return godot::gdextension_interface::script_instance_create3(&script_instance_info(),
-                                                                      instance);
+                                                                     instance);
 
     behavior->initialize_instance();
 
@@ -551,8 +560,8 @@ bool is_attached_script_instance(godot::Object* object, const godot::String& sou
     return false;
 }
 
-bool set_attached_editor_storage_state(
-    godot::Object* object, const godot::PackedStringArray& stored_properties) {
+bool set_attached_editor_storage_state(godot::Object* object,
+                                       const godot::PackedStringArray& stored_properties) {
     if (!object)
         return false;
     std::lock_guard<std::mutex> lock{AttachedScriptInstance::instances_mutex()};
@@ -569,37 +578,45 @@ bool set_attached_editor_storage_state(
     return true;
 }
 
-godot::Object* cast_attached_script(const godot::Variant& value,
-                                    const godot::String& source_path) {
+godot::Object* cast_attached_script(const godot::Variant& value, const godot::String& source_path) {
     auto* object = value.get_validated_object();
     return is_attached_script_instance(object, source_path) ? object : nullptr;
 }
 
 godot::Variant instantiate_attached_script(const godot::String& source_path,
                                            const godot::Array& arguments, godot::String* error) {
+    const auto fail = [error](const godot::String& message) {
+        if (error)
+            *error = message;
+        else
+            godot::UtilityFunctions::push_error("GDPP: " + message);
+    };
     const auto descriptor = resolve_attached_script(source_path, error);
-    if (!descriptor)
+    if (!descriptor) {
+        if (!error)
+            godot::UtilityFunctions::push_error("GDPP: attached script is not registered: " +
+                                                source_path);
         return {};
+    }
     auto* class_db = godot::ClassDBSingleton::get_singleton();
     if (!class_db || !class_db->can_instantiate(descriptor->native_base_type)) {
-        if (error)
-            *error = "attached native base is not instantiable: " +
-                     godot::String{descriptor->native_base_type};
+        fail("attached native base is not instantiable: " +
+             godot::String{descriptor->native_base_type});
         return {};
     }
 
     godot::Variant instance = class_db->instantiate(descriptor->native_base_type);
     godot::Object* object = instance;
     if (!object) {
-        if (error)
-            *error = "ClassDB failed to instantiate attached native base: " +
-                     godot::String{descriptor->native_base_type};
+        fail("ClassDB failed to instantiate attached native base: " +
+             godot::String{descriptor->native_base_type});
         return {};
     }
 
     godot::Ref<AttachedCompiledScript> script;
     script.instantiate();
     script->set_source_path(descriptor->source_path);
+    script->set_contract_hash(descriptor->contract_hash);
     PendingConstruction construction{descriptor->source_path, &arguments, false};
     auto* previous = pending_construction;
     pending_construction = &construction;
@@ -607,8 +624,7 @@ godot::Variant instantiate_attached_script(const godot::String& source_path,
     pending_construction = previous;
     if (!script->_instance_has(object) ||
         (find_method(*descriptor, "_init") && !construction.consumed)) {
-        if (error)
-            *error = "failed to attach or initialize compiled script: " + descriptor->source_path;
+        fail("failed to attach or initialize compiled script: " + descriptor->source_path);
         // ClassDB returns a strong Variant for RefCounted instances, but ordinary Objects remain
         // caller-owned. Release either ownership model before reporting construction failure.
         if (godot::Object::cast_to<godot::RefCounted>(object))
