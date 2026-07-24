@@ -177,6 +177,16 @@ class LambdaCallable final : public godot::CallableCustom {
 
     [[nodiscard]] godot::String get_as_text() const override { return "GDPP lambda"; }
 
+    [[nodiscard]] bool is_valid() const override {
+        // Static GDScript function values intentionally have no Object owner. The
+        // godot-cpp default treats an empty ObjectID as invalid, which prevents an
+        // otherwise live CallableCustom from being connected to signals. Owner-free
+        // callables remain valid for the lifetime of their Callable value; captured
+        // instance lambdas continue to expire with their owner.
+        return !owner_.is_valid() ||
+               godot::ObjectDB::get_instance(static_cast<std::uint64_t>(owner_)) != nullptr;
+    }
+
     static bool compare_equal(const godot::CallableCustom* left,
                               const godot::CallableCustom* right) {
         return left == right;
@@ -706,10 +716,9 @@ godot::Callable make_callable(godot::Object* owner, std::size_t required_argumen
 
 namespace {
 
-void bind_variant_method_impl(const godot::StringName& class_name,
-                              const godot::MethodInfo& method,
-                              const GDExtensionClassMethodCall call,
-                              const bool has_return_value, const bool is_vararg) {
+void bind_variant_method_impl(const godot::StringName& class_name, const godot::MethodInfo& method,
+                              const GDExtensionClassMethodCall call, const bool has_return_value,
+                              const bool is_vararg) {
     if (class_name.is_empty() || method.name.is_empty() || !call) {
         godot::UtilityFunctions::push_error("GDPP: invalid Variant method registration");
         return;
