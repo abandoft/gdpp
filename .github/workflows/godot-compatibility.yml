@@ -116,7 +116,12 @@ jobs:
             # release blockers.
             grep -q 'Parse Error: Expected parameter name\.' \
               "$output/gdpp-attached-import.log"
-            grep -q 'GDScript::reload (res://vendor_child.gd:24)' \
+            typed_variadic_line="$(
+              grep -n -m1 -E '\.\.\.[[:alpha:]_][[:alnum:]_]*[[:space:]]*:' \
+                "$fixture/vendor_child.gd" | cut -d: -f1
+            )"
+            test -n "$typed_variadic_line"
+            grep -Fq "GDScript::reload (res://vendor_child.gd:$typed_variadic_line)" \
               "$output/gdpp-attached-import.log"
             for log in \
                 "$output/gdpp-attached-import.log" \

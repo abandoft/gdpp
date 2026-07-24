@@ -380,6 +380,18 @@ class ReleasePackagingTest(unittest.TestCase):
         self.assertNotIn("complete-packages:", orchestrator)
         self.assertNotIn("16-archive matrix", packages)
 
+    def test_godot_44_diagnostic_allowlist_tracks_the_fixture_source(self) -> None:
+        workflow = (
+            SOURCE_ROOT / ".github/workflows/godot-compatibility.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('typed_variadic_line="$(', workflow)
+        self.assertIn('"$fixture/vendor_child.gd" | cut -d: -f1', workflow)
+        self.assertIn(
+            "GDScript::reload (res://vendor_child.gd:$typed_variadic_line)",
+            workflow,
+        )
+        self.assertNotIn("vendor_child.gd:24", workflow)
+
     def test_host_staging_excludes_msvc_import_products(self) -> None:
         source = create_host_component(self.temporary / "source", "windows-x64")
         write(source / "binary/gdpp_compiler.windows.x86_64.lib")
