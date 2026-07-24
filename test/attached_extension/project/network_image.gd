@@ -46,11 +46,41 @@ static func _on_request_completed(
     if not content_type.contains("image/png"):
         sprite.set_meta(&"gdpp_network_error", "response headers lost the PNG content type")
         return
-    var image := Image.new()
-    var decode_error := image.load_png_from_buffer(body)
-    if decode_error != OK:
+    var image := decode_image(body, content_type)
+    if image == null:
         sprite.set_meta(&"gdpp_network_error", "PNG response could not be decoded")
         return
     var texture: Texture2D = ImageTexture.create_from_image(image)
     sprite.texture = texture
     sprite.set_meta(&"gdpp_network_loaded", true)
+
+
+static func decode_image(body: PackedByteArray, content_type: String) -> Image:
+    if body.size() < 4:
+        return null
+    var normalized := content_type.to_lower()
+    var image := Image.new()
+    var error := ERR_FILE_UNRECOGNIZED
+    if normalized.contains("png"):
+        error = image.load_png_from_buffer(body)
+    elif normalized.contains("jpeg") or normalized.contains("jpg"):
+        error = image.load_jpg_from_buffer(body)
+    elif normalized.contains("webp"):
+        error = image.load_webp_from_buffer(body)
+    elif body[0] == 0x89 and body[1] == 0x50 and body[2] == 0x4E and body[3] == 0x47:
+        error = image.load_png_from_buffer(body)
+    elif body[0] == 0xFF and body[1] == 0xD8 and body[2] == 0xFF:
+        error = image.load_jpg_from_buffer(body)
+    elif (
+        body.size() >= 12
+        and body[0] == 0x52
+        and body[1] == 0x49
+        and body[2] == 0x46
+        and body[3] == 0x46
+        and body[8] == 0x57
+        and body[9] == 0x45
+        and body[10] == 0x42
+        and body[11] == 0x50
+    ):
+        error = image.load_webp_from_buffer(body)
+    return image if error == OK else null

@@ -70,6 +70,42 @@ func _verify_export_runtime() -> void:
         _fail("attached Script reflection did not inherit a deferred constant")
         return
 
+    var prebound_inline := get_node("PreboundInlineShader") as TextureRect
+    var prebound_external := get_node("PreboundExternalShader") as TextureRect
+    var inline_material := prebound_inline.material as ShaderMaterial
+    var external_material := prebound_external.material as ShaderMaterial
+    if (
+        inline_material == null
+        or external_material == null
+        or inline_material.shader != RUNTIME_SHADER
+        or external_material.shader != RUNTIME_SHADER
+        or RUNTIME_SHADER.resource_path != "res://runtime_shader.gdshader"
+        or not is_equal_approx(
+            float(inline_material.get_shader_parameter(&"pulse")),
+            0.375,
+        )
+        or not is_equal_approx(
+            float(external_material.get_shader_parameter(&"pulse")),
+            0.625,
+        )
+    ):
+        _fail("AOT scene rewrite changed a prebound ShaderMaterial resource contract")
+        return
+    inline_material.set_shader_parameter(&"pulse", 0.5)
+    external_material.set_shader_parameter(&"pulse", 0.75)
+    if (
+        not is_equal_approx(
+            float(inline_material.get_shader_parameter(&"pulse")),
+            0.5,
+        )
+        or not is_equal_approx(
+            float(external_material.get_shader_parameter(&"pulse")),
+            0.75,
+        )
+    ):
+        _fail("prebound ShaderMaterial uniforms were not writable after AOT scene rewrite")
+        return
+
     var dynamic_entry: Variant = INNER_DATA.Entry.new()
     dynamic_entry.count = 42
     dynamic_entry.label = "attached"
@@ -132,6 +168,30 @@ func _verify_export_runtime() -> void:
 
     var image := Image.create(2, 2, false, Image.FORMAT_RGBA8)
     image.fill(Color(0.25, 0.5, 0.75, 1.0))
+    var jpeg_image: Image = NETWORK_IMAGE.decode_image(
+        image.save_jpg_to_buffer(0.9),
+        "image/jpeg",
+    )
+    var webp_image: Image = NETWORK_IMAGE.decode_image(
+        image.save_webp_to_buffer(false, 0.9),
+        "",
+    )
+    var jpeg_texture: Texture2D = (
+        ImageTexture.create_from_image(jpeg_image) if jpeg_image != null else null
+    )
+    var webp_texture: Texture2D = (
+        ImageTexture.create_from_image(webp_image) if webp_image != null else null
+    )
+    if (
+        jpeg_texture == null
+        or webp_texture == null
+        or jpeg_texture.get_width() != 2
+        or jpeg_texture.get_height() != 2
+        or webp_texture.get_width() != 2
+        or webp_texture.get_height() != 2
+    ):
+        _fail("JPEG/WebP network image decoding or ImageTexture creation failed")
+        return
     _network_png = image.save_png_to_buffer()
     _network_server = TCPServer.new()
     if _network_server.listen(0, "127.0.0.1") != OK:
