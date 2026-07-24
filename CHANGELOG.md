@@ -28,6 +28,7 @@
 - Flatten every packaged Godot-version SDK into one shared runtime, godot-cpp header tree, source tree, and `lib` directory; Android, Web threads/nothreads, iOS, and the package host now contribute only their distinct optimized Release libraries instead of duplicating the common SDK payload.
 - Select target manifests and godot-cpp libraries by exact platform, architecture, profile, and Web thread mode from the shared SDK, while retaining legacy component-layout compatibility and preferring exact macOS slices over Universal fallbacks.
 - Ship each desktop archive with `gdpp/` as its top-level directory instead of an `addons/` wrapper, and gate the final ZIP structure, target manifest set, library count, retired platform directories, and cross-target runtime contract before publishing.
+- Derive the Godot 4.4 typed-variadic parser diagnostic location from the compatibility fixture itself, keeping the narrow non-authoritative allowlist valid when unrelated fixture lines change without masking other import or export errors.
 
 ## 1.7.7
 
