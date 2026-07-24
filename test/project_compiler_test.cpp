@@ -2094,12 +2094,16 @@ TEST_CASE("attached internal classes dispatch self locally and other instances t
     const auto source =
         read_text(options.output_directory / "generated" / result.scripts.front().source_file_name);
     REQUIRE(source.find("owner()->_gdpp_") == std::string::npos);
-    REQUIRE(source.find("->_gdpp_get_value") == std::string::npos);
-    REQUIRE(source.find("->_gdpp_set_value") == std::string::npos);
+    REQUIRE(source.find("record->_gdpp_get_value") == std::string::npos);
+    REQUIRE(source.find("record->_gdpp_set_value") == std::string::npos);
     REQUIRE(source.find("gdpp::runtime::get_named(") != std::string::npos);
     REQUIRE(source.find("gdpp::runtime::set_named(") != std::string::npos);
     REQUIRE(source.find("gdpp::runtime::call_dynamic(") != std::string::npos);
     REQUIRE(source.find("-> godot::Ref<godot::RefCounted>") != std::string::npos);
+    REQUIRE(source.find("property.getter = [](") != std::string::npos);
+    REQUIRE(source.find("typed->_gdpp_get_value()") != std::string::npos);
+    REQUIRE(source.find("property.setter = [](") != std::string::npos);
+    REQUIRE(source.find("typed->_gdpp_set_value(") != std::string::npos);
 }
 
 TEST_CASE("attached script self calls use native virtual dispatch without bypassing peer scripts") {
