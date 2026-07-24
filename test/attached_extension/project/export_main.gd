@@ -14,6 +14,16 @@ var _network_response_sent := false
 var _shader_rect: TextureRect
 var _shader_material: ShaderMaterial
 var _shader_process_ticks := 0
+var _script_items: Array[ContainerItem] = []
+var _script_lookup: Dictionary[String, ContainerItem] = {}
+
+
+class ContainerItem extends RefCounted:
+    var value: int
+
+
+    func _init(initial: int) -> void:
+        value = initial
 
 
 func _ready() -> void:
@@ -86,6 +96,24 @@ func _verify_export_runtime() -> void:
         )
     ):
         _fail("derived ShaderMaterial was not assigned through the Material property ABI")
+        return
+
+    var item := ContainerItem.new(73)
+    _script_items.push_back(item)
+    _script_lookup["runtime"] = item
+    if (
+        _script_items.size() != 1
+        or _script_lookup.size() != 1
+        or _script_items[0].value != 73
+        or _script_lookup["runtime"].value != 73
+        or _script_items.get_typed_class_name() != &"RefCounted"
+        or _script_items.get_typed_script() == null
+        or _script_items.get_typed_script() != item.get_script()
+        or _script_lookup.get_typed_value_class_name() != &"RefCounted"
+        or _script_lookup.get_typed_value_script() == null
+        or _script_lookup.get_typed_value_script() != item.get_script()
+    ):
+        _fail("attached script objects lost exact typed-container metadata")
         return
 
     var image := Image.create(2, 2, false, Image.FORMAT_RGBA8)
