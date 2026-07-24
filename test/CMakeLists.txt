@@ -44,6 +44,13 @@ add_test(
 )
 
 add_test(
+    NAME gdpp.export.immutability
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/export_immutability_test.py"
+)
+
+add_test(
     NAME gdpp.web.browser_smoke
     COMMAND
         "${Python3_EXECUTABLE}"
