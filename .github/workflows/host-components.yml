@@ -89,6 +89,100 @@ jobs:
             test "$(find "$sdk/lib" -maxdepth 1 -type f -name '*template_release*' | wc -l)" -eq 1
           done
           grep -q '^compatibility_minimum = "4.4"$' "$package/gdpp.gdextension"
+      - id: godot
+        name: Install official Godot 4.7.1 editor and host templates
+        uses: ./.github/actions/setup-godot
+        with:
+          version: 4.7.1
+          templates: host
+      - name: Export and run the host desktop package
+        shell: bash
+        env:
+          GODOT: ${{ steps.godot.outputs.executable }}
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/build/host-export"
+          mkdir -p "$root"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            python3 - <<'PY'
+          from pathlib import Path
+          path = Path("example/export_presets.cfg")
+          contents = path.read_text(encoding="utf-8")
+          original = 'binary_format/architecture="universal"'
+          if original not in contents:
+              raise SystemExit("macOS Universal preset architecture is missing")
+          path.write_text(
+              contents.replace(
+                  original,
+                  'binary_format/architecture="arm64"',
+                  1,
+              ),
+              encoding="utf-8",
+          )
+          PY
+            preset='macOS Universal'
+            output="$root/GDPPExample.app"
+            runtime="$output/Contents/MacOS/GDPP Example"
+            project_library="$output/Contents/Frameworks/libgdpp.release.macos.arm64.dylib"
+          elif [[ "$RUNNER_OS" == Windows ]]; then
+            preset='Windows x86_64'
+            output="$root/GDPPExample.exe"
+            runtime="$output"
+            project_library="$root/gdpp.release.windows.x86_64.dll"
+          else
+            preset='Linux x86_64'
+            output="$root/GDPPExample.x86_64"
+            runtime="$output"
+            project_library="$root/libgdpp.release.linux.x86_64.so"
+          fi
+
+          "$GODOT" --headless --editor --path example --import \
+            2>&1 | tee "$root/import.log"
+          python3 tools/verify_export_immutability.py snapshot \
+            --project example --state "$root/extension-state.json"
+          "$GODOT" --headless --editor --path example \
+            --export-release "$preset" "$output" \
+            2>&1 | tee "$root/export.log"
+          python3 tools/verify_export_immutability.py verify \
+            --project example --state "$root/extension-state.json"
+
+          test -f "$runtime"
+          test -f "$project_library"
+          test "$(find "$root" -type f \
+            \( -name 'gdpp.release.*' -o -name 'libgdpp.release.*' \) \
+            | wc -l)" -eq 1
+          if find "$root" -type f \
+              \( -name '*gdpp_compiler*' -o -name '*gdpp_fallback*' \) \
+              -print -quit | grep -q .; then
+            echo 'Desktop export contains an editor or fallback library.'
+            exit 1
+          fi
+
+          python3 - "$runtime" "$root/runtime.log" <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          executable, log_path = sys.argv[1:]
+          result = subprocess.run(
+              [executable, "--headless", "--quit-after", "2"],
+              stdout=subprocess.PIPE,
+              stderr=subprocess.STDOUT,
+              text=True,
+              timeout=30,
+              check=False,
+          )
+          Path(log_path).write_text(result.stdout, encoding="utf-8")
+          print(result.stdout, end="")
+          raise SystemExit(result.returncode)
+          PY
+          grep -q '^GDPP_EXPORTED_PROPERTIES_OK$' "$root/runtime.log"
+          grep -q 'GDPP_AOT_SUMMARY scenes=' "$root/export.log"
+          if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|Parse Error:|WARNING:|Unable to open' \
+              "$root/import.log" "$root/export.log" "$root/runtime.log"; then
+            echo 'Official host desktop export emitted a forbidden diagnostic.'
+            exit 1
+          fi
       - name: Validate macOS arm64 and 11.0 minimum
         if: runner.os == 'macOS'
         shell: bash
