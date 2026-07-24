@@ -659,8 +659,7 @@ TEST_CASE("native builder pins the MSVC linker beside an absolute compiler") {
 
     REQUIRE(plan.success);
     REQUIRE_EQ(plan.commands.front().executable, options.compiler_executable);
-    REQUIRE_EQ(plan.commands.back().executable,
-               (root / "toolchain/Hostx64/x64/link.exe").string());
+    REQUIRE_EQ(plan.commands.back().executable, (root / "toolchain/Hostx64/x64/link.exe").string());
 }
 
 TEST_CASE("native builder creates a stable release library with release bindings") {
