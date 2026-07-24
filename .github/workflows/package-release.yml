@@ -59,40 +59,42 @@ jobs:
           test -f "$archive"
           unzip -Z1 "$archive" > build/archive-contents.txt
           contents=build/archive-contents.txt
-          if grep -qv '^gdpp/' "$contents"; then
-            echo 'Release ZIP must contain exactly one gdpp top-level directory.'
+          if grep -qv '^addons/gdpp/' "$contents"; then
+            echo 'Release ZIP must contain exactly one addons/gdpp plugin directory.'
             exit 1
           fi
-          grep -q '^gdpp/build_progress.gd$' "$contents"
-          grep -q '^gdpp/native_build_job.gd$' "$contents"
-          grep -q '^gdpp/PACKAGE_MANIFEST.txt$' "$contents"
+          grep -q '^addons/gdpp/build_progress.gd$' "$contents"
+          grep -q '^addons/gdpp/native_build_job.gd$' "$contents"
+          grep -q '^addons/gdpp/PACKAGE_MANIFEST.txt$' "$contents"
+          grep -q '^archive_layout addons/gdpp$' \
+            <(unzip -p "$archive" addons/gdpp/PACKAGE_MANIFEST.txt)
           grep -q '^sdk_layout shared-target-manifests$' \
-            <(unzip -p "$archive" gdpp/PACKAGE_MANIFEST.txt)
-          test "$(grep -Ec '^gdpp/binary/[^/]+$' "$contents")" -eq 2
+            <(unzip -p "$archive" addons/gdpp/PACKAGE_MANIFEST.txt)
+          test "$(grep -Ec '^addons/gdpp/binary/[^/]+$' "$contents")" -eq 2
           for godot in 4.4 4.5 4.6 4.7; do
-            grep -q "^gdpp/sdk/$godot/sdk.manifest$" "$contents"
-            grep -q "^gdpp/sdk/$godot/manifests/android.arm64.sdk.manifest$" "$contents"
-            grep -q "^gdpp/sdk/$godot/manifests/web.wasm32.nothreads.sdk.manifest$" "$contents"
-            grep -q "^gdpp/sdk/$godot/manifests/web.wasm32.threads.sdk.manifest$" "$contents"
+            grep -q "^addons/gdpp/sdk/$godot/sdk.manifest$" "$contents"
+            grep -q "^addons/gdpp/sdk/$godot/manifests/android.arm64.sdk.manifest$" "$contents"
+            grep -q "^addons/gdpp/sdk/$godot/manifests/web.wasm32.nothreads.sdk.manifest$" "$contents"
+            grep -q "^addons/gdpp/sdk/$godot/manifests/web.wasm32.threads.sdk.manifest$" "$contents"
             if [[ "${{ matrix.package_host }}" == mac ]]; then
-              grep -q "^gdpp/sdk/$godot/manifests/ios.arm64.sdk.manifest$" "$contents"
-              test "$(grep -Ec "^gdpp/sdk/$godot/lib/[^/]+$" "$contents")" -eq 6
-            elif grep -q "^gdpp/sdk/$godot/manifests/ios\\." "$contents"; then
+              grep -q "^addons/gdpp/sdk/$godot/manifests/ios.arm64.sdk.manifest$" "$contents"
+              test "$(grep -Ec "^addons/gdpp/sdk/$godot/lib/[^/]+$" "$contents")" -eq 6
+            elif grep -q "^addons/gdpp/sdk/$godot/manifests/ios\\." "$contents"; then
               echo 'A non-macOS package contains an iOS SDK.'
               exit 1
             else
-              test "$(grep -Ec "^gdpp/sdk/$godot/lib/[^/]+$" "$contents")" -eq 4
+              test "$(grep -Ec "^addons/gdpp/sdk/$godot/lib/[^/]+$" "$contents")" -eq 4
             fi
           done
-          test "$(grep -Eo '^gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/' "$contents" \
+          test "$(grep -Eo '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/' "$contents" \
             | sort -u | wc -l)" -eq 4
           if grep -Eq \
-              '^addons/|template_debug|\.editor\.|\.zip$|/build/|gdpp_project|(^|/)(lib)?gdpp\.(debug|release)\.|(^|/)gdpp\.lib$|\.DS_Store$|/\._' \
+              'template_debug|\.editor\.|\.zip$|/build/|gdpp_project|(^|/)(lib)?gdpp\.(debug|release)\.|(^|/)gdpp\.lib$|\.DS_Store$|/\._' \
               "$contents"; then
             echo 'Release ZIP contains a forbidden binding or generated product.'
             exit 1
           fi
-          if grep -Eq '^gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/(android|ios|web|macos|linux|windows)/' \
+          if grep -Eq '^addons/gdpp/sdk/(4\.4|4\.5|4\.6|4\.7)/(android|ios|web|macos|linux|windows)/' \
               "$contents"; then
             echo 'Release ZIP contains a retired per-target SDK directory.'
             exit 1
