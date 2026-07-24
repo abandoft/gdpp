@@ -656,14 +656,12 @@ ScriptInnerClassSymbol inner_class_symbol(const ast::ClassDeclaration& declarati
         [](const ast::Annotation& annotation) { return annotation.name == "abstract"; });
     for (const auto& variable : declaration.variables) {
         ScriptMemberSymbol member;
-        member.kind =
-            variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field;
+        member.kind = variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field;
         member.name = variable.name;
-        member.type =
-            signature_type(variable.type,
-                           variable.infer_type || variable.is_constant ? variable.initializer.get()
-                                                                       : nullptr,
-                           api);
+        member.type = signature_type(
+            variable.type,
+            variable.infer_type || variable.is_constant ? variable.initializer.get() : nullptr,
+            api);
         member.is_static = variable.is_constant || variable.is_static;
         member.has_accessor = variable.getter.has_value() || variable.setter.has_value();
         symbol.members.push_back(std::move(member));
@@ -877,8 +875,8 @@ std::string generated_registration(const std::vector<CompiledProjectScript>& scr
     const auto emit_registration = [&](const std::string& class_name, const bool is_abstract,
                                        const bool is_editor_only) {
         output << (is_editor_only ? "    if (gdpp_editor_environment) {\n        " : "    ");
-        output << (is_abstract ? "GDREGISTER_ABSTRACT_CLASS(" : "GDREGISTER_CLASS(")
-               << class_name << ");\n";
+        output << (is_abstract ? "GDREGISTER_ABSTRACT_CLASS(" : "GDREGISTER_CLASS(") << class_name
+               << ");\n";
         if (is_editor_only)
             output << "    }\n";
     };
@@ -896,8 +894,10 @@ std::string generated_registration(const std::vector<CompiledProjectScript>& scr
            << "void initialize_gdpp_project(godot::ModuleInitializationLevel level) {\n"
            << "    if (level != godot::MODULE_INITIALIZATION_LEVEL_SCENE) return;\n";
     if (has_editor_only_classes) {
-        output << "    const bool gdpp_editor_environment = "
-                  "godot::Engine::get_singleton()->is_editor_hint();\n";
+        output << "    auto* gdpp_engine = godot::Engine::get_singleton();\n"
+               << "    ERR_FAIL_NULL_MSG(gdpp_engine, "
+                  "\"Godot Engine singleton is unavailable during GDPP registration\");\n"
+               << "    const bool gdpp_editor_environment = gdpp_engine->is_editor_hint();\n";
     }
     if (has_attached_scripts) {
         // Export runs in the editor and must invoke ScriptExtension virtual callbacks even for
@@ -1340,12 +1340,10 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
             member.kind =
                 variable.is_constant ? ScriptMemberKind::constant : ScriptMemberKind::field;
             member.name = variable.name;
-            member.type =
-                signature_type(variable.type,
-                               variable.infer_type || variable.is_constant
-                                   ? variable.initializer.get()
-                                   : nullptr,
-                               target_api);
+            member.type = signature_type(
+                variable.type,
+                variable.infer_type || variable.is_constant ? variable.initializer.get() : nullptr,
+                target_api);
             member.is_static = variable.is_constant || variable.is_static;
             member.has_accessor = variable.getter.has_value() || variable.setter.has_value();
             for (const auto& annotation : variable.annotations) {
@@ -1728,13 +1726,12 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
         if (local_inner != input.inner_classes.end()) {
             auto terminal = local_inner;
             std::unordered_set<std::string> visited;
-            while (!terminal->base_class_name.empty() &&
-                   visited.insert(terminal->name).second) {
-                const auto base = std::find_if(
-                    input.inner_classes.begin(), input.inner_classes.end(),
-                    [&](const auto& candidate) {
-                        return candidate.name == terminal->base_class_name;
-                    });
+            while (!terminal->base_class_name.empty() && visited.insert(terminal->name).second) {
+                const auto base =
+                    std::find_if(input.inner_classes.begin(), input.inner_classes.end(),
+                                 [&](const auto& candidate) {
+                                     return candidate.name == terminal->base_class_name;
+                                 });
                 if (base == input.inner_classes.end())
                     break;
                 terminal = base;
@@ -2029,9 +2026,8 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
             for (std::size_t index = 0; index < member.parameters.size(); ++index) {
                 const auto& parameter = member.parameters[index];
                 identity << ':' << static_cast<int>(parameter.kind) << ':' << parameter.name << ':'
-                         << (index < member.parameter_names.size()
-                                 ? member.parameter_names[index]
-                                 : std::string{})
+                         << (index < member.parameter_names.size() ? member.parameter_names[index]
+                                                                   : std::string{})
                          << ':'
                          << (index < member.explicit_parameter_types.size() &&
                              member.explicit_parameter_types[index])
@@ -2543,12 +2539,12 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
         script.icon_path = input.icon_path;
         script.native_base_type = input.semantic_base_type;
         script.external_base_name = input.external_base_name;
-            script.attached_native_base = input.attached_native_base;
-            script.global_name = input.globally_named ? input.script_class_name : "";
-            if (input.script_base)
-                script.base_script_path =
-                    "res://" + generic_path_to_utf8(inputs[*input.script_base].relative);
-            script.reflection_members = input.members;
+        script.attached_native_base = input.attached_native_base;
+        script.global_name = input.globally_named ? input.script_class_name : "";
+        if (input.script_base)
+            script.base_script_path =
+                "res://" + generic_path_to_utf8(inputs[*input.script_base].relative);
+        script.reflection_members = input.members;
         script.is_abstract = input.is_abstract;
         script.is_tool = input.script.tool;
         script.is_attached = input.attached;
@@ -2604,8 +2600,8 @@ ProjectCompileResult ProjectCompiler::compile_impl(const ProjectCompileOptions& 
                 script_options.native_base_header = input.extension_base.type->header;
             } else if (input.local_inner_base) {
                 script_options.attached_base_script_path =
-                    "res://" + generic_path_to_utf8(input.relative) + "::" +
-                    input.inner_classes[*input.local_inner_base].name;
+                    "res://" + generic_path_to_utf8(input.relative) +
+                    "::" + input.inner_classes[*input.local_inner_base].name;
                 script_options.native_base_class =
                     "GDPPNative_" + input.native_class_stem + "_" +
                     input.public_abi_hash.substr(0, 16) + "__" +

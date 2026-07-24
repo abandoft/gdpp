@@ -170,11 +170,18 @@ TEST_CASE("attached descriptors defer every script constant until Godot requests
     const auto root = fixture_root("project-deferred-attached-constants");
     std::error_code error;
     std::filesystem::remove_all(root, error);
-    write_text(root / "game_map.gd", "extends Node\n"
-                                     "const BALL_SCENE = preload(\"res://component/ball.tscn\")\n"
-                                     "const PURE_VALUE = Vector2(2.0, 4.0)\n"
-                                     "func scene_resource():\n"
-                                     "    return BALL_SCENE\n");
+    write_text(root / "game_map.gd",
+               "extends Node\n"
+               "const BALL_SCENE = preload(\"res://component/ball.tscn\")\n"
+               "const BALL_SCENES: Array = [preload(\"res://component/ball.tscn\")]\n"
+               "const PURE_VALUE = Vector2(2.0, 4.0)\n"
+               "@export var default_scene = preload(\"res://component/ball.tscn\")\n"
+               "var runtime_tree = get_tree()\n"
+               "static var static_scene = preload(\"res://component/ball.tscn\")\n"
+               "func scene_resource():\n"
+               "    return BALL_SCENE\n"
+               "func scene_or_default(scene = preload(\"res://component/ball.tscn\")):\n"
+               "    return scene\n");
 
     const auto options = project_options(root);
     const auto result = gdpp::ProjectCompiler{}.compile(options);
@@ -194,9 +201,17 @@ TEST_CASE("attached descriptors defer every script constant until Godot requests
     REQUIRE(descriptor.find(
                 "descriptor.deferred_constants.push_back({godot::StringName(\"PURE_VALUE\"), "
                 "[]() -> godot::Variant") != std::string::npos);
+    REQUIRE(descriptor.find(
+                "descriptor.deferred_constants.push_back({godot::StringName(\"BALL_SCENES\"), "
+                "[]() -> godot::Variant") != std::string::npos);
     REQUIRE(descriptor.find("descriptor.constants[godot::StringName(\"BALL_SCENE\")]") ==
             std::string::npos);
     REQUIRE(descriptor.find("gdpp::runtime::load_resource(") == std::string::npos);
+    REQUIRE(descriptor.find("get_tree(") == std::string::npos);
+    REQUIRE(descriptor.find("_gdpp_preload_resources(") == std::string::npos);
+    const auto registration = read_text(options.output_directory / "register_types.cpp");
+    REQUIRE(registration.find("::_gdpp_preload_resources();") == std::string::npos);
+    REQUIRE(registration.find("gdpp_engine") == std::string::npos);
 }
 
 TEST_CASE("project compiler publishes normalized extension class icons") {
@@ -339,8 +354,12 @@ TEST_CASE("project compiler excludes editor class hierarchies from runtime regis
     REQUIRE(!runtime->is_editor_only);
 
     const auto registration = read_text(options.output_directory / "register_types.cpp");
-    REQUIRE(registration.find("godot::Engine::get_singleton()->is_editor_hint()") !=
+    REQUIRE(registration.find("auto* gdpp_engine = godot::Engine::get_singleton();") !=
             std::string::npos);
+    REQUIRE(registration.find("ERR_FAIL_NULL_MSG(gdpp_engine") != std::string::npos);
+    REQUIRE(
+        registration.find("const bool gdpp_editor_environment = gdpp_engine->is_editor_hint();") !=
+        std::string::npos);
     REQUIRE(registration.find("if (gdpp_editor_environment) {\n        GDREGISTER_CLASS(" +
                               plugin->class_name + ");\n    }") != std::string::npos);
     REQUIRE(registration.find("if (gdpp_editor_environment) {\n        GDREGISTER_CLASS(" +
