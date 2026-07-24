@@ -419,6 +419,12 @@ class ReleasePackagingTest(unittest.TestCase):
         self.assertIn("Install the final ZIP into a clean customer project", installed_smoke)
         self.assertIn("PCK_AUDIT_VIOLATIONS=0", installed_smoke)
         self.assertIn("PCK_AUDIT_PROJECT_LIBRARIES=1", installed_smoke)
+        for macos_gate in (host_components, installed_smoke):
+            self.assertIn(
+                'load_commands="$(otool -arch "$architecture" -l',
+                macos_gate,
+            )
+            self.assertNotIn("| grep -A3 LC_BUILD_VERSION", macos_gate)
         self.assertNotIn("complete-packages:", orchestrator)
         self.assertNotIn("16-archive matrix", packages)
 
