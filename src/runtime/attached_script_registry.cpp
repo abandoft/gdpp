@@ -28,6 +28,7 @@ AttachedScriptDescriptor::operator=(const AttachedScriptDescriptor& other) {
     methods = other.methods;
     signals = other.signals;
     assign_dictionary(constants, other.constants);
+    deferred_constants = other.deferred_constants;
     rpc_config = other.rpc_config;
     tool = other.tool;
     abstract = other.abstract;
@@ -49,6 +50,7 @@ AttachedScriptDescriptor& AttachedScriptDescriptor::operator=(AttachedScriptDesc
     methods = std::move(other.methods);
     signals = std::move(other.signals);
     assign_dictionary(constants, other.constants);
+    deferred_constants = std::move(other.deferred_constants);
     rpc_config = std::move(other.rpc_config);
     tool = other.tool;
     abstract = other.abstract;
@@ -76,9 +78,8 @@ std::string registry_key(const godot::String& path) {
 bool valid_contract_hash(const godot::String& value) {
     const auto hash = registry_key(value);
     return hash.size() == 64U &&
-           std::all_of(hash.begin(), hash.end(), [](const unsigned char character) {
-               return std::isxdigit(character) != 0;
-           });
+           std::all_of(hash.begin(), hash.end(),
+                       [](const unsigned char character) { return std::isxdigit(character) != 0; });
 }
 
 void set_error(godot::String* destination, const godot::String& message) {
@@ -112,13 +113,13 @@ bool same_method_info(const godot::MethodInfo& left, const godot::MethodInfo& ri
         if (!same_property_info(left.arguments[index], right.arguments[index]))
             return false;
     }
-    for (decltype(left.default_arguments.size()) index = 0;
-         index < left.default_arguments.size(); ++index) {
+    for (decltype(left.default_arguments.size()) index = 0; index < left.default_arguments.size();
+         ++index) {
         if (!same_variant(left.default_arguments[index], right.default_arguments[index]))
             return false;
     }
-    for (decltype(left.arguments_metadata.size()) index = 0;
-         index < left.arguments_metadata.size(); ++index) {
+    for (decltype(left.arguments_metadata.size()) index = 0; index < left.arguments_metadata.size();
+         ++index) {
         if (left.arguments_metadata[index] != right.arguments_metadata[index])
             return false;
     }
@@ -128,6 +129,11 @@ bool same_method_info(const godot::MethodInfo& left, const godot::MethodInfo& ri
 bool same_property(const AttachedScriptProperty& left, const AttachedScriptProperty& right) {
     return same_property_info(left.info, right.info) && left.has_default == right.has_default &&
            (!left.has_default || same_variant(left.default_value, right.default_value));
+}
+
+bool same_deferred_constant(const AttachedScriptDeferredConstant& left,
+                            const AttachedScriptDeferredConstant& right) {
+    return left.name == right.name && left.resolver == right.resolver;
 }
 
 template <typename Items, typename Equal>
@@ -153,6 +159,8 @@ bool same_identity(const AttachedScriptDescriptor& left, const AttachedScriptDes
            same_ordered_items(left.methods, right.methods, same_method_info) &&
            same_ordered_items(left.signals, right.signals, same_method_info) &&
            same_variant(godot::Variant{left.constants}, godot::Variant{right.constants}) &&
+           same_ordered_items(left.deferred_constants, right.deferred_constants,
+                              same_deferred_constant) &&
            same_variant(left.rpc_config, right.rpc_config);
 }
 
@@ -235,6 +243,24 @@ bool register_attached_script(AttachedScriptDescriptor descriptor, godot::String
             &duplicate)) {
         set_error(error, "duplicate attached script signal: " + duplicate);
         return false;
+    }
+    if (!names_are_unique(
+            descriptor.deferred_constants,
+            [](const AttachedScriptDeferredConstant& item) { return item.name; }, &duplicate)) {
+        set_error(error, "duplicate deferred attached script constant: " + duplicate);
+        return false;
+    }
+    for (const auto& constant : descriptor.deferred_constants) {
+        if (!constant.resolver) {
+            set_error(error, "deferred attached script constant has no resolver: " +
+                                 godot::String{constant.name});
+            return false;
+        }
+        if (descriptor.constants.has(constant.name)) {
+            set_error(error, "attached script constant is both eager and deferred: " +
+                                 godot::String{constant.name});
+            return false;
+        }
     }
 
     std::lock_guard<std::mutex> lock{registry_mutex()};
@@ -328,8 +354,20 @@ std::optional<AttachedScriptDescriptor> resolve_attached_script(const godot::Str
         const godot::Array constant_names = base->second.constants.keys();
         for (std::int64_t index = 0; index < constant_names.size(); ++index) {
             const godot::Variant& name = constant_names[index];
-            if (!resolved.constants.has(name))
+            const godot::StringName constant_name{name};
+            const bool deferred =
+                std::any_of(resolved.deferred_constants.begin(), resolved.deferred_constants.end(),
+                            [&](const auto& item) { return item.name == constant_name; });
+            if (!resolved.constants.has(name) && !deferred)
                 resolved.constants[name] = base->second.constants[name];
+        }
+        for (const auto& inherited : base->second.deferred_constants) {
+            const bool already_present =
+                resolved.constants.has(inherited.name) ||
+                std::any_of(resolved.deferred_constants.begin(), resolved.deferred_constants.end(),
+                            [&](const auto& item) { return item.name == inherited.name; });
+            if (!already_present)
+                resolved.deferred_constants.push_back(inherited);
         }
         base_path = base->second.base_script_path;
     }
@@ -342,6 +380,17 @@ std::vector<godot::String> attached_script_paths() {
     result.reserve(registry().size());
     for (const auto& [path, descriptor] : registry())
         result.push_back(descriptor.source_path);
+    return result;
+}
+
+godot::Dictionary
+materialize_attached_script_constants(const AttachedScriptDescriptor& descriptor) {
+    godot::Dictionary result;
+    assign_dictionary(result, descriptor.constants);
+    for (const auto& constant : descriptor.deferred_constants) {
+        if (constant.resolver)
+            result[constant.name] = constant.resolver();
+    }
     return result;
 }
 

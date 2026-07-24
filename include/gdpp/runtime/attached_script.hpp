@@ -51,11 +51,22 @@ class AttachedScriptBehavior : public godot::RefCounted {
 // raw pointer. Keep the factory ownership explicit so generated code has one contract on every
 // supported Godot release and never depends on the include order of ref.hpp.
 using AttachedBehaviorFactory = godot::Ref<AttachedScriptBehavior> (*)();
+using AttachedConstantResolver = godot::Variant (*)();
 
 struct AttachedScriptProperty {
     godot::PropertyInfo info;
     godot::Variant default_value;
     bool has_default{false};
+};
+
+// Script constants that may touch ResourceLoader, ClassDB singletons, third-party services, or
+// other script state must never be evaluated while a GDExtension is registering its classes.
+// Generated descriptors therefore retain only a captureless resolver. Godot asks for the
+// materialized constant Dictionary after startup, at which point the generated constant getter
+// performs its normal thread-safe one-time initialization.
+struct AttachedScriptDeferredConstant {
+    godot::StringName name;
+    AttachedConstantResolver resolver{nullptr};
 };
 
 struct AttachedScriptDescriptor {
@@ -76,6 +87,7 @@ struct AttachedScriptDescriptor {
     std::vector<godot::MethodInfo> methods;
     std::vector<godot::MethodInfo> signals;
     godot::Dictionary constants;
+    std::vector<AttachedScriptDeferredConstant> deferred_constants;
     godot::Variant rpc_config;
     bool tool{false};
     bool abstract{false};
@@ -98,6 +110,10 @@ find_attached_script(const godot::String& source_path);
 [[nodiscard]] std::optional<AttachedScriptDescriptor>
 resolve_attached_script(const godot::String& source_path, godot::String* error = nullptr);
 [[nodiscard]] std::vector<godot::String> attached_script_paths();
+// Resolves deferred script constants on demand. Descriptor registration and inheritance
+// resolution remain metadata-only and never invoke a resolver.
+[[nodiscard]] godot::Dictionary
+materialize_attached_script_constants(const AttachedScriptDescriptor& descriptor);
 
 // Script types are identities attached to a Godot owner, not ClassDB subclasses of that owner.
 // These helpers provide the runtime equivalent of GDScript's `is` and `as` operations without
@@ -106,8 +122,9 @@ resolve_attached_script(const godot::String& source_path, godot::String* error =
                                                const godot::String& source_path);
 // Restricts export-time ScriptInstance property-state serialization to fields that were actually
 // stored by the source scene/resource. Target runtime instances reject this metadata-only API.
-[[nodiscard]] bool set_attached_editor_storage_state(
-    godot::Object* object, const godot::PackedStringArray& stored_properties);
+[[nodiscard]] bool
+set_attached_editor_storage_state(godot::Object* object,
+                                  const godot::PackedStringArray& stored_properties);
 [[nodiscard]] godot::Object* cast_attached_script(const godot::Variant& value,
                                                   const godot::String& source_path);
 

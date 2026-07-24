@@ -425,7 +425,7 @@ godot::TypedArray<godot::Dictionary> AttachedCompiledScript::_get_script_propert
 std::int32_t AttachedCompiledScript::_get_member_line(const godot::StringName&) const { return -1; }
 godot::Dictionary AttachedCompiledScript::_get_constants() const {
     const auto value = descriptor();
-    return value ? value->constants : godot::Dictionary{};
+    return value ? materialize_attached_script_constants(*value) : godot::Dictionary{};
 }
 godot::TypedArray<godot::StringName> AttachedCompiledScript::_get_members() const {
     godot::TypedArray<godot::StringName> result;
@@ -441,6 +441,8 @@ godot::TypedArray<godot::StringName> AttachedCompiledScript::_get_members() cons
     const godot::Array constant_names = value->constants.keys();
     for (std::int64_t index = 0; index < constant_names.size(); ++index)
         result.push_back(godot::StringName{constant_names[index]});
+    for (const auto& constant : value->deferred_constants)
+        result.push_back(constant.name);
     return result;
 }
 bool AttachedCompiledScript::_is_placeholder_fallback_enabled() const { return false; }
@@ -463,8 +465,7 @@ void AttachedCompiledScript::_bind_methods() {
                                      godot::PROPERTY_USAGE_STORAGE),
                  "set_source_path", "get_source_path");
     ADD_PROPERTY(godot::PropertyInfo(godot::Variant::STRING, "contract_hash",
-                                     godot::PROPERTY_HINT_NONE, {},
-                                     godot::PROPERTY_USAGE_STORAGE),
+                                     godot::PROPERTY_HINT_NONE, {}, godot::PROPERTY_USAGE_STORAGE),
                  "set_contract_hash", "get_contract_hash");
 }
 
