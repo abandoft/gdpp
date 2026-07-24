@@ -1,6 +1,7 @@
 extends "res://vendor_grandchild.gd"
 
 const DEFERRED_PHYSICS_SCENE := preload("res://deferred_shape.tscn")
+const INNER_DATA := preload("res://inner_data.gd")
 
 
 func _ready() -> void:
@@ -43,6 +44,19 @@ func _verify_export_runtime() -> void:
         return
     if reflected_constants.get(&"INHERITED_PHYSICS_SCENE") != INHERITED_PHYSICS_SCENE:
         _fail("attached Script reflection did not inherit a deferred constant")
+        return
+
+    var dynamic_entry: Variant = INNER_DATA.Entry.new()
+    dynamic_entry.count = 42
+    dynamic_entry.label = "attached"
+    var indexed_entries: Dictionary[int, Variant] = {}
+    indexed_entries[dynamic_entry.count] = dynamic_entry
+    if (
+        dynamic_entry.count != 42
+        or dynamic_entry.label != "attached"
+        or indexed_entries.get(42) != dynamic_entry
+    ):
+        _fail("dynamic attached inner-class properties lost typed getter/setter semantics")
         return
 
     print("GDPP_ATTACHED_EXPORT_RUNTIME_OK")
