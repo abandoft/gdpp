@@ -20,6 +20,7 @@
 - Keep Visual Studio discovery C++17-compatible by handling UTF-8 `vswhere` output without the C++20 `std::string::starts_with` API, and compile that path under the Windows compiler and host-component gates.
 - Upgrade `gdpp-mac.zip` from an arm64-only host contract to true Universal 2 compiler, fallback, and Godot 4.4-4.7 desktop SDK binaries; both Apple Silicon and Intel editors now load the same plugin, and the standard official Universal 2 export template works without custom templates or preset rewrites.
 - Gate the macOS release component by exporting and running the unmodified `macOS Universal` preset, requiring arm64 and x86_64 slices plus the macOS 11.0 deployment target in every shipped compiler, fallback, and desktop godot-cpp archive.
+- Add post-assembly release gates on macOS and Windows that install the final `gdpp-mac.zip` and `gdpp-win.zip` into clean customer projects, import with official Godot 4.7.1, perform AOT exports with official templates, run the packaged games, audit PCK source stripping and exactly-once project libraries, and block readiness or publication on any diagnostic or immutable-state violation.
 
 ## 1.7.8
 
