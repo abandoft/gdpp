@@ -12,6 +12,9 @@
 - 独立 provider 运行夹具增加动态类型内部类构造、读写及强类型 Dictionary 下标回归，并为同一二进制导出路径增加 Windows x86_64 预设。
 - 原生工具链顺序测试统一规范化 LF/CRLF，使 Windows 串行门禁只验证真实进程顺序，不再受行尾格式误报影响。
 - 发行运行时 ABI 升级至 11，使旧 SDK 在预检阶段明确失败，避免按旧的立即求值描述符布局继续编译。
+- Godot 属性类型改为依据 getter/setter 的真实 ABI 解析，不再错误选取 Inspector 资源候选列表中的第一个具体类型；Godot 4.4～4.7 的 Shader、粒子、天空、雾、几何体、灯光、贴花、相机属性及同类多态资源读写均保留正确基类契约。
+- 无所有者的静态函数 Callable 在 Callable 生命周期内保持为有效信号目标，实例绑定 lambda 仍执行 Object 生命周期校验；由此恢复 `HTTPRequest.request_completed` 等异步信号的静态绑定回调。
+- 独立导出运行夹具增加动态 `ShaderMaterial` 赋值、逐帧 Shader uniform 更新、本机回环 HTTP 图片传输、响应头校验、PNG 解码及 `ImageTexture` 节点赋值的端到端验证。
 
 ## 1.7.7
 

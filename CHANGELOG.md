@@ -12,6 +12,9 @@
 - Extend the independent-provider runtime fixture with dynamically typed inner-class construction, reads, writes, and typed-Dictionary indexing, and add a Windows x86_64 export preset for the same binary-only test path.
 - Normalize native toolchain order output across LF and CRLF hosts so the Windows serialization gate verifies process order without line-ending false positives.
 - Advance the packaged runtime ABI to 11 so stale SDKs fail preflight instead of compiling against the old eager descriptor layout.
+- Resolve Godot properties through their getter/setter ABI instead of the first inspector resource alternative, preserving polymorphic assignments and reads for shader, particle, sky, fog, geometry, light, decal, camera-attribute, and related resource properties across Godot 4.4–4.7.
+- Treat owner-free static function Callables as valid signal targets for the lifetime of the Callable while retaining Object lifetime checks for instance-bound lambdas, restoring bound asynchronous callbacks such as `HTTPRequest.request_completed`.
+- Extend the independent exported-runtime fixture with dynamically assigned `ShaderMaterial`, per-frame shader-uniform updates, loopback HTTP image delivery, response-header validation, PNG decoding, and `ImageTexture` assignment.
 
 ## 1.7.7
 
