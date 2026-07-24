@@ -449,9 +449,24 @@ class ReleasePackagingTest(unittest.TestCase):
             self.assertNotIn("libgdpp_project.", workflow)
             self.assertNotIn("gdpp_project.release.", workflow)
             self.assertNotIn("gdpp_project.debug.", workflow)
-
         packages = (workflow_root / "package-release.yml").read_text(encoding="utf-8")
         self.assertIn("(lib)?gdpp\\.(debug|release)\\.", packages)
+
+    def test_ios_upstream_warning_allowlist_is_exact_and_fail_closed(self) -> None:
+        workflow = (
+            SOURCE_ROOT / ".github/workflows/ios.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "grep -E '(^| )ERROR:|SCRIPT ERROR:|WARNING:|Unable to open'",
+            workflow,
+        )
+        self.assertIn(
+            "grep -Fvx \\\n"
+            "            'WARNING: Property not found: "
+            "application/boot_splash/fullsize'",
+            workflow,
+        )
+        self.assertIn('if [[ -s "$forbidden_diagnostics" ]]; then', workflow)
 
     def test_godot_44_diagnostic_allowlist_tracks_the_fixture_source(self) -> None:
         workflow = (
