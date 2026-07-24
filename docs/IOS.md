@@ -6,12 +6,12 @@ Apple Silicon 模拟器 arm64 和 Intel 模拟器 x86_64 三种切片。
 
 ## 用户依赖
 
-- GDPP 的 mac-arm64 编辑器插件最低支持 macOS 11.0；Apple Silicon 不存在可运行 macOS 10.15
-  的系统组合；
+- GDPP 的 macOS Universal 2 编辑器插件最低支持 macOS 11.0，同时包含 arm64 与 x86_64
+  切片；
 - 能提供 iOS 16 SDK 的完整 Xcode、该 Xcode 要求的 macOS 宿主版本，以及通过 `xcode-select`
   选中的有效 Developer 目录；因此“插件可在 macOS 11.0 加载”不等于“macOS 11.0 可以安装
   当前 Xcode 并执行 iOS 导出”；
-- 与目标 Godot 小版本一致的 `mac-arm64` GDPP 插件 ZIP，其中已包含 iOS target pack；
+- `gdpp-mac.zip`，其中同时包含 Godot 4.4～4.7 的 macOS Universal 2 SDK 与 iOS target pack；
 - 已安装对应 Godot iOS 导出模板；
 - 真机或 App Store 导出所需的 Apple Developer Team、Bundle ID、证书和描述文件。
 
@@ -21,8 +21,8 @@ device 与 Universal Simulator 目录各包含一份优化后的 `template_relea
 
 ## 导出流程
 
-1. 将对应 Godot 版本的 `mac-arm64` ZIP 解压到项目根目录；iOS target pack 会随插件落到
-   `addons/gdpp/sdk/<Godot版本>/ios/arm64/`，不需要再下载第二个 GDPP 包。
+1. 将 `gdpp-mac.zip` 解压到项目根目录；iOS target pack 会随插件合并到
+   `addons/gdpp/sdk/<Godot版本>/` 的共享 SDK 中，不需要再下载第二个 GDPP 包。
 2. 使用 macOS 上对应版本的 Godot 打开项目并启用 GDPP。
 3. 安装 Godot iOS 导出模板，在 iOS 预设中设置 Team ID、Bundle ID 和应用信息。
 4. 保持 `gdpp/strip_gdscript_sources=true`、`gdpp/allow_source_fallback=false`。

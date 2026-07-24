@@ -18,6 +18,8 @@
 - 增加 SHA-256 导出状态门禁，在成功、回退及失败关闭导出后拒绝编辑器/provider 描述符变化、扩展注册表变化、客户扩展增删以及事务备份残留。
 - 复用已构建的 host components，在 macOS、Linux 与 Windows 上通过官方 Godot 4.7.1 实际导出并运行桌面包；同时让 Android APK、iOS/Xcode、Web 线程/无线程、Godot 4.4-4.7 Linux 及独立 Universal 2 provider 路径统一接受描述符不可变与原生产物单次登记门禁。
 - 在不使用 C++20 `std::string::starts_with` 的前提下处理带 UTF-8 BOM 的 `vswhere` 输出，保持 Visual Studio 发现逻辑符合 C++17 合同，并由 Windows 编译器与 host-component 门禁实际编译覆盖。
+- `gdpp-mac.zip` 从仅 arm64 的宿主契约升级为真正的 Universal 2 compiler、fallback 及 Godot 4.4～4.7 桌面 SDK；Apple Silicon 与 Intel 编辑器现可加载同一插件，标准官方 Universal 2 导出模板无需自定义模板或改写预设即可工作。
+- macOS 发行组件新增未修改 `macOS Universal` 预设的真实导出与运行门禁，并强制每套 compiler、fallback 及桌面 godot-cpp 归档同时包含 arm64、x86_64 切片与 macOS 11.0 最低部署版本。
 
 ## 1.7.8
 
