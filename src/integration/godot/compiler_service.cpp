@@ -1230,6 +1230,55 @@ std::optional<std::wstring> resolve_msvc_executable(const std::wstring& executab
     }
     return std::nullopt;
 }
+
+struct ResolvedMsvcCompiler {
+    std::string executable;
+    std::string diagnostic;
+
+    [[nodiscard]] bool valid() const { return !executable.empty() && diagnostic.empty(); }
+};
+
+ResolvedMsvcCompiler resolve_msvc_compiler_for_plan(const std::string& configured_executable) {
+    const auto requested_utf8 =
+        configured_executable.empty() ? std::string{"cl.exe"} : configured_executable;
+    const auto requested_wide = utf8_to_wide(requested_utf8);
+    if (requested_wide.empty())
+        return {{}, "configured MSVC compiler path is not valid UTF-8"};
+
+    const std::filesystem::path requested{requested_wide};
+    if (!is_msvc_tool(requested))
+        return {requested_utf8, {}};
+
+    std::error_code error;
+    if (requested.has_parent_path() && std::filesystem::is_regular_file(requested, error)) {
+        error.clear();
+        const auto absolute = std::filesystem::absolute(requested, error);
+        const auto resolved = error ? requested.wstring() : absolute.wstring();
+        const auto executable = windows_wide_text_to_utf8(resolved);
+        return executable.empty()
+                   ? ResolvedMsvcCompiler{{}, "configured MSVC compiler path is not valid UTF-8"}
+                   : ResolvedMsvcCompiler{executable, {}};
+    }
+
+    const auto vcvars = find_vcvars_batch(requested);
+    if (!vcvars) {
+        return {{},
+                "cannot locate vcvars64.bat after checking GDPP_VCVARS_PATH, the configured "
+                "compiler, vswhere, Visual Studio Build Tools, and standard installations; "
+                "install the x64 C++ tools component or configure gdpp/build/cpp_compiler"};
+    }
+    const auto environment = cached_msvc_environment(*vcvars);
+    if (!environment->valid())
+        return {{}, environment->diagnostic};
+    const auto resolved = resolve_msvc_executable(requested_wide, *environment);
+    if (!resolved)
+        return {{}, "cannot resolve '" + requested_utf8 +
+                        "' from the initialized Visual Studio environment"};
+    const auto executable = windows_wide_text_to_utf8(*resolved);
+    return executable.empty()
+               ? ResolvedMsvcCompiler{{}, "resolved MSVC compiler path is not valid UTF-8"}
+               : ResolvedMsvcCompiler{executable, {}};
+}
 #endif
 
 NativeProcessResult execute_native_process(const std::string& executable,
@@ -1248,7 +1297,10 @@ NativeProcessResult execute_native_process(const std::string& executable,
         wide_arguments.push_back(std::move(converted));
     }
     if (is_msvc_tool(std::filesystem::path{wide_executable})) {
-        if (!windows_environment(L"INCLUDE")) {
+        const std::filesystem::path requested{wide_executable};
+        const bool requires_resolution = !requested.has_parent_path();
+        const bool requires_environment = !windows_environment(L"INCLUDE");
+        if (requires_resolution || requires_environment) {
             const auto vcvars = find_vcvars_batch(std::filesystem::path{wide_executable});
             if (!vcvars) {
                 NativeProcessResult result;
@@ -1264,14 +1316,16 @@ NativeProcessResult execute_native_process(const std::string& executable,
                 result.launch_error = environment->diagnostic;
                 return result;
             }
-            const auto resolved = resolve_msvc_executable(wide_executable, *environment);
-            if (!resolved) {
-                NativeProcessResult result;
-                result.launch_error = "cannot resolve '" + executable +
-                                      "' from the initialized Visual Studio environment";
-                return result;
+            if (requires_resolution) {
+                const auto resolved = resolve_msvc_executable(wide_executable, *environment);
+                if (!resolved) {
+                    NativeProcessResult result;
+                    result.launch_error = "cannot resolve '" + executable +
+                                          "' from the initialized Visual Studio environment";
+                    return result;
+                }
+                wide_arguments.front() = *resolved;
             }
-            wide_arguments.front() = *resolved;
             WindowsProcessOptions options;
             options.environment = &environment->block;
             return execute_hidden_windows_process(wide_arguments, options);
@@ -1739,6 +1793,21 @@ godot::Dictionary GDPPCompiler::compile_project(
         output["diagnostics"] = diagnostics;
         return output;
     }
+    auto resolved_compiler_executable = native_string(compiler_executable);
+#ifdef _WIN32
+    if (*platform == NativePlatform::windows) {
+        const auto resolved = resolve_msvc_compiler_for_plan(resolved_compiler_executable);
+        if (!resolved.valid()) {
+            godot::Dictionary output;
+            output["success"] = false;
+            godot::PackedStringArray diagnostics;
+            diagnostics.push_back(godot::String{resolved.diagnostic.c_str()});
+            output["diagnostics"] = diagnostics;
+            return output;
+        }
+        resolved_compiler_executable = resolved.executable;
+    }
+#endif
     auto* settings = godot::ProjectSettings::get_singleton();
     ProjectCompileOptions options;
     options.project_root = path_from_utf8(native_string(settings->globalize_path(project_root)));
@@ -1838,7 +1907,7 @@ godot::Dictionary GDPPCompiler::compile_project(
         build_options.project_output_directory = options.output_directory;
         build_options.binary_output_directory = result.native_library_directory;
         build_options.sdk_root = options.sdk_root;
-        build_options.compiler_executable = native_string(compiler_executable);
+        build_options.compiler_executable = resolved_compiler_executable;
         build_options.platform = *platform;
         build_options.architecture = architecture;
         build_options.profile = *profile;
