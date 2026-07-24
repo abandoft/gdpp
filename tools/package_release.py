@@ -37,14 +37,14 @@ class HostContract:
 
 
 HOSTS = {
-    "mac-arm64": HostContract(
+    "mac-universal": HostContract(
         platform="macos",
-        architecture="arm64",
+        architecture="universal",
         platform_minimum="macOS_11.0",
-        compiler_library="libgdpp_compiler.macos.arm64.dylib",
-        fallback_library="libgdpp_fallback.macos.arm64.dylib",
+        compiler_library="libgdpp_compiler.macos.universal.dylib",
+        fallback_library="libgdpp_fallback.macos.universal.dylib",
         export_targets=(
-            "macos-arm64",
+            "macos-universal",
             "android-arm64",
             "ios-arm64",
             "web-wasm32-nothreads",

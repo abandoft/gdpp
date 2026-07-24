@@ -29,7 +29,7 @@ if(compiler_reloadable_offset EQUAL -1)
 endif()
 set(compiler_entries "macos.editor.arm64" "macos.editor.x86_64")
 set(compiler_libraries
-    "libgdpp_compiler.macos.arm64.dylib"
+    "libgdpp_compiler.macos.universal.dylib"
     "libgdpp_compiler.macos.universal.dylib")
 foreach(entry library IN ZIP_LISTS compiler_entries compiler_libraries)
     string(FIND "${compiler_content}"

@@ -35,7 +35,7 @@ class PlatformPackage:
 
 
 PLATFORM_PACKAGES = {
-    "mac": PlatformPackage("mac-arm64", "gdpp-mac", True),
+    "mac": PlatformPackage("mac-universal", "gdpp-mac", True),
     "linux": PlatformPackage("linux-x64", "gdpp-linux", False),
     "win": PlatformPackage("windows-x64", "gdpp-win", False),
 }

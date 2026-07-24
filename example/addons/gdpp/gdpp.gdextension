@@ -6,7 +6,7 @@ reloadable = false
 
 [libraries]
 
-macos.editor.arm64 = "res://addons/gdpp/binary/libgdpp_compiler.macos.arm64.dylib"
+macos.editor.arm64 = "res://addons/gdpp/binary/libgdpp_compiler.macos.universal.dylib"
 macos.editor.x86_64 = "res://addons/gdpp/binary/libgdpp_compiler.macos.universal.dylib"
 linux.editor.x86_64 = "res://addons/gdpp/binary/libgdpp_compiler.linux.x86_64.so"
 linux.editor.arm64 = "res://addons/gdpp/binary/libgdpp_compiler.linux.arm64.so"
