@@ -18,6 +18,10 @@ ExampleState="*res://autoload_state.gd"
 window/size/viewport_width=960
 window/size/viewport_height=540
 
+[debug]
+
+gdscript/warnings/inference_on_variant=2
+
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/gdpp/plugin.cfg")

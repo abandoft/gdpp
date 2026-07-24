@@ -440,6 +440,8 @@ class ReleasePackagingTest(unittest.TestCase):
         workflow = (
             SOURCE_ROOT / ".github/workflows/godot-compatibility.yml"
         ).read_text(encoding="utf-8")
+        self.assertIn('"4.7.1"', workflow)
+        self.assertNotIn('"4.7"]', workflow)
         self.assertIn('typed_variadic_line="$(', workflow)
         self.assertIn('"$fixture/vendor_child.gd" | cut -d: -f1', workflow)
         self.assertIn(

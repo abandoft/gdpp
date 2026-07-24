@@ -21,7 +21,7 @@ on:
           - 4.4.1
           - 4.5.2
           - 4.6.3
-          - 4.7
+          - 4.7.1
 
 permissions:
   contents: read
@@ -39,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ${{ fromJSON(inputs.target != 'all' && inputs.target != 'official-corpus' && format('["{0}"]', inputs.target) || '["4.4.1","4.5.2","4.6.3","4.7"]') }}
+        version: ${{ fromJSON(inputs.target != 'all' && inputs.target != 'official-corpus' && format('["{0}"]', inputs.target) || '["4.4.1","4.5.2","4.6.3","4.7.1"]') }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
