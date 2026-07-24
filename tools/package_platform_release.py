@@ -366,7 +366,7 @@ def stage_platform_package(
     stage_root = output / ".staging" / package.archive_name
     if stage_root.exists():
         shutil.rmtree(stage_root)
-    staged_addon = stage_root / "gdpp"
+    staged_addon = stage_root / "addons" / "gdpp"
     staged_addon.mkdir(parents=True)
 
     for relative in package_release.STATIC_ADDON_FILES:
@@ -400,8 +400,9 @@ def stage_platform_package(
 
     (staged_addon / "sdk/.gdignore").write_text("", encoding="utf-8")
     (staged_addon / "PACKAGE_MANIFEST.txt").write_text(
-        "GDPP_PACKAGE 4\n"
+        "GDPP_PACKAGE 5\n"
         "kind desktop-host\n"
+        "archive_layout addons/gdpp\n"
         "sdk_layout shared-target-manifests\n"
         f"version {gdpp_version}\n"
         "compiler_godot_api 4.4\n"

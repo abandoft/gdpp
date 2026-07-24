@@ -240,7 +240,7 @@ class ReleasePackagingTest(unittest.TestCase):
             with self.subTest(package=package_name):
                 stage, archive_name = self.stage(package_name)
                 self.assertEqual(archive_name, expected_archive)
-                addon = stage / "gdpp"
+                addon = stage / "addons" / "gdpp"
                 package = package_platform_release.PLATFORM_PACKAGES[package_name]
                 host = package_release.HOSTS[package.component_host]
                 self.assertEqual(
@@ -275,6 +275,8 @@ class ReleasePackagingTest(unittest.TestCase):
                     for retired in ("android", "ios", "web", "macos", "linux", "windows"):
                         self.assertFalse((sdk / retired).exists())
                 manifest = (addon / "PACKAGE_MANIFEST.txt").read_text(encoding="utf-8")
+                self.assertTrue(manifest.startswith("GDPP_PACKAGE 5\n"))
+                self.assertIn("archive_layout addons/gdpp", manifest)
                 self.assertIn("target_godot_apis 4.4,4.5,4.6,4.7", manifest)
                 self.assertIn(f"host {package_name}", manifest)
                 self.assertIn("sdk_layout shared-target-manifests", manifest)
@@ -286,7 +288,7 @@ class ReleasePackagingTest(unittest.TestCase):
         first_hash = package_release.sha256(first_archive)
         with zipfile.ZipFile(first_archive) as packaged:
             names = packaged.namelist()
-        self.assertTrue(all(path.startswith("gdpp/") for path in names))
+        self.assertTrue(all(path.startswith("addons/gdpp/") for path in names))
         self.assertFalse(any(path.endswith(".zip") for path in names))
         self.assertFalse(any("template_debug" in path for path in names))
         self.assertFalse(any(".editor." in path for path in names))
@@ -298,9 +300,9 @@ class ReleasePackagingTest(unittest.TestCase):
                 for path in names
             )
         )
-        self.assertIn("gdpp/build_progress.gd", names)
-        self.assertIn("gdpp/native_build_job.gd", names)
-        self.assertFalse(any(path.startswith("addons/") for path in names))
+        self.assertIn("addons/gdpp/build_progress.gd", names)
+        self.assertIn("addons/gdpp/native_build_job.gd", names)
+        self.assertFalse(any(path.startswith("gdpp/") for path in names))
 
         second_stage, second_name, _ = package_platform_release.stage_platform_package(
             self.components,
