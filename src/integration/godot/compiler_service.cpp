@@ -801,7 +801,8 @@ std::optional<std::filesystem::path> find_vcvars_batch(const std::filesystem::pa
             while (!line.empty() &&
                    (line.back() == '\r' || std::isspace(static_cast<unsigned char>(line.back()))))
                 line.pop_back();
-            if (line.starts_with("\xef\xbb\xbf"))
+            constexpr char utf8_bom[] = "\xef\xbb\xbf";
+            if (line.compare(0, sizeof(utf8_bom) - 1, utf8_bom) == 0)
                 line.erase(0, 3);
             const auto first = std::find_if_not(line.begin(), line.end(), [](const char value) {
                 return std::isspace(static_cast<unsigned char>(value)) != 0;
