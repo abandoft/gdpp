@@ -81,8 +81,21 @@ expected_package_needs = parallel_workflows.keys.sort
 fail_check("packages must wait for every test and component producer") unless
   needs(package_job).sort == expected_package_needs
 
+package_smoke_workflow = workflows.fetch("release-package-smoke.yml")
+package_smoke_triggers = triggers(package_smoke_workflow)
+fail_check("release-package-smoke.yml must support workflow_call") unless
+  package_smoke_triggers.key?("workflow_call")
+fail_check("release-package-smoke.yml cannot run without assembled package artifacts") if
+  package_smoke_triggers.key?("workflow_dispatch")
+
+package_smoke_job = release_jobs.fetch("package-smoke")
+fail_check("package-smoke must invoke release-package-smoke.yml") unless
+  package_smoke_job["uses"] == "./.github/workflows/release-package-smoke.yml"
+fail_check("package-smoke must wait only for assembled release packages") unless
+  needs(package_smoke_job) == ["packages"]
+
 readiness_job = release_jobs.fetch("readiness")
-expected_readiness_needs = (parallel_workflows.keys + ["packages"]).sort
+expected_readiness_needs = (parallel_workflows.keys + ["packages", "package-smoke"]).sort
 fail_check("readiness must aggregate every delivery result") unless
   needs(readiness_job).sort == expected_readiness_needs
 fail_check("publish must depend only on the aggregate readiness gate") unless
@@ -96,5 +109,5 @@ fail_check("release.yml must be the only pull-request entrypoint") unless
 
 puts(
   "Validated #{parallel_workflows.length} parallel producers, " \
-  "one gated package stage, and one publish stage.",
+  "one gated package stage, installed macOS/Windows package smokes, and one publish stage.",
 )

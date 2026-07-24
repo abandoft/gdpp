@@ -1,0 +1,155 @@
+name: Installed release package smoke
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: Installed ZIP / ${{ matrix.package_host }} / Godot 4.7.1
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package_host: mac
+            os: macos-15
+            archive: gdpp-mac.zip
+            preset: macOS Universal
+          - package_host: win
+            os: windows-2025
+            archive: gdpp-win.zip
+            preset: Windows x86_64
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Initialize the MSVC x64 toolchain
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-msvc
+        with:
+          arch: x64
+      - id: godot
+        name: Install official Godot 4.7.1 editor and host templates
+        uses: ./.github/actions/setup-godot
+        with:
+          version: 4.7.1
+          templates: host
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: gdpp-release-${{ matrix.package_host }}
+          path: build/release-package-smoke/archive
+      - name: Install the final ZIP into a clean customer project
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/build/release-package-smoke"
+          project="$root/project"
+          archive="$root/archive/${{ matrix.archive }}"
+          test -f "$archive"
+          rm -rf "$project"
+          cp -R example "$project"
+          rm -rf "$project/.godot" "$project/addons/gdpp"
+          unzip -q "$archive" -d "$project"
+          test -f "$project/addons/gdpp/plugin.cfg"
+          test -f "$project/addons/gdpp/gdpp.gdextension"
+          test "$(find "$project/addons/gdpp/sdk" -mindepth 1 -maxdepth 1 \
+            -type d | wc -l)" -eq 4
+      - name: Import, export, run and audit the installed package
+        shell: bash
+        env:
+          GODOT: ${{ steps.godot.outputs.executable }}
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/build/release-package-smoke"
+          project="$root/project"
+          output_root="$root/output"
+          mkdir -p "$output_root"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            output="$output_root/GDPPExample.app"
+            runtime="$output/Contents/MacOS/GDPP Example"
+            project_library="$output/Contents/Frameworks/libgdpp.release.macos.universal.dylib"
+          else
+            output="$output_root/GDPPExample.exe"
+            runtime="$output"
+            project_library="$output_root/gdpp.release.windows.x86_64.dll"
+          fi
+
+          "$GODOT" --headless --editor --path "$project" --import \
+            2>&1 | tee "$root/import.log"
+          python3 tools/verify_export_immutability.py snapshot \
+            --project "$project" --state "$root/extension-state.json"
+          "$GODOT" --headless --editor --path "$project" \
+            --export-release '${{ matrix.preset }}' "$output" \
+            2>&1 | tee "$root/export.log"
+          python3 tools/verify_export_immutability.py verify \
+            --project "$project" --state "$root/extension-state.json"
+
+          test -f "$runtime"
+          test -f "$project_library"
+          test "$(find "$output_root" -type f \
+            \( -name 'gdpp.release.*' -o -name 'libgdpp.release.*' \) \
+            | wc -l)" -eq 1
+          if find "$output_root" -type f \
+              \( -name '*gdpp_compiler*' -o -name '*gdpp_fallback*' \) \
+              -print -quit | grep -q .; then
+            echo 'Installed release export contains an editor or fallback library.'
+            exit 1
+          fi
+
+          python3 - "$runtime" "$root/runtime.log" <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          executable, log_path = sys.argv[1:]
+          result = subprocess.run(
+              [executable, "--headless", "--quit-after", "2"],
+              stdout=subprocess.PIPE,
+              stderr=subprocess.STDOUT,
+              text=True,
+              timeout=30,
+              check=False,
+          )
+          Path(log_path).write_text(result.stdout, encoding="utf-8")
+          print(result.stdout, end="")
+          raise SystemExit(result.returncode)
+          PY
+          grep -q '^GDPP_EXPORTED_PROPERTIES_OK$' "$root/runtime.log"
+          grep -q 'GDPP_AOT_SUMMARY scenes=' "$root/export.log"
+
+          test "$(find "$output_root" -type f -name '*.pck' | wc -l)" -eq 1
+          pck="$(find "$output_root" -type f -name '*.pck' | LC_ALL=C sort | head -n 1)"
+          test -n "$pck"
+          audit="$root/pck-audit"
+          mkdir -p "$audit"
+          cp tools/audit_export_pck.gd "$audit/audit_export_pck.gd"
+          printf '[application]\nconfig/name="GDPP Installed ZIP Audit"\n' \
+            > "$audit/project.godot"
+          "$GODOT" --headless --path "$audit" \
+            --script "$audit/audit_export_pck.gd" -- \
+            "$pck" "$output_root" "$project_library" \
+            2>&1 | tee "$root/pck-audit.log"
+          grep -q '^PCK_AUDIT_VIOLATIONS=0$' "$root/pck-audit.log"
+          grep -q '^PCK_AUDIT_PROJECT_LIBRARIES=1$' "$root/pck-audit.log"
+
+          if grep -E -q '(^| )ERROR:|SCRIPT ERROR:|Parse Error:|WARNING:|Unable to open' \
+              "$root/import.log" "$root/export.log" "$root/runtime.log" \
+              "$root/pck-audit.log"; then
+            echo 'Installed release package emitted a forbidden diagnostic.'
+            exit 1
+          fi
+      - name: Validate final macOS Universal 2 project library
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          library="$GITHUB_WORKSPACE/build/release-package-smoke/output/GDPPExample.app/Contents/Frameworks/libgdpp.release.macos.universal.dylib"
+          architectures="$(lipo -archs "$library")"
+          grep -qw arm64 <<<"$architectures"
+          grep -qw x86_64 <<<"$architectures"
+          for architecture in arm64 x86_64; do
+            otool -arch "$architecture" -l "$library" | grep -A3 LC_BUILD_VERSION \
+              | grep -q 'minos 11.0'
+          done

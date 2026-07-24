@@ -408,6 +408,17 @@ class ReleasePackagingTest(unittest.TestCase):
             "uses: ./.github/workflows/package-release.yml",
             orchestrator,
         )
+        self.assertIn(
+            "uses: ./.github/workflows/release-package-smoke.yml",
+            orchestrator,
+        )
+        installed_smoke = (
+            workflow_root / "release-package-smoke.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("name: gdpp-release-${{ matrix.package_host }}", installed_smoke)
+        self.assertIn("Install the final ZIP into a clean customer project", installed_smoke)
+        self.assertIn("PCK_AUDIT_VIOLATIONS=0", installed_smoke)
+        self.assertIn("PCK_AUDIT_PROJECT_LIBRARIES=1", installed_smoke)
         self.assertNotIn("complete-packages:", orchestrator)
         self.assertNotIn("16-archive matrix", packages)
 

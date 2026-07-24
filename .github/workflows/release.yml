@@ -119,6 +119,11 @@ jobs:
       - host-components
     uses: ./.github/workflows/package-release.yml
 
+  package-smoke:
+    name: Gate / Installed macOS and Windows packages
+    needs: packages
+    uses: ./.github/workflows/release-package-smoke.yml
+
   readiness:
     name: Release readiness / All gates passed
     if: always()
@@ -132,6 +137,7 @@ jobs:
       - ios-gate
       - host-components
       - packages
+      - package-smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -147,14 +153,15 @@ jobs:
           IOS: ${{ needs.ios-gate.result }}
           HOST_COMPONENTS: ${{ needs.host-components.result }}
           PACKAGES: ${{ needs.packages.result }}
+          PACKAGE_SMOKE: ${{ needs.package-smoke.result }}
         run: |
           set -euo pipefail
           for result in \
             "$QUALITY" "$CORE" "$NATIVE" "$GODOT" "$ANDROID" "$WEB" "$IOS" \
-            "$HOST_COMPONENTS" "$PACKAGES"; do
+            "$HOST_COMPONENTS" "$PACKAGES" "$PACKAGE_SMOKE"; do
             test "$result" = success
           done
-          printf '### Complete delivery gate passed\n\nAll tests and 3 packages passed.\n' \
+          printf '### Complete delivery gate passed\n\nAll tests, 3 packages, and installed macOS/Windows package smokes passed.\n' \
             >> "$GITHUB_STEP_SUMMARY"
 
   publish:
